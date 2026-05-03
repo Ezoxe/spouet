@@ -1,9 +1,13 @@
+import { PUBLIC_API_BASE } from '$env/static/public';
+
 /**
  * Client API pour le backend Spouet.
  * Le token est stocké dans localStorage (côté client uniquement) — l'app est SPA.
+ * PUBLIC_API_BASE : vide = chemins relatifs (nginx proxy), sinon URL complète du backend (ex. Tauri).
  */
 
 const TOKEN_KEY = 'spouet:token';
+const BASE = (PUBLIC_API_BASE ?? '').replace(/\/$/, '');
 
 export function getToken(): string | null {
     if (typeof localStorage === 'undefined') return null;
@@ -37,7 +41,7 @@ export async function api<T>(
         headers.set('Content-Type', 'application/json');
         init.body = JSON.stringify(init.json);
     }
-    const res = await fetch(`/api${path}`, { ...init, headers });
+    const res = await fetch(`${BASE}/api${path}`, { ...init, headers });
     if (!res.ok) {
         const body = await res.text();
         let parsed: unknown = body;
@@ -74,7 +78,7 @@ export async function* streamSse(
         headers.set('Content-Type', 'application/json');
         init.body = JSON.stringify(init.json);
     }
-    const res = await fetch(`/api${path}`, { ...init, headers });
+    const res = await fetch(`${BASE}/api${path}`, { ...init, headers });
     if (!res.ok || !res.body) throw new ApiError(res.status, null, `${res.status}`);
 
     const reader = res.body.getReader();
@@ -262,7 +266,7 @@ export const rag = {
         const fd = new FormData();
         fd.append('file', file);
         const token = getToken();
-        const res = await fetch('/api/rag/documents', {
+        const res = await fetch(`${BASE}/api/rag/documents`, {
             method: 'POST',
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: fd

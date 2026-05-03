@@ -37,7 +37,7 @@
             }
         ],
         "security": {
-            "csp": "default-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:8000 https://*.local wss://*.local"
+            "csp": "default-src 'self' 'unsafe-inline'; connect-src 'self' http: https: ws: wss:"
         },
         "trayIcon": {
             "id": "spouet-tray",

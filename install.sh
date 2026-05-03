@@ -235,7 +235,8 @@ if [[ ! -f .env ]]; then
     PORT_PG=$(find_free_port 10000)
     PORT_REDIS=$(find_free_port $(( PORT_PG + 1 )))
     PORT_BACKEND=$(find_free_port $(( PORT_REDIS + 1 )))
-    log "  postgres → :$PORT_PG   redis → :$PORT_REDIS   backend → :$PORT_BACKEND"
+    PORT_WEB=$(find_free_port $(( PORT_BACKEND + 1 )))
+    log "  postgres → :$PORT_PG   redis → :$PORT_REDIS   backend → :$PORT_BACKEND   web → :$PORT_WEB"
 
     POSTGRES_PASSWORD=$(gen_secret 24)
     REDIS_PASSWORD=$(gen_secret 24)
@@ -269,12 +270,15 @@ SPOUET_NODE_OFFLINE_AFTER_S=30
 SPOUET_POSTGRES_PORT=$PORT_PG
 SPOUET_REDIS_PORT=$PORT_REDIS
 SPOUET_BACKEND_PORT=$PORT_BACKEND
+SPOUET_WEB_PORT=$PORT_WEB
 EOF
     chmod 600 .env
 else
     log "deploy/.env existant — conservé tel quel."
     PORT_BACKEND=$(grep -E '^SPOUET_BACKEND_PORT=' .env | cut -d= -f2 || true)
     PORT_BACKEND="${PORT_BACKEND:-10002}"
+    PORT_WEB=$(grep -E '^SPOUET_WEB_PORT=' .env | cut -d= -f2 || true)
+    PORT_WEB="${PORT_WEB:-10003}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -346,6 +350,11 @@ fi
 
 # ---------------------------------------------------------------------------
 log "✓ Installation terminée."
-log "  → Backend API : http://localhost:$PORT_BACKEND"
-log "  → Logs        : (cd $SPOUET_INSTALL_DIR/deploy && docker compose logs -f backend)"
+log "  → Web UI      : http://localhost:$PORT_WEB  (navigateur / PWA mobile)"
+log "  → Backend API : http://localhost:$PORT_BACKEND/api/docs"
+log "  → Logs        : (cd $SPOUET_INSTALL_DIR/deploy && docker compose logs -f)"
 log "  → Status      : systemctl status spouet-stack"
+log ""
+log "  Pour l'app desktop Windows (Tauri), construire avec :"
+log "    cd desktop"
+log "    PUBLIC_API_BASE=http://<IP_SERVEUR>:$PORT_BACKEND pnpm tauri build"

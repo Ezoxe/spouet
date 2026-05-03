@@ -85,3 +85,13 @@ services:
       redis:
         condition: service_healthy
     command: ["celery", "-A", "spouet.workers", "beat", "--loglevel=info"]
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SPOUET_WEB_PORT:-10003}:80"
+    depends_on:
+      - backend
