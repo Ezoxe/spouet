@@ -76,23 +76,17 @@ elif command -v dnf &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# uv
+# uv (installé dans /usr/local/bin pour être accessible à l'utilisateur spouet)
 # ---------------------------------------------------------------------------
-UV_BIN=""
-for cand in /root/.local/bin/uv /usr/local/bin/uv "$(command -v uv 2>/dev/null || true)"; do
-    [[ -x "$cand" ]] && { UV_BIN="$cand"; break; }
-done
-if [[ -z "$UV_BIN" ]]; then
-    log "Installation de uv (astral.sh)…"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    UV_BIN=/root/.local/bin/uv
-    [[ -x "$UV_BIN" ]] || die "Échec installation uv."
-fi
-log "uv : $UV_BIN ($($UV_BIN --version))"
-
-# Symlink stable pour systemd
 install -d /usr/local/bin
-ln -sf "$UV_BIN" /usr/local/bin/uv
+if [[ ! -x /usr/local/bin/uv ]]; then
+    log "Installation de uv (astral.sh) → /usr/local/bin…"
+    curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+    [[ -x /usr/local/bin/uv ]] || die "Échec installation uv."
+fi
+UV_BIN=/usr/local/bin/uv
+log "uv : $UV_BIN ($($UV_BIN --version))"
 
 # ---------------------------------------------------------------------------
 # Utilisateur dédié
