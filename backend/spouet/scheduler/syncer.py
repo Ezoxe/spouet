@@ -16,9 +16,11 @@ from typing import Any
 
 from celery.schedules import crontab
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
+from spouet.core.config import settings
 from spouet.core.logging import get_logger
-from spouet.db import async_session_factory
 from spouet.db.models import ScheduledJob
 from spouet.workers.app import celery_app
 
@@ -37,11 +39,16 @@ def parse_cron(expr: str) -> crontab:
 
 
 async def collect_jobs() -> list[ScheduledJob]:
-    async with async_session_factory()() as db:
-        rows = (
-            await db.execute(select(ScheduledJob).where(ScheduledJob.enabled.is_(True)))
-        ).scalars().all()
-        return list(rows)
+    engine = create_async_engine(str(settings.database_url), poolclass=NullPool)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with factory() as db:
+            rows = (
+                await db.execute(select(ScheduledJob).where(ScheduledJob.enabled.is_(True)))
+            ).scalars().all()
+            return list(rows)
+    finally:
+        await engine.dispose()
 
 
 def build_beat_entries(jobs: list[ScheduledJob]) -> dict[str, dict[str, Any]]:
