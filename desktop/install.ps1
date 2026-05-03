@@ -7,7 +7,7 @@
     silencieux (msiexec /quiet). Aucune compilation locale.
 
 .PARAMETER Repo
-    Dépôt GitHub au format <owner>/<name>. Défaut: maximehollie41/spouet.
+    Dépôt GitHub au format <owner>/<name>. Défaut: ezoxe/spouet.
 
 .PARAMETER Tag
     Tag de release à installer. Défaut: latest.
@@ -25,7 +25,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $Repo  = "maximehollie41/spouet",
+    [string] $Repo  = "ezoxe/spouet",
     [string] $Tag   = "latest",
     [bool]   $Quiet = $true
 )

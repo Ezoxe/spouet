@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-: "${SPOUET_REPO_URL:=https://github.com/maximehollie41/spouet.git}"
+: "${SPOUET_REPO_URL:=https://github.com/ezoxe/spouet.git}"
 : "${SPOUET_BRANCH:=main}"
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
 : "${BACKEND:=}"

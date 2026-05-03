@@ -48,7 +48,7 @@ param(
     [string] $OllamaUrl   = "http://localhost:11434",
     [int]    $Interval    = 10,
     [string] $InstallDir  = "C:\spouet",
-    [string] $RepoUrl     = "https://github.com/maximehollie41/spouet.git",
+    [string] $RepoUrl     = "https://github.com/ezoxe/spouet.git",
     [string] $Branch      = "main",
     [string] $ServiceName = "SpouetAgent"
 )

@@ -56,7 +56,7 @@ Quatre installeurs one-liner couvrent toutes les surfaces. Aucun prérequis manu
 ### Serveur Debian / Ubuntu (stack complète)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maximehollie41/spouet/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ezoxe/spouet/main/install.sh | sudo bash
 ```
 
 Le script :
@@ -84,7 +84,7 @@ sudo bash install.sh --hostname=spouet.local --email=me@local --branch=main
 ### Node-agent Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maximehollie41/spouet/main/node-agent/install.sh \
+curl -fsSL https://raw.githubusercontent.com/ezoxe/spouet/main/node-agent/install.sh \
     | sudo BACKEND=https://spouet.local TOKEN=<token> bash
 ```
 
@@ -95,7 +95,7 @@ Bootstrap `uv`, clone le dépôt, crée l'utilisateur système `spouet`, écrit 
 PowerShell **Administrateur** :
 
 ```powershell
-irm https://raw.githubusercontent.com/maximehollie41/spouet/main/node-agent/install.ps1 | iex
+irm https://raw.githubusercontent.com/ezoxe/spouet/main/node-agent/install.ps1 | iex
 ```
 
 Bootstrap complet : installe `git` (via winget), `uv`, télécharge NSSM, clone dans `C:\spouet`, prompts backend/token, crée et démarre le service Windows `SpouetAgent` (auto-start).
@@ -105,7 +105,7 @@ Bootstrap complet : installe `git` (via winget), `uv`, télécharge NSSM, clone 
 PowerShell **Administrateur** :
 
 ```powershell
-irm https://raw.githubusercontent.com/maximehollie41/spouet/main/desktop/install.ps1 | iex
+irm https://raw.githubusercontent.com/ezoxe/spouet/main/desktop/install.ps1 | iex
 ```
 
 Télécharge le dernier MSI depuis GitHub Releases (publié automatiquement par CI sur tag `v*`) et l'installe en silencieux. Pas de compilation locale.

@@ -7,7 +7,7 @@
 #   sudo bash install.sh
 #
 # Variables d'env reconnues (toutes optionnelles) :
-#   SPOUET_REPO_URL        (def: https://github.com/maximehollie41/spouet.git)
+#   SPOUET_REPO_URL        (def: https://github.com/ezoxe/spouet.git)
 #   SPOUET_BRANCH          (def: main)
 #   SPOUET_INSTALL_DIR     (def: /opt/spouet)
 #   SPOUET_ADMIN_EMAIL     (def: admin@local)
@@ -24,7 +24,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-: "${SPOUET_REPO_URL:=https://github.com/maximehollie41/spouet.git}"
+: "${SPOUET_REPO_URL:=https://github.com/ezoxe/spouet.git}"
 : "${SPOUET_BRANCH:=main}"
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
 : "${SPOUET_ADMIN_EMAIL:=admin@local}"
