@@ -1,0 +1,35 @@
+slug: fs-read
+name: FS Read
+version: 0.1.0
+description: |
+  Lit un fichier texte depuis un répertoire monté dans le conteneur (par défaut
+  /workspace, à monter explicitement par l'orchestrateur). Lit max `max_bytes` octets.
+image: spouet/tool-fs-read:0.1.0
+
+network: none
+timeout_s: 10
+mem_limit: 128m
+cpu_limit: 0.5
+
+input_schema:
+  type: object
+  required: [path]
+  additionalProperties: false
+  properties:
+    path:
+      type: string
+      pattern: "^[^.][^\\\\]*$"
+      description: Chemin relatif depuis /workspace (pas de '..')
+    max_bytes:
+      type: integer
+      minimum: 1
+      maximum: 1000000
+      default: 100000
+
+output_schema:
+  type: object
+  properties:
+    text: { type: string }
+    bytes_read: { type: integer }
+    truncated: { type: boolean }
+    error: { type: string }

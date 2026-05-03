@@ -1,0 +1,90 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag à publier (ex: v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  desktop-windows:
+    name: Build Tauri MSI (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install web deps
+        working-directory: web
+        run: pnpm install --prefer-frozen-lockfile
+
+      - name: Build web (frontend bundle consommé par Tauri)
+        working-directory: web
+        run: pnpm build
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: pnpm install --prefer-frozen-lockfile
+
+      - name: Build Tauri (MSI + NSIS)
+        working-directory: desktop
+        run: pnpm tauri build
+
+      - name: Collect installers
+        id: collect
+        shell: pwsh
+        run: |
+          $bundleDir = "desktop/src-tauri/target/release/bundle"
+          $artifacts = Get-ChildItem -Path $bundleDir -Recurse -Include "*.msi","*.exe" |
+                       Where-Object { $_.Name -notlike "*.installer.exe.sig" }
+          if (-not $artifacts) { Write-Error "Aucun installeur produit dans $bundleDir"; exit 1 }
+          $stagingDir = "release-artifacts"
+          New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+          foreach ($a in $artifacts) {
+              Copy-Item $a.FullName -Destination $stagingDir
+              Write-Host "Collected: $($a.Name)"
+          }
+          "dir=$stagingDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload artifacts (CI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: spouet-desktop-windows
+          path: ${{ steps.collect.outputs.dir }}/*
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: ${{ steps.collect.outputs.dir }}/*

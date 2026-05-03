@@ -1,0 +1,149 @@
+<script lang="ts">
+    import { page } from '$app/stores';
+    import { goto } from '$app/navigation';
+    import { onMount } from 'svelte';
+    import { fly } from 'svelte/transition';
+    import {
+        Activity,
+        MessageSquare,
+        Wrench,
+        Clock,
+        FileText,
+        Brain,
+        Settings,
+        Plus,
+        Server,
+        Plug,
+        KeyRound
+    } from 'lucide-svelte';
+    import { conversations, type ConversationOut } from '$lib/api';
+    import { toast } from '$lib/toast';
+    import Logo from './Logo.svelte';
+
+    let convs: ConversationOut[] = $state([]);
+
+    const items = [
+        { href: '/', label: 'Tableau de bord', icon: Activity },
+        { href: '/chat', label: 'Conversations', icon: MessageSquare },
+        { href: '/nodes', label: 'Nodes', icon: Server },
+        { href: '/tools', label: 'Tools', icon: Wrench },
+        { href: '/connectors', label: 'Connectors', icon: Plug },
+        { href: '/jobs', label: 'Tâches', icon: Clock },
+        { href: '/docs', label: 'Documents', icon: FileText },
+        { href: '/memory', label: 'Mémoire', icon: Brain },
+        { href: '/secrets', label: 'Secrets', icon: KeyRound },
+        { href: '/settings', label: 'Paramètres', icon: Settings }
+    ];
+
+    async function refreshConvs() {
+        try {
+            convs = await conversations.list();
+        } catch {
+            convs = [];
+        }
+    }
+
+    async function newConversation() {
+        try {
+            const c = await conversations.create({ title: 'Nouvelle conversation' });
+            await refreshConvs();
+            goto(`/chat/${c.id}`);
+        } catch {
+            toast.error('Impossible de créer la conversation');
+        }
+    }
+
+    function isActive(href: string): boolean {
+        if (href === '/') return $page.url.pathname === '/';
+        return $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
+    }
+
+    onMount(refreshConvs);
+</script>
+
+<aside
+    class="hidden w-64 shrink-0 flex-col border-r border-[var(--color-border-subtle)]
+           bg-[color-mix(in_oklch,var(--color-bg-1)_85%,transparent)] backdrop-blur-md md:flex"
+>
+    <div class="flex items-center gap-2.5 px-4 py-4">
+        <div
+            class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-cyan-500/15
+                   to-cyan-700/5 p-1 shadow-[inset_0_0_0_1px_oklch(0.55_0.18_210/0.25)]"
+        >
+            <Logo size={28} glow />
+        </div>
+        <div>
+            <p class="text-base font-semibold tracking-tight leading-none">Spouet</p>
+            <p class="mt-0.5 text-[10px] uppercase tracking-wider text-neutral-500">v0.1</p>
+        </div>
+    </div>
+
+    <nav class="flex-1 space-y-0.5 overflow-y-auto px-2">
+        {#each items as it}
+            {@const active = isActive(it.href)}
+            <a
+                href={it.href}
+                class="group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm
+                       {active ? 'text-white' : 'text-neutral-400 hover:bg-white/5 hover:text-neutral-100'}"
+            >
+                {#if active}
+                    <span
+                        class="absolute inset-0 rounded-lg bg-gradient-to-r from-cyan-500/15
+                               to-transparent ring-1 ring-cyan-500/20"
+                    ></span>
+                    <span
+                        class="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full
+                               bg-cyan-400"
+                    ></span>
+                {/if}
+                <it.icon
+                    size={16}
+                    class="relative {active ? 'text-cyan-300' : 'text-neutral-500 group-hover:text-neutral-300'}"
+                />
+                <span class="relative">{it.label}</span>
+            </a>
+        {/each}
+
+        <div class="mt-4 px-3">
+            <div class="mb-2 flex items-center justify-between">
+                <span class="text-[10px] font-medium uppercase tracking-wider text-neutral-500"
+                    >Récent</span
+                >
+                <button
+                    type="button"
+                    onclick={newConversation}
+                    class="rounded p-1 text-neutral-400 hover:bg-white/5 hover:text-white"
+                    title="Nouvelle conversation"
+                    aria-label="Nouvelle conversation"
+                >
+                    <Plus size={14} />
+                </button>
+            </div>
+            <div class="space-y-0.5">
+                {#each convs.slice(0, 12) as c (c.id)}
+                    {@const active = $page.url.pathname === `/chat/${c.id}`}
+                    <a
+                        href="/chat/{c.id}"
+                        in:fly={{ x: -8, duration: 180 }}
+                        class="block truncate rounded-md px-2 py-1.5 text-xs
+                               {active ? 'bg-white/5 text-white' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}"
+                    >
+                        {c.title}
+                    </a>
+                {/each}
+            </div>
+        </div>
+    </nav>
+
+    <div
+        class="border-t border-[var(--color-border-subtle)] px-4 py-3 text-[10px] text-neutral-600"
+    >
+        <kbd class="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300"
+            >Ctrl</kbd
+        >
+        +
+        <kbd class="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300"
+            >Espace</kbd
+        > pour le compagnon
+    </div>
+</aside>

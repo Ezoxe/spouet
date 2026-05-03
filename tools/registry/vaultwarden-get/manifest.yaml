@@ -1,0 +1,41 @@
+slug: vaultwarden-get
+name: Vaultwarden — get item
+version: 0.1.0
+image: spouet/tool-vaultwarden:0.1.0
+description: |
+  Récupère une entrée Vaultwarden / Bitwarden complète (mot de passe, TOTP,
+  notes). Le paramètre `id_or_name` accepte soit l'UUID exact, soit le nom
+  exact de l'entrée.
+
+network: bridge
+mem_limit: 256m
+cpu_limit: 0.5
+timeout_s: 30
+
+env:
+  BW_OP: get
+
+secrets:
+  VAULTWARDEN_URL: global/vaultwarden_url
+  VAULTWARDEN_EMAIL: global/vaultwarden_email
+  VAULTWARDEN_PASSWORD: global/vaultwarden_password
+
+input_schema:
+  type: object
+  required: [id_or_name]
+  additionalProperties: false
+  properties:
+    id_or_name:
+      type: string
+      description: UUID ou nom exact de l'entrée.
+
+output_schema:
+  type: object
+  properties:
+    id: { type: string }
+    name: { type: string }
+    username: { type: [string, "null"] }
+    password: { type: [string, "null"] }
+    totp: { type: [string, "null"] }
+    notes: { type: [string, "null"] }
+    uri: { type: [string, "null"] }

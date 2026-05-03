@@ -1,0 +1,34 @@
+{$SPOUET_PUBLIC_HOSTNAME} {
+    encode gzip zstd
+
+    # API + SSE + WebSocket → backend FastAPI
+    handle /api/* {
+        reverse_proxy backend:8000 {
+            flush_interval -1
+            transport http {
+                read_buffer 4096
+                write_buffer 4096
+            }
+        }
+    }
+
+    handle /ws/* {
+        reverse_proxy backend:8000
+    }
+
+    handle /sse/* {
+        reverse_proxy backend:8000 {
+            flush_interval -1
+        }
+    }
+
+    # Tout le reste : 404 (le frontend est servi par les apps clientes elles-mêmes)
+    handle {
+        respond "Spouet backend. Use the web/desktop client." 404
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

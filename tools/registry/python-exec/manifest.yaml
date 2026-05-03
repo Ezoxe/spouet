@@ -1,0 +1,32 @@
+slug: python-exec
+name: Python Exec
+version: 0.1.0
+description: |
+  Exécute un snippet Python isolé (sans réseau, sans fs persistant). Utile pour
+  calculs, parsing, transformations. Le snippet doit assigner sa sortie à `result`
+  (n'importe quel objet JSON-sérialisable). stdout/stderr capturés.
+image: spouet/tool-python-exec:0.1.0
+
+network: none
+timeout_s: 15
+mem_limit: 256m
+cpu_limit: 1.0
+
+input_schema:
+  type: object
+  required: [code]
+  additionalProperties: false
+  properties:
+    code:
+      type: string
+      maxLength: 20000
+      description: Code Python à exécuter (doit assigner `result`)
+
+output_schema:
+  type: object
+  properties:
+    result:
+      description: Valeur assignée à `result` (any)
+    stdout: { type: string }
+    stderr: { type: string }
+    error:  { type: string }

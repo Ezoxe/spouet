@@ -1,0 +1,19 @@
+[Unit]
+Description=Spouet Ollama node agent
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spouet
+EnvironmentFile=/etc/spouet/agent.env
+ExecStart=/usr/local/bin/spouet-agent run \
+    --backend ${SPOUET_BACKEND} \
+    --token ${SPOUET_AGENT_TOKEN} \
+    --ollama ${OLLAMA_URL} \
+    --interval ${HEARTBEAT_INTERVAL}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

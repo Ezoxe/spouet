@@ -1,0 +1,182 @@
+@import 'tailwindcss';
+
+/* ----------------------------------------------------------------------------
+ * Design tokens
+ * Inspiré d'un dégradé "compagnon" : neutres profonds + accent cyan + halos
+ * ---------------------------------------------------------------------------- */
+
+@theme {
+    /* Backgrounds (du plus profond au plus clair) */
+    --color-bg-0: oklch(0.13 0.012 260);
+    --color-bg-1: oklch(0.17 0.012 260);
+    --color-bg-2: oklch(0.21 0.012 260);
+    --color-bg-3: oklch(0.26 0.012 260);
+
+    /* Bordures */
+    --color-border-subtle: oklch(0.27 0.012 260);
+    --color-border: oklch(0.32 0.014 260);
+    --color-border-strong: oklch(0.4 0.014 260);
+
+    /* Texte */
+    --color-text: oklch(0.96 0.01 260);
+    --color-text-muted: oklch(0.7 0.018 260);
+    --color-text-subtle: oklch(0.55 0.014 260);
+
+    /* Accent */
+    --color-accent: oklch(0.78 0.16 200);
+    --color-accent-fg: oklch(0.18 0.04 220);
+    --color-accent-soft: oklch(0.32 0.08 210);
+
+    /* Sémantiques */
+    --color-success: oklch(0.78 0.17 152);
+    --color-warning: oklch(0.82 0.16 80);
+    --color-danger: oklch(0.7 0.2 25);
+
+    /* Rayons */
+    --radius-sm: 0.5rem;
+    --radius-md: 0.75rem;
+    --radius-lg: 1rem;
+    --radius-xl: 1.25rem;
+
+    /* Ombres lumineuses (look "verre") */
+    --shadow-glow: 0 0 0 1px color-mix(in oklch, var(--color-accent) 18%, transparent),
+        0 8px 24px -8px color-mix(in oklch, var(--color-accent) 30%, transparent);
+    --shadow-card: 0 1px 0 0 oklch(1 0 0 / 0.04) inset,
+        0 12px 32px -16px oklch(0 0 0 / 0.4);
+}
+
+/* ----------------------------------------------------------------------------
+ * Reset / base
+ * ---------------------------------------------------------------------------- */
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    background: var(--color-bg-0);
+    color: var(--color-text);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+}
+
+/* Halo d'arrière-plan : grand spot cyan flou en haut à droite, léger noir en bas-gauche */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+        radial-gradient(900px circle at 85% -10%, oklch(0.55 0.18 210 / 0.15), transparent 55%),
+        radial-gradient(700px circle at -10% 110%, oklch(0.4 0.14 290 / 0.12), transparent 60%);
+}
+body > div {
+    position: relative;
+    z-index: 1;
+}
+
+/* ----------------------------------------------------------------------------
+ * Scrollbars discrètes
+ * ---------------------------------------------------------------------------- */
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.4 0.012 260) transparent;
+}
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+    background: oklch(0.32 0.012 260);
+    border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.42 0.014 260);
+}
+
+/* ----------------------------------------------------------------------------
+ * Animations utilitaires
+ * ---------------------------------------------------------------------------- */
+
+@keyframes pulse-soft {
+    0%,
+    100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+.pulse-soft {
+    animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0;
+    }
+}
+.cursor-blink::after {
+    content: '▍';
+    margin-left: 1px;
+    animation: blink 1s step-end infinite;
+    color: var(--color-accent);
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -800px 0;
+    }
+    100% {
+        background-position: 800px 0;
+    }
+}
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--color-bg-2) 0%,
+        var(--color-bg-3) 50%,
+        var(--color-bg-2) 100%
+    );
+    background-size: 800px 100%;
+    animation: shimmer 1.6s linear infinite;
+    border-radius: var(--radius-sm);
+}
+
+/* ----------------------------------------------------------------------------
+ * Verre / glass
+ * ---------------------------------------------------------------------------- */
+
+.glass {
+    background: color-mix(in oklch, var(--color-bg-1) 75%, transparent);
+    backdrop-filter: saturate(160%) blur(14px);
+    border: 1px solid var(--color-border-subtle);
+}
+
+/* ----------------------------------------------------------------------------
+ * Transitions natives
+ * ---------------------------------------------------------------------------- */
+
+button,
+a,
+input,
+select,
+textarea {
+    transition:
+        background-color 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease,
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
+}

@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.svelte-kit/
+.vite/
+.next/
+.turbo/
+*.log
+
+# Tauri / Rust
+desktop/src-tauri/target/
+desktop/src-tauri/Cargo.lock
+*.rs.bk
+
+# Env / secrets
+.env
+.env.local
+*.local
+.envrc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docker / data
+deploy/data/
+deploy/postgres-data/
+deploy/redis-data/
+deploy/caddy-data/
+
+# Build artefacts
+web/build/
+web/.svelte-kit/
+desktop/src-tauri/target/
+
+# Local Claude state (project-scoped)
+.claude/settings.local.json

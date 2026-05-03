@@ -1,0 +1,48 @@
+slug: discord-bot
+name: Discord Bot
+version: 0.1.0
+image: spouet/connector-discord:0.1.0
+description: |
+  Bridge un bot Discord avec une (ou plusieurs) conversation Spouet : chaque
+  channel autorisé devient une conv dédiée, les DMs aussi. L'IA peut répondre
+  en texte, ajouter des emojis (via le tool `discord-react`), splitter les
+  longs messages, etc.
+
+network: bridge
+mem_limit: 384m
+cpu_limit: 0.5
+
+secrets:
+  DISCORD_TOKEN: connector:discord-bot/token
+
+config_schema:
+  type: object
+  required: [bot_persona]
+  additionalProperties: false
+  properties:
+    bot_persona:
+      type: string
+      description: System prompt utilisé pour les conversations créées par ce bot.
+      default: "Tu es l'assistant Spouet. Tu réponds via Discord, en français, de manière concise."
+    default_model:
+      type: string
+      description: Modèle Ollama préféré (ex `qwen2.5:14b`). Sinon, le router choisit.
+    allowed_channels:
+      type: array
+      items: { type: string }
+      description: IDs des channels Discord autorisés (vide = tous les channels).
+      default: []
+    respond_dm:
+      type: boolean
+      description: Répondre aux messages privés.
+      default: true
+    trigger_prefix:
+      type: string
+      description: |
+        Si non vide, le bot ne répond que si le message commence par ce préfixe
+        (ex `!spouet `) ou si le bot est mentionné. Laissez vide pour répondre
+        à tous les messages dans les channels autorisés.
+      default: ""
+
+inbound_kinds: [message]
+outbound_kinds: [send_message, typing, react]

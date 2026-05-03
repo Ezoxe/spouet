@@ -1,0 +1,47 @@
+slug: vaultwarden-set
+name: Vaultwarden — set item
+version: 0.1.0
+image: spouet/tool-vaultwarden:0.1.0
+description: |
+  Crée ou met à jour une entrée Vaultwarden / Bitwarden. Si une entrée porte
+  déjà exactement le même `name`, elle est mise à jour ; sinon une nouvelle
+  est créée. Renvoie l'`id` et l'action effectuée.
+
+network: bridge
+mem_limit: 256m
+cpu_limit: 0.5
+timeout_s: 30
+
+env:
+  BW_OP: set
+
+secrets:
+  VAULTWARDEN_URL: global/vaultwarden_url
+  VAULTWARDEN_EMAIL: global/vaultwarden_email
+  VAULTWARDEN_PASSWORD: global/vaultwarden_password
+
+input_schema:
+  type: object
+  required: [name]
+  additionalProperties: false
+  properties:
+    name:
+      type: string
+      description: Nom de l'entrée (clé d'unicité côté Spouet).
+    username:
+      type: [string, "null"]
+    password:
+      type: [string, "null"]
+    notes:
+      type: [string, "null"]
+    uri:
+      type: [string, "null"]
+
+output_schema:
+  type: object
+  required: [id, action]
+  properties:
+    id: { type: string }
+    action:
+      type: string
+      enum: [created, updated]

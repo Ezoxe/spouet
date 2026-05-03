@@ -1,0 +1,44 @@
+slug: web-fetch
+name: Web Fetch
+version: 0.1.0
+description: |
+  Télécharge le contenu d'une URL HTTP(S) et renvoie le texte (avec extraction
+  basique du body HTML). Limité à `max_bytes` octets.
+image: spouet/tool-web-fetch:0.1.0
+
+# Sécurité : le tool a besoin du réseau, donc bridge + approval
+network: bridge
+timeout_s: 30
+mem_limit: 256m
+cpu_limit: 1.0
+
+input_schema:
+  type: object
+  required: [url]
+  additionalProperties: false
+  properties:
+    url:
+      type: string
+      format: uri
+      description: URL HTTP/HTTPS à télécharger
+    max_bytes:
+      type: integer
+      minimum: 1
+      maximum: 5000000
+      default: 200000
+      description: Taille max de la réponse à conserver
+
+output_schema:
+  type: object
+  required: [status, text]
+  properties:
+    status:
+      type: integer
+      description: Code HTTP retourné
+    text:
+      type: string
+      description: Contenu textuel (HTML brut tronqué)
+    truncated:
+      type: boolean
+    final_url:
+      type: string

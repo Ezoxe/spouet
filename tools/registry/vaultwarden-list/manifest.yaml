@@ -1,0 +1,46 @@
+slug: vaultwarden-list
+name: Vaultwarden — list items
+version: 0.1.0
+image: spouet/tool-vaultwarden:0.1.0
+description: |
+  Liste les entrées d'un Vaultwarden / Bitwarden. Filtrable par sous-chaîne
+  via `search`. Ne renvoie pas les mots de passe — utilise `vaultwarden-get`
+  pour ça.
+
+network: bridge
+mem_limit: 256m
+cpu_limit: 0.5
+timeout_s: 30
+
+env:
+  BW_OP: list
+
+secrets:
+  VAULTWARDEN_URL: global/vaultwarden_url
+  VAULTWARDEN_EMAIL: global/vaultwarden_email
+  VAULTWARDEN_PASSWORD: global/vaultwarden_password
+
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    search:
+      type: string
+      description: Sous-chaîne à matcher dans le nom des entrées.
+
+output_schema:
+  type: object
+  required: [items, count]
+  properties:
+    items:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          name: { type: string }
+          username: { type: [string, "null"] }
+          uri: { type: [string, "null"] }
+          folder_id: { type: [string, "null"] }
+    count:
+      type: integer
