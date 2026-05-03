@@ -190,6 +190,42 @@ fi
 cd "$SPOUET_INSTALL_DIR/deploy"
 
 # ---------------------------------------------------------------------------
+# 3b. Purge optionnelle des données Spouet existantes
+# ---------------------------------------------------------------------------
+_SPOUET_CONTAINERS=$(docker ps -a --filter "label=com.docker.compose.project=spouet" -q 2>/dev/null || true)
+_SPOUET_HAS_DATA=0
+[[ -d "data" || -f ".env" ]] && _SPOUET_HAS_DATA=1
+
+if [[ -n "$_SPOUET_CONTAINERS" || "$_SPOUET_HAS_DATA" == "1" ]]; then
+    warn "Données Spouet existantes détectées :"
+    if [[ -n "$_SPOUET_CONTAINERS" ]]; then
+        _NAMES=$(docker ps -a --filter "label=com.docker.compose.project=spouet" \
+                     --format '{{.Names}}' 2>/dev/null | tr '\n' ' ')
+        warn "  Conteneurs : $_NAMES"
+    fi
+    [[ -f ".env" ]]          && warn "  Fichier    : deploy/.env (secrets)"
+    [[ -d "data/postgres" ]] && warn "  Données    : deploy/data/postgres/"
+    [[ -d "data/redis" ]]    && warn "  Données    : deploy/data/redis/"
+    echo
+
+    _PURGE="n"
+    if [[ "$SPOUET_NON_INTERACTIVE" != "1" ]]; then
+        printf '\033[1;33m[spouet]\033[0m Purger complètement les conteneurs et données Spouet ? [y/N] : '
+        read -r _PURGE </dev/tty || true
+    fi
+
+    if [[ "${_PURGE,,}" == "y" ]]; then
+        log "Arrêt et suppression des conteneurs Spouet…"
+        docker compose down -v --remove-orphans 2>/dev/null || true
+        log "Suppression des données Spouet (bind mounts + .env)…"
+        rm -rf data/ .env .first-token-issued
+        log "Purge terminée — installation repart de zéro."
+    else
+        log "Purge ignorée — données existantes conservées."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 4. Génération du .env (idempotent)
 # ---------------------------------------------------------------------------
 gen_secret() { openssl rand -hex "$1"; }
