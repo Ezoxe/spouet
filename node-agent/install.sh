@@ -110,8 +110,12 @@ else
 fi
 chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
 
+# Cache uv dans l'arbo Spouet (le HOME de spouet n'est pas garanti d'exister)
+UV_CACHE="$SPOUET_INSTALL_DIR/.cache/uv"
+install -d -o spouet -g spouet -m 0755 "$UV_CACHE"
+
 log "uv sync (node-agent)…"
-sudo -u spouet "$UV_BIN" sync --directory "$SPOUET_INSTALL_DIR/node-agent"
+sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync --directory "$SPOUET_INSTALL_DIR/node-agent"
 
 # ---------------------------------------------------------------------------
 # Config /etc/spouet/agent.env
@@ -139,6 +143,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=spouet
+Environment=UV_CACHE_DIR=$UV_CACHE
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent run \\
