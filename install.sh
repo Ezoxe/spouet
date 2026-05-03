@@ -218,7 +218,7 @@ SPOUET_DATABASE_URL=postgresql+asyncpg://spouet:$POSTGRES_PASSWORD@postgres:5432
 SPOUET_REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379/0
 SPOUET_SECRET_KEY=$SPOUET_SECRET_KEY
 SPOUET_LOG_LEVEL=INFO
-SPOUET_CORS_ORIGINS=http://localhost:$PORT_BACKEND,tauri://localhost,http://localhost:5173
+SPOUET_CORS_ORIGINS=["http://localhost:$PORT_BACKEND","tauri://localhost","http://localhost:5173"]
 
 SPOUET_EMBEDDING_MODEL=nomic-embed-text
 SPOUET_EMBEDDING_DIM=768
