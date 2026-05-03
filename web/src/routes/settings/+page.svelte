@@ -1,21 +1,41 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
-    import { auth, setToken, type MeOut } from '$lib/api';
+    import { ApiError, auth, setToken, type MeOut } from '$lib/api';
+    import { toast } from '$lib/toast.svelte';
     import { LogOut, RefreshCw, Copy } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let me: MeOut | null = $state(null);
     let newToken: string | null = $state(null);
 
+    function isHandledAuthError(e: unknown): boolean {
+        return e instanceof ApiError && e.status === 401;
+    }
+
     async function refresh() {
-        me = await auth.me();
+        try {
+            me = await auth.me();
+        } catch (e) {
+            if (!isHandledAuthError(e)) {
+                toast.error('Impossible de charger le compte.');
+                console.error(e);
+            }
+        }
     }
     async function rotate() {
         if (!confirm('Régénérer le token ? L\'ancien sera invalidé immédiatement.')) return;
-        const r = await auth.rotate();
-        newToken = r.token;
-        setToken(r.token);
+        try {
+            const r = await auth.rotate();
+            newToken = r.token;
+            setToken(r.token);
+            toast.success('Nouveau token généré — copiez-le maintenant.');
+        } catch (e) {
+            if (!isHandledAuthError(e)) {
+                toast.error('Échec de la régénération du token.');
+                console.error(e);
+            }
+        }
     }
     function logout() {
         setToken(null);

@@ -1,4 +1,6 @@
+import { goto } from '$app/navigation';
 import { PUBLIC_API_BASE } from '$env/static/public';
+import { toast } from './toast.svelte';
 
 /**
  * Client API pour le backend Spouet.
@@ -50,10 +52,19 @@ export async function api<T>(
         } catch {
             /* ignore */
         }
+        if (res.status === 401) handleUnauthorized();
         throw new ApiError(res.status, parsed, `${res.status} ${res.statusText}`);
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+}
+
+function handleUnauthorized(): void {
+    if (typeof window === 'undefined') return;
+    if (window.location.pathname === '/login') return;
+    setToken(null);
+    toast.error('Session expirée, reconnectez-vous.');
+    goto('/login');
 }
 
 // ----------------------------------------------------------------------------
@@ -79,7 +90,10 @@ export async function* streamSse(
         init.body = JSON.stringify(init.json);
     }
     const res = await fetch(`${BASE}/api${path}`, { ...init, headers });
-    if (!res.ok || !res.body) throw new ApiError(res.status, null, `${res.status}`);
+    if (!res.ok || !res.body) {
+        if (res.status === 401) handleUnauthorized();
+        throw new ApiError(res.status, null, `${res.status}`);
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
