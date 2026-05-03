@@ -3,19 +3,20 @@
 #
 # Usage typique :
 #   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/main/install.sh | sudo bash
+#   # OU depuis le dépôt déjà cloné :
+#   sudo bash install.sh
 #
 # Variables d'env reconnues (toutes optionnelles) :
-#   SPOUET_REPO_URL       (def: https://github.com/<owner>/spouet.git)
-#   SPOUET_BRANCH         (def: main)
-#   SPOUET_INSTALL_DIR    (def: /opt/spouet)
-#   SPOUET_HOSTNAME       (def: spouet.local)
-#   SPOUET_ADMIN_EMAIL    (def: admin@local)
+#   SPOUET_REPO_URL        (def: https://github.com/maximehollie41/spouet.git)
+#   SPOUET_BRANCH          (def: main)
+#   SPOUET_INSTALL_DIR     (def: /opt/spouet)
+#   SPOUET_ADMIN_EMAIL     (def: admin@local)
 #   SPOUET_NON_INTERACTIVE (def: 0 — passe à 1 pour skip les prompts)
-#   SPOUET_SKIP_DOCKER    (def: 0 — passe à 1 si Docker déjà géré)
-#   SPOUET_SKIP_SYSTEMD   (def: 0)
+#   SPOUET_SKIP_DOCKER     (def: 0 — passe à 1 si Docker déjà géré)
+#   SPOUET_SKIP_SYSTEMD    (def: 0)
 #
 # Drapeaux équivalents :
-#   --hostname=...   --email=...   --branch=...   --dir=...
+#   --email=...   --branch=...   --dir=...
 #   --non-interactive   --skip-docker   --skip-systemd
 
 set -euo pipefail
@@ -26,7 +27,6 @@ set -euo pipefail
 : "${SPOUET_REPO_URL:=https://github.com/maximehollie41/spouet.git}"
 : "${SPOUET_BRANCH:=main}"
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
-: "${SPOUET_HOSTNAME:=spouet.local}"
 : "${SPOUET_ADMIN_EMAIL:=admin@local}"
 : "${SPOUET_NON_INTERACTIVE:=0}"
 : "${SPOUET_SKIP_DOCKER:=0}"
@@ -37,7 +37,6 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --hostname=*)        SPOUET_HOSTNAME="${1#*=}" ;;
         --email=*)           SPOUET_ADMIN_EMAIL="${1#*=}" ;;
         --branch=*)          SPOUET_BRANCH="${1#*=}" ;;
         --dir=*)             SPOUET_INSTALL_DIR="${1#*=}" ;;
@@ -46,7 +45,7 @@ while [[ $# -gt 0 ]]; do
         --skip-docker)       SPOUET_SKIP_DOCKER=1 ;;
         --skip-systemd)      SPOUET_SKIP_SYSTEMD=1 ;;
         -h|--help)
-            sed -n '2,30p' "$0"; exit 0 ;;
+            sed -n '2,28p' "$0"; exit 0 ;;
         *)
             echo "Argument inconnu: $1" >&2; exit 2 ;;
     esac
@@ -61,13 +60,10 @@ warn() { printf '\033[1;33m[spouet]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[spouet]\033[0m %s\n' "$*" >&2; exit 1; }
 
 require_root() {
-    if [[ $EUID -ne 0 ]]; then
-        die "Ce script doit être lancé en root (sudo bash install.sh)."
-    fi
+    [[ $EUID -eq 0 ]] || die "Ce script doit être lancé en root (sudo bash install.sh)."
 }
 
 prompt() {
-    # prompt VAR_NAME "Question" "default"
     local var="$1" question="$2" def="${3:-}"
     if [[ "$SPOUET_NON_INTERACTIVE" == "1" ]]; then return; fi
     local current="${!var}"
@@ -81,27 +77,62 @@ prompt() {
     [[ -n "$answer" ]] && printf -v "$var" '%s' "$answer"
 }
 
+# Retourne la liste des ports déjà utilisés (système + conteneurs Docker actifs)
+_used_ports_list() {
+    ss -tlnp 2>/dev/null \
+        | awk 'NR>1 { n=split($4,a,":"); p=a[n]+0; if(p>0) print p }'
+    docker ps --format '{{.Ports}}' 2>/dev/null \
+        | sed 's/[, ]\+/\n/g' \
+        | sed -n 's/.*:\([0-9]*\)->.*/\1/p' \
+        | grep -E '^[0-9]+$' || true
+}
+
+# Trouve le premier port libre >= min (recherche dans système + Docker)
+find_free_port() {
+    local min="${1:-10000}"
+    local max=$(( min + 2000 ))
+    local port=$min
+    local used
+    used="$(_used_ports_list | sort -un)"
+    while printf '%s\n' "$used" | grep -qxF "$port" && (( port < max )); do
+        (( port++ ))
+    done
+    (( port < max )) || die "Aucun port libre trouvé entre $min et $max."
+    echo "$port"
+}
+
 # ---------------------------------------------------------------------------
 # Pre-flight
 # ---------------------------------------------------------------------------
 require_root
 
-if ! command -v lsb_release &>/dev/null && [[ ! -f /etc/os-release ]]; then
-    die "OS non identifié — Debian/Ubuntu requis."
-fi
+[[ -f /etc/os-release ]] || die "OS non identifié — Debian/Ubuntu requis."
 . /etc/os-release
 case "${ID:-}" in
     debian|ubuntu|raspbian) : ;;
     *) warn "OS '$ID' non testé — l'installer cible Debian/Ubuntu, mais on tente quand même." ;;
 esac
 
-log "Hôte cible       : $SPOUET_HOSTNAME"
+# Détecter si le script est lancé depuis le dépôt lui-même
+SCRIPT_SRC="${BASH_SOURCE[0]:-}"
+if [[ -n "$SCRIPT_SRC" && "$SCRIPT_SRC" != "/dev/stdin" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SRC")" && pwd)"
+else
+    SCRIPT_DIR="$(pwd)"
+fi
+
+_GIT_DETECTED=0
+if [[ -d "$SCRIPT_DIR/.git" ]]; then
+    log "Dépôt git détecté dans $SCRIPT_DIR — utilisation directe, pas de clone."
+    SPOUET_INSTALL_DIR="$SCRIPT_DIR"
+    _GIT_DETECTED=1
+fi
+
 log "Répertoire       : $SPOUET_INSTALL_DIR"
 log "Branche          : $SPOUET_BRANCH"
 log "Email admin      : $SPOUET_ADMIN_EMAIL"
 
-prompt SPOUET_HOSTNAME    "Hostname public Spouet (Caddy/TLS)" "$SPOUET_HOSTNAME"
-prompt SPOUET_ADMIN_EMAIL "Email du premier compte admin"      "$SPOUET_ADMIN_EMAIL"
+prompt SPOUET_ADMIN_EMAIL "Email du premier compte admin" "$SPOUET_ADMIN_EMAIL"
 
 # ---------------------------------------------------------------------------
 # 1. Dépendances système
@@ -109,7 +140,7 @@ prompt SPOUET_ADMIN_EMAIL "Email du premier compte admin"      "$SPOUET_ADMIN_EM
 log "Installation des dépendances système (git, openssl, curl, ca-certificates)…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq git openssl curl ca-certificates gnupg
+apt-get install -y -qq git openssl curl ca-certificates gnupg iproute2
 
 # ---------------------------------------------------------------------------
 # 2. Docker + Compose v2
@@ -129,10 +160,25 @@ if [[ "$SPOUET_SKIP_DOCKER" != "1" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Cloner / mettre à jour le dépôt
+# 2b. Inventaire des conteneurs Docker existants
 # ---------------------------------------------------------------------------
-if [[ -d "$SPOUET_INSTALL_DIR/.git" ]]; then
-    log "Dépôt existant — git pull…"
+log "Conteneurs Docker actuellement en cours d'exécution :"
+RUNNING_CONTAINERS=$(docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null || true)
+RUNNING_COUNT=$(docker ps -q 2>/dev/null | wc -l || echo 0)
+if [[ "$RUNNING_COUNT" -gt 0 ]]; then
+    echo "$RUNNING_CONTAINERS"
+    warn "$RUNNING_COUNT conteneur(s) en cours — les ports seront pris en compte lors de l'allocation."
+else
+    log "  (aucun conteneur actif)"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Cloner / mettre à jour / ignorer le dépôt
+# ---------------------------------------------------------------------------
+if [[ "$_GIT_DETECTED" == "1" ]]; then
+    log "Script lancé depuis le dépôt local — étape git ignorée."
+elif [[ -d "$SPOUET_INSTALL_DIR/.git" ]]; then
+    log "Dépôt existant dans $SPOUET_INSTALL_DIR — git pull…"
     git -C "$SPOUET_INSTALL_DIR" fetch --quiet origin "$SPOUET_BRANCH"
     git -C "$SPOUET_INSTALL_DIR" checkout --quiet "$SPOUET_BRANCH"
     git -C "$SPOUET_INSTALL_DIR" pull --quiet --ff-only
@@ -149,13 +195,18 @@ cd "$SPOUET_INSTALL_DIR/deploy"
 gen_secret() { openssl rand -hex "$1"; }
 
 if [[ ! -f .env ]]; then
-    log "Génération de deploy/.env (secrets aléatoires)…"
+    log "Détection des ports libres (>= 10000, hors système et Docker existant)…"
+    PORT_PG=$(find_free_port 10000)
+    PORT_REDIS=$(find_free_port $(( PORT_PG + 1 )))
+    PORT_BACKEND=$(find_free_port $(( PORT_REDIS + 1 )))
+    log "  postgres → :$PORT_PG   redis → :$PORT_REDIS   backend → :$PORT_BACKEND"
+
     POSTGRES_PASSWORD=$(gen_secret 24)
     REDIS_PASSWORD=$(gen_secret 24)
     SPOUET_SECRET_KEY=$(gen_secret 32)
+
     cat > .env <<EOF
 # --- Généré par install.sh le $(date -u +%FT%TZ) ---
-SPOUET_PUBLIC_HOSTNAME=$SPOUET_HOSTNAME
 
 POSTGRES_USER=spouet
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -167,7 +218,7 @@ SPOUET_DATABASE_URL=postgresql+asyncpg://spouet:$POSTGRES_PASSWORD@postgres:5432
 SPOUET_REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379/0
 SPOUET_SECRET_KEY=$SPOUET_SECRET_KEY
 SPOUET_LOG_LEVEL=INFO
-SPOUET_CORS_ORIGINS=https://$SPOUET_HOSTNAME,tauri://localhost,http://localhost:5173
+SPOUET_CORS_ORIGINS=http://localhost:$PORT_BACKEND,tauri://localhost,http://localhost:5173
 
 SPOUET_EMBEDDING_MODEL=nomic-embed-text
 SPOUET_EMBEDDING_DIM=768
@@ -177,10 +228,17 @@ SPOUET_TOOL_DEFAULT_CPU_LIMIT=1.0
 SPOUET_TOOL_DEFAULT_TIMEOUT_S=30
 
 SPOUET_NODE_OFFLINE_AFTER_S=30
+
+# Ports hôte alloués dynamiquement
+SPOUET_POSTGRES_PORT=$PORT_PG
+SPOUET_REDIS_PORT=$PORT_REDIS
+SPOUET_BACKEND_PORT=$PORT_BACKEND
 EOF
     chmod 600 .env
 else
     log "deploy/.env existant — conservé tel quel."
+    PORT_BACKEND=$(grep -E '^SPOUET_BACKEND_PORT=' .env | cut -d= -f2 || true)
+    PORT_BACKEND="${PORT_BACKEND:-10002}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -192,7 +250,7 @@ docker compose build
 log "docker compose up -d…"
 docker compose up -d
 
-log "Attente backend healthy…"
+log "Attente backend healthy (max 180s)…"
 deadline=$(( $(date +%s) + 180 ))
 until docker compose exec -T backend curl -fsS --max-time 2 http://127.0.0.1:8000/api/health &>/dev/null; do
     if (( $(date +%s) > deadline )); then
@@ -237,11 +295,10 @@ fi
 # 7. systemd
 # ---------------------------------------------------------------------------
 if [[ "$SPOUET_SKIP_SYSTEMD" != "1" ]]; then
-    log "Installation du service systemd spouet-stack…"
     UNIT_SRC="$SPOUET_INSTALL_DIR/deploy/systemd/spouet-stack.service"
     UNIT_DST="/etc/systemd/system/spouet-stack.service"
     if [[ -f "$UNIT_SRC" ]]; then
-        # Adapter le WorkingDirectory si l'install dir n'est pas /opt/spouet
+        log "Installation du service systemd spouet-stack…"
         sed "s|/opt/spouet|$SPOUET_INSTALL_DIR|g" "$UNIT_SRC" > "$UNIT_DST"
         systemctl daemon-reload
         systemctl enable --now spouet-stack
@@ -253,6 +310,6 @@ fi
 
 # ---------------------------------------------------------------------------
 log "✓ Installation terminée."
-log "  → UI Caddy   : https://$SPOUET_HOSTNAME"
-log "  → Logs       : (cd $SPOUET_INSTALL_DIR/deploy && docker compose logs -f backend)"
-log "  → Status     : systemctl status spouet-stack"
+log "  → Backend API : http://localhost:$PORT_BACKEND"
+log "  → Logs        : (cd $SPOUET_INSTALL_DIR/deploy && docker compose logs -f backend)"
+log "  → Status      : systemctl status spouet-stack"
