@@ -32,6 +32,10 @@ celery_app.conf.beat_schedule = {
         "task": "spouet.workers.tasks.mark_offline_nodes",
         "schedule": schedule(15.0),
     },
+    "poll-direct-nodes": {
+        "task": "spouet.workers.tasks.poll_direct_nodes",
+        "schedule": schedule(15.0),
+    },
     "monitor-connectors": {
         "task": "spouet.workers.tasks.monitor_connectors",
         "schedule": schedule(30.0),

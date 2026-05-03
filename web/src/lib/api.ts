@@ -227,9 +227,19 @@ export const auth = {
     rotate: () => api<{ token: string }>('/auth/rotate', { method: 'POST' })
 };
 
+export interface NodeProbeOut {
+    reachable: boolean;
+    error: string | null;
+    models: string[];
+}
+
 export const nodes = {
     list: () => api<NodeOut[]>('/nodes'),
     models: () => api<ModelAgg[]>('/nodes/models'),
+    create: (json: { name: string; host: string; port?: number; tags?: string[] }) =>
+        api<NodeOut>('/nodes', { method: 'POST', json }),
+    probe: (json: { name: string; host: string; port?: number }) =>
+        api<NodeProbeOut>('/nodes/probe', { method: 'POST', json }),
     delete: (id: string) => api<void>(`/nodes/${id}`, { method: 'DELETE' })
 };
 
@@ -238,6 +248,7 @@ export const conversations = {
     get: (id: string) => api<ConversationOut>(`/conversations/${id}`),
     create: (json: { title?: string; model_pref?: string; system_prompt?: string }) =>
         api<ConversationOut>('/conversations', { method: 'POST', json }),
+    delete: (id: string) => api<void>(`/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => api<MessageOut[]>(`/conversations/${id}/messages`),
     send: (id: string, json: { text: string; model?: string }) =>
         streamSse(`/conversations/${id}/messages`, { method: 'POST', json })

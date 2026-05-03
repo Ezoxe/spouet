@@ -12,6 +12,7 @@ from sqlalchemy import select
 from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.logging import get_logger
 from spouet.db.models import Model, Node
+from spouet.nodes.client import DIRECT_AGENT_MARKER, probe as probe_ollama
 from spouet.nodes.router import list_available_models
 
 router = APIRouter()
@@ -139,6 +140,111 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     )
     return HeartbeatResponse(
         node_id=str(node.id), next_heartbeat_in_s=settings.node_heartbeat_interval_s
+    )
+
+
+class NodeCreate(BaseModel):
+    """Création manuelle d'un node Ollama (sans node-agent installé sur la machine cible).
+
+    Le backend interrogera périodiquement `http://{host}:{port}/api/tags` pour
+    rafraîchir la liste des modèles et le statut online/offline.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=11434, ge=1, le=65535)
+    tags: list[str] = Field(default_factory=list)
+
+
+class NodeProbeOut(BaseModel):
+    reachable: bool
+    error: str | None
+    models: list[str]
+
+
+@router.post("/probe", response_model=NodeProbeOut)
+async def probe_node(payload: NodeCreate, _: CurrentUser) -> NodeProbeOut:
+    """Teste la connectivité d'un Ollama sans le persister. Utile pour valider la config UI."""
+    result = await probe_ollama(f"http://{payload.host}:{payload.port}")
+    return NodeProbeOut(
+        reachable=result.reachable,
+        error=result.error,
+        models=[m.name for m in result.models],
+    )
+
+
+@router.post("", response_model=NodeOut, status_code=status.HTTP_201_CREATED)
+async def create_node(payload: NodeCreate, _: CurrentUser, db: DbSession) -> NodeOut:
+    """Enregistre un Ollama joignable directement (sans node-agent).
+
+    Le node sera marqué `online` immédiatement si le probe réussit, puis
+    rafraîchi périodiquement par la tâche Celery `poll_direct_nodes`.
+    """
+    existing = await db.scalar(select(Node).where(Node.name == payload.name))
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Node '{payload.name}' existe déjà")
+
+    result = await probe_ollama(f"http://{payload.host}:{payload.port}")
+    now = datetime.now(timezone.utc)
+
+    node = Node(
+        name=payload.name,
+        host=payload.host,
+        port=payload.port,
+        agent_version=DIRECT_AGENT_MARKER,
+        tags=payload.tags,
+        status="online" if result.reachable else "offline",
+        last_seen=now if result.reachable else None,
+    )
+    db.add(node)
+    await db.flush()
+
+    if result.reachable:
+        for m in result.models:
+            db.add(
+                Model(
+                    node_id=node.id,
+                    name=m.name,
+                    digest=m.digest,
+                    size_bytes=m.size_bytes,
+                    quant=m.quant,
+                    parameter_size=m.parameter_size,
+                    supports_tools=m.supports_tools,
+                    last_seen=now,
+                )
+            )
+    await db.commit()
+    await db.refresh(node)
+    logger.info(
+        "node.created_direct",
+        name=node.name,
+        reachable=result.reachable,
+        models=len(result.models),
+    )
+
+    models = await _models_for_node(db, node.id)
+    return NodeOut(
+        id=str(node.id),
+        name=node.name,
+        host=node.host,
+        port=node.port,
+        status=node.status,
+        last_seen=node.last_seen,
+        vram_total_mb=node.vram_total_mb,
+        vram_used_mb=node.vram_used_mb,
+        gpu_model=node.gpu_model,
+        agent_version=node.agent_version,
+        tags=node.tags,
+        models=[
+            ModelOut(
+                name=m.name,
+                digest=m.digest,
+                size_bytes=m.size_bytes,
+                parameter_size=m.parameter_size,
+                supports_tools=m.supports_tools,
+            )
+            for m in models
+        ],
     )
 
 

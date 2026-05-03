@@ -6,6 +6,7 @@
         type ConnectorOut
     } from '$lib/api';
     import EmptyState from '$lib/components/EmptyState.svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
     import StatusDot from '$lib/components/StatusDot.svelte';
     import { toast } from '$lib/toast.svelte';
     import {
@@ -125,6 +126,43 @@
 
 <div class="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
     <div class="mx-auto max-w-5xl space-y-6">
+        <HelpPanel
+            title="Tools vs Connectors : la différence en 30 s"
+            storageKey="connectors"
+        >
+            <p class="mb-2">
+                Un <strong>tool</strong> est éphémère (un conteneur par appel, durée de vie =
+                quelques secondes). Un <strong>connector</strong> est <strong>persistant</strong> :
+                un conteneur tourne en continu, écoute un canal externe (Discord, Telegram, IMAP,
+                Matrix, MQTT…) et pousse les messages reçus vers une conversation Spouet.
+            </p>
+            <ul class="ml-4 list-disc space-y-1">
+                <li>
+                    Les routes (mapping <em>identifiant externe → conversation</em>) se gèrent dans
+                    la page <strong>Configurer</strong> du connector (icône engrenage).
+                </li>
+                <li>
+                    Les variables sensibles (token Discord, mot de passe IMAP) sont lues depuis le
+                    coffre via <a class="underline hover:text-white" href="/secrets">scope
+                    secrets</a> nommé <code class="rounded bg-neutral-800 px-1"
+                        >connector:&lt;slug&gt;</code
+                    >.
+                </li>
+                <li>
+                    En cas de crash : un worker Celery (<code class="rounded bg-neutral-800 px-1"
+                        >monitor_connectors</code
+                    >) relance automatiquement les connectors marqués <code
+                        class="rounded bg-neutral-800 px-1">enabled</code
+                    > toutes les 30 s.
+                </li>
+                <li>
+                    L’image Docker doit déjà être présente sur le serveur — utilise
+                    <code class="rounded bg-neutral-800 px-1">docker build</code> ou
+                    <code class="rounded bg-neutral-800 px-1">docker pull</code> avant l’install.
+                </li>
+            </ul>
+        </HelpPanel>
+
         <section
             class="glass rounded-2xl border border-[var(--color-border)] p-5"
             in:fly={{ y: 6, duration: 180 }}

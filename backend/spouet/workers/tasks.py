@@ -15,7 +15,8 @@ from sqlalchemy.pool import NullPool
 from spouet.connectors import manager as connector_manager
 from spouet.core.config import settings
 from spouet.core.logging import get_logger
-from spouet.db.models import Connector, Conversation, JobRun, Node, ScheduledJob, User
+from spouet.db.models import Connector, Conversation, JobRun, Model, Node, ScheduledJob, User
+from spouet.nodes.client import DIRECT_AGENT_MARKER, probe as probe_ollama
 from spouet.orchestrator.chat_loop import stream_assistant_reply
 from spouet.realtime.hub import publish, user_channel
 from spouet.scheduler.syncer import reload_beat_schedule
@@ -59,6 +60,68 @@ async def _mark_offline_nodes_async() -> int:
     if count:
         logger.info("nodes.marked_offline", count=count)
     return count
+
+
+@celery_app.task(name="spouet.workers.tasks.poll_direct_nodes")
+def poll_direct_nodes() -> int:
+    """Ping les nodes Ollama enregistrés sans agent (`agent_version='direct'`)."""
+    return asyncio.run(_poll_direct_nodes_async())
+
+
+async def _poll_direct_nodes_async() -> int:
+    polled = 0
+    async with _task_db() as db:
+        rows = (
+            await db.execute(select(Node).where(Node.agent_version == DIRECT_AGENT_MARKER))
+        ).scalars().all()
+        for node in rows:
+            now = datetime.now(timezone.utc)
+            result = await probe_ollama(f"http://{node.host}:{node.port}")
+            if not result.reachable:
+                node.status = "offline"
+                # On ne touche pas last_seen : le sweep mark_offline_nodes l'utilise.
+                continue
+            node.status = "online"
+            node.last_seen = now
+
+            existing = {
+                m.name: m
+                for m in (
+                    await db.execute(select(Model).where(Model.node_id == node.id))
+                ).scalars().all()
+            }
+            seen: set[str] = set()
+            for m in result.models:
+                seen.add(m.name)
+                if m.name in existing:
+                    row = existing[m.name]
+                    row.digest = m.digest
+                    row.size_bytes = m.size_bytes
+                    row.quant = m.quant
+                    row.parameter_size = m.parameter_size
+                    row.supports_tools = m.supports_tools
+                    row.last_seen = now
+                else:
+                    db.add(
+                        Model(
+                            node_id=node.id,
+                            name=m.name,
+                            digest=m.digest,
+                            size_bytes=m.size_bytes,
+                            quant=m.quant,
+                            parameter_size=m.parameter_size,
+                            supports_tools=m.supports_tools,
+                            last_seen=now,
+                        )
+                    )
+            for name, row in existing.items():
+                if name not in seen:
+                    await db.delete(row)
+            polled += 1
+        await db.commit()
+    if polled:
+        logger.info("nodes.polled_direct", count=polled)
+    return polled
 
 
 @celery_app.task(name="spouet.workers.tasks.sync_scheduler")

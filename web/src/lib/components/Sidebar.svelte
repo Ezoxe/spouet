@@ -14,7 +14,8 @@
         Plus,
         Server,
         Plug,
-        KeyRound
+        KeyRound,
+        Trash2
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -50,6 +51,19 @@
             goto(`/chat/${c.id}`);
         } catch {
             toast.error('Impossible de créer la conversation');
+        }
+    }
+
+    async function deleteConversation(ev: Event, c: ConversationOut) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!confirm(`Supprimer la conversation « ${c.title} » ?`)) return;
+        try {
+            await conversations.delete(c.id);
+            await refreshConvs();
+            if ($page.url.pathname === `/chat/${c.id}`) goto('/chat');
+        } catch {
+            toast.error('Suppression impossible');
         }
     }
 
@@ -122,14 +136,29 @@
             <div class="space-y-0.5">
                 {#each convs.slice(0, 12) as c (c.id)}
                     {@const active = $page.url.pathname === `/chat/${c.id}`}
-                    <a
-                        href="/chat/{c.id}"
+                    <div
                         in:fly={{ x: -8, duration: 180 }}
-                        class="block truncate rounded-md px-2 py-1.5 text-xs
-                               {active ? 'bg-white/5 text-white' : 'text-neutral-400 hover:bg-white/5 hover:text-white'}"
+                        class="group/conv flex items-center gap-1 rounded-md
+                               {active ? 'bg-white/5' : 'hover:bg-white/5'}"
                     >
-                        {c.title}
-                    </a>
+                        <a
+                            href="/chat/{c.id}"
+                            class="block min-w-0 flex-1 truncate px-2 py-1.5 text-xs
+                                   {active ? 'text-white' : 'text-neutral-400 group-hover/conv:text-white'}"
+                        >
+                            {c.title}
+                        </a>
+                        <button
+                            type="button"
+                            onclick={(ev) => deleteConversation(ev, c)}
+                            class="mr-1 hidden rounded p-1 text-neutral-500
+                                   hover:bg-red-950 hover:text-red-300 group-hover/conv:block"
+                            title="Supprimer"
+                            aria-label="Supprimer la conversation"
+                        >
+                            <Trash2 size={11} />
+                        </button>
+                    </div>
                 {/each}
             </div>
         </div>

@@ -155,7 +155,7 @@
         <button
             type="button"
             onclick={() => (voiceOpen = true)}
-            title="Mode vocal"
+            title="Mode vocal — dicter et écouter la réponse"
             aria-label="Mode vocal"
             class="grid h-8 w-8 place-items-center rounded-full
                    border border-cyan-500/30 bg-cyan-500/10 text-cyan-300
@@ -163,13 +163,22 @@
         >
             <AudioLines size={14} />
         </button>
-        <label class="flex items-center gap-2 text-sm">
+        <label
+            class="flex items-center gap-2 rounded-md border border-[var(--color-border)]
+                   bg-[var(--color-bg-1)] px-2 py-1 text-sm focus-within:border-cyan-500/50"
+            title="Modèle Ollama utilisé pour répondre"
+        >
             <Sparkles size={14} class="text-cyan-400" />
+            <span class="hidden text-xs text-neutral-500 sm:inline">Modèle</span>
             <select
                 bind:value={selectedModel}
-                class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-1)] px-2 py-1
-                       text-neutral-200 focus:border-cyan-500/50 focus:outline-none"
+                aria-label="Modèle Ollama"
+                class="cursor-pointer appearance-none border-0 bg-transparent pr-1 text-neutral-200
+                       focus:outline-none"
             >
+                {#if models.length === 0}
+                    <option value="">Aucun modèle disponible</option>
+                {/if}
                 {#each models as m}
                     <option value={m.name}>{m.name}</option>
                 {/each}

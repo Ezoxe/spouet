@@ -3,6 +3,7 @@
     import { fly } from 'svelte/transition';
     import { secrets as secretsApi, type SecretOut } from '$lib/api';
     import EmptyState from '$lib/components/EmptyState.svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
     import { toast } from '$lib/toast.svelte';
     import { KeyRound, Trash2, Plus, AlertTriangle } from 'lucide-svelte';
 
@@ -96,7 +97,34 @@
 </header>
 
 <div class="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
-    <div class="mx-auto max-w-4xl space-y-8">
+    <div class="mx-auto max-w-4xl space-y-6">
+        <HelpPanel title="Comment utiliser les secrets" storageKey="secrets">
+            <p class="mb-2">
+                Les secrets sont chiffrés en AES (Fernet) avec une clé dérivée de
+                <code class="rounded bg-neutral-800 px-1">SPOUET_SECRET_KEY</code>. Ils ne sont
+                injectés qu’au moment où un tool ou un connector le demande, jamais réaffichés en
+                clair.
+            </p>
+            <ul class="ml-4 list-disc space-y-1">
+                <li>
+                    <strong>Scope</strong> = qui peut lire ce secret. Conventions :
+                    <code class="rounded bg-neutral-800 px-1">global</code>,
+                    <code class="rounded bg-neutral-800 px-1">connector:&lt;slug&gt;</code>,
+                    <code class="rounded bg-neutral-800 px-1">tool:&lt;slug&gt;</code>.
+                </li>
+                <li>
+                    Si tu changes <code class="rounded bg-neutral-800 px-1">SPOUET_SECRET_KEY</code
+                    >, les anciens secrets deviennent indéchiffrables (icône
+                    <AlertTriangle size={11} class="-mb-0.5 inline text-amber-400" />). Il faut les
+                    réenregistrer.
+                </li>
+                <li>
+                    Backup : la clé Fernet est <strong>indispensable</strong> pour relire les
+                    secrets après restauration de la DB. Garde-la hors site.
+                </li>
+            </ul>
+        </HelpPanel>
+
         <section
             class="glass rounded-2xl border border-[var(--color-border)] p-5"
             in:fly={{ y: 6, duration: 180 }}

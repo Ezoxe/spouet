@@ -3,6 +3,7 @@
     import { goto } from '$app/navigation';
     import { auth, setToken, type MeOut } from '$lib/api';
     import { LogOut, RefreshCw, Copy } from 'lucide-svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let me: MeOut | null = $state(null);
     let newToken: string | null = $state(null);
@@ -29,9 +30,29 @@
 
 <header class="px-6 py-5 sm:px-8">
     <h1 class="text-2xl font-semibold tracking-tight">Paramètres</h1>
+    <p class="mt-1 text-xs text-neutral-500">Compte, token API, déconnexion.</p>
 </header>
 
 <div class="space-y-4 px-6 pb-6 sm:px-8">
+    <HelpPanel title="À propos du token API" storageKey="settings" defaultOpen={false}>
+        <ul class="ml-4 list-disc space-y-1">
+            <li>
+                Le token autorise l’app web/desktop, le node-agent et tout client à parler au
+                backend. Il est haché en SHA-256 dans la DB — Spouet ne peut pas te le redonner s’il
+                est perdu.
+            </li>
+            <li>
+                Si tu rotes le token : copie-le immédiatement et reconfigure les agents
+                (<code class="rounded bg-neutral-800 px-1">SPOUET_AGENT_TOKEN=...</code>).
+            </li>
+            <li>
+                Pour créer un compte supplémentaire (multi-utilisateur), passer par la CLI
+                <code class="rounded bg-neutral-800 px-1"
+                    >spouet-admin create-token --email autre@local</code
+                >.
+            </li>
+        </ul>
+    </HelpPanel>
     <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
         <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-neutral-400">Compte</h2>
         <p class="text-sm text-neutral-300">Email : <code>{me?.email ?? '…'}</code></p>

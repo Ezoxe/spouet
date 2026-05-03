@@ -71,6 +71,15 @@ async def get_conversation(conv_id: UUID, user: CurrentUser, db: DbSession) -> C
     return _to_out(conv)
 
 
+@router.delete("/{conv_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(conv_id: UUID, user: CurrentUser, db: DbSession) -> None:
+    conv = await db.get(Conversation, conv_id)
+    if conv is None or conv.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    await db.delete(conv)
+    await db.commit()
+
+
 class MessageOut(BaseModel):
     id: str
     role: str

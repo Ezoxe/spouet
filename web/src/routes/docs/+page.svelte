@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { rag, type DocumentOut } from '$lib/api';
     import { Trash2, Upload, FileText } from 'lucide-svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let list: DocumentOut[] = $state([]);
     let uploading = $state(false);
@@ -36,7 +37,12 @@
 </script>
 
 <header class="flex items-center justify-between px-6 py-5 sm:px-8">
-    <h1 class="text-2xl font-semibold tracking-tight">Documents (RAG)</h1>
+    <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Documents (RAG)</h1>
+        <p class="mt-1 text-xs text-neutral-500">
+            Base de connaissances vectorielle interrogée automatiquement par les modèles.
+        </p>
+    </div>
     <label
         class="flex cursor-pointer items-center gap-2 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm
                font-medium text-white hover:bg-cyan-500"
@@ -47,6 +53,39 @@
         <input type="file" accept=".pdf,.txt,.md" hidden onchange={onFile} disabled={uploading} />
     </label>
 </header>
+
+<div class="px-6 sm:px-8">
+    <HelpPanel title="Comment fonctionne le RAG" storageKey="docs">
+        <p class="mb-2">
+            À l’upload, Spouet découpe ton fichier en chunks, les embed avec
+            <code class="rounded bg-neutral-800 px-1">nomic-embed-text</code> (via un node Ollama
+            qui héberge le modèle), et stocke les vecteurs dans PGVector.
+        </p>
+        <ul class="ml-4 list-disc space-y-1">
+            <li>
+                Formats supportés : <code class="rounded bg-neutral-800 px-1">.pdf</code>,
+                <code class="rounded bg-neutral-800 px-1">.md</code>,
+                <code class="rounded bg-neutral-800 px-1">.txt</code>.
+            </li>
+            <li>
+                Statut <span class="text-amber-400">processing</span> = ingestion en cours côté
+                worker Celery,
+                <span class="text-emerald-400">ready</span> = prêt à être recherché,
+                <span class="text-red-400">failed</span> = consulter les logs backend.
+            </li>
+            <li>
+                <strong>Prérequis</strong> : au moins un node Ollama doit avoir
+                <code class="rounded bg-neutral-800 px-1">nomic-embed-text</code> installé
+                (<code class="rounded bg-neutral-800 px-1">ollama pull nomic-embed-text</code>),
+                sans quoi l’ingestion échoue.
+            </li>
+            <li>
+                Les modèles ne « voient » pas tes documents tant que tu ne les actives pas via la
+                conversation : ils sont récupérés à la demande par similarité avec la question.
+            </li>
+        </ul>
+    </HelpPanel>
+</div>
 
 <div class="space-y-2 px-6 pb-6 sm:px-8">
     {#each list as d (d.id)}

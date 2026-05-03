@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { tools as toolsApi, type ToolOut } from '$lib/api';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let list: ToolOut[] = $state([]);
 
@@ -15,13 +16,55 @@
 </script>
 
 <header class="flex items-center justify-between px-6 py-5 sm:px-8">
-    <h1 class="text-2xl font-semibold tracking-tight">Tools</h1>
-    <span class="text-xs text-neutral-500">
-        Installer via : <code class="rounded bg-neutral-800 px-1.5 py-0.5"
-            >spouet-admin tools install ./tools/registry/&lt;slug&gt; --build</code
-        >
-    </span>
+    <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Tools</h1>
+        <p class="mt-1 text-xs text-neutral-500">
+            Capacités exécutables que les modèles peuvent appeler pendant une conversation
+            (web fetch, exécution Python, lecture FS…).
+        </p>
+    </div>
 </header>
+
+<div class="px-6 pb-6 sm:px-8">
+    <HelpPanel title="Comment fonctionnent les tools" storageKey="tools">
+        <p class="mb-2">
+            Chaque tool tourne dans un conteneur Docker <strong>jetable</strong> (un par appel)
+            avec <code class="rounded bg-neutral-800 px-1">--read-only</code>,
+            <code class="rounded bg-neutral-800 px-1">--cap-drop=ALL</code>, mémoire/CPU/timeout
+            limités. Par défaut, pas de réseau (<code class="rounded bg-neutral-800 px-1"
+                >network: none</code
+            >).
+        </p>
+        <ul class="ml-4 list-disc space-y-1">
+            <li>
+                <strong>Activer / désactiver</strong> via le toggle de chaque carte. Désactivé = le
+                modèle ne peut plus l’appeler.
+            </li>
+            <li>
+                <strong>approval</strong> = chaque appel demande ta validation HITL avant
+                exécution. Recommandé pour tout tool ayant accès au réseau.
+            </li>
+            <li>
+                <strong>Installer un nouveau tool</strong> :
+                <code class="rounded bg-neutral-800 px-1">
+                    spouet-admin tools install ./tools/registry/&lt;slug&gt; --build
+                </code> sur le serveur Spouet (Debian) — ça build l’image et insère la ligne en DB.
+            </li>
+            <li>
+                Pour développer ton propre tool : créer un dossier dans
+                <code class="rounded bg-neutral-800 px-1">tools/registry/&lt;slug&gt;</code>
+                avec <code>manifest.yaml</code>, <code>Dockerfile</code>, <code>run.py</code>
+                (lit JSON sur stdin, écrit JSON sur stdout). Voir <code>web-fetch</code> comme
+                exemple.
+            </li>
+            <li>
+                Seuls les modèles taggés <code class="rounded bg-cyan-900/40 px-1">tools</code> sur
+                la page Nodes peuvent réellement les invoquer (Llama 3.1+, Qwen 2.5+, Mistral,
+                etc.).
+            </li>
+        </ul>
+    </HelpPanel>
+</div>
 
 <div class="grid gap-3 px-6 pb-6 sm:grid-cols-2 sm:px-8">
     {#each list as t (t.id)}

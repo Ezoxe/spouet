@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { jobs as jobsApi, type JobOut, type JobRunOut } from '$lib/api';
     import { Play, Trash2, Plus } from 'lucide-svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let list: JobOut[] = $state([]);
     let creating = $state(false);
@@ -39,7 +40,13 @@
 </script>
 
 <header class="flex items-center justify-between px-6 py-5 sm:px-8">
-    <h1 class="text-2xl font-semibold tracking-tight">Tâches planifiées</h1>
+    <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Tâches planifiées</h1>
+        <p class="mt-1 text-xs text-neutral-500">
+            Prompts exécutés automatiquement à intervalle régulier (résumé quotidien, scrape de
+            news, alertes…).
+        </p>
+    </div>
     <button
         type="button"
         onclick={() => (creating = !creating)}
@@ -49,6 +56,38 @@
         <Plus size={14} /> Nouvelle
     </button>
 </header>
+
+<div class="px-6 sm:px-8">
+    <HelpPanel title="Comment fonctionnent les tâches planifiées" storageKey="jobs">
+        <p class="mb-2">
+            Une tâche = un <strong>prompt + une expression cron</strong>. Celery Beat la déclenche
+            automatiquement, Spouet crée une conversation jetable taggée
+            <code class="rounded bg-neutral-800 px-1">[scheduled]</code>, exécute le prompt et
+            archive le résultat.
+        </p>
+        <ul class="ml-4 list-disc space-y-1">
+            <li>
+                <strong>Cron</strong> : 5 champs UTC. Quelques exemples utiles :
+                <code class="rounded bg-neutral-800 px-1">0 * * * *</code> = toutes les heures,
+                <code class="rounded bg-neutral-800 px-1">0 8 * * *</code> = chaque jour à 8h UTC,
+                <code class="rounded bg-neutral-800 px-1">*/15 * * * *</code> = toutes les 15 min.
+            </li>
+            <li>
+                <strong>Modèle</strong> : laisse vide pour utiliser le premier modèle online.
+                Renseigne un nom (ex. <code class="rounded bg-neutral-800 px-1">llama3.1:8b</code>)
+                pour figer.
+            </li>
+            <li>
+                Le bouton <Play size={11} class="-mb-0.5 inline" /> lance la tâche immédiatement,
+                hors planning. Utile pour tester un prompt avant de partir en prod.
+            </li>
+            <li>
+                Les 3 derniers runs sont visibles sous chaque tâche. Un run est notifié multi-device
+                via WebSocket dès qu’il finit.
+            </li>
+        </ul>
+    </HelpPanel>
+</div>
 
 {#if creating}
     <form

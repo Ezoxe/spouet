@@ -13,6 +13,7 @@
     import StatusDot from '$lib/components/StatusDot.svelte';
     import Skeleton from '$lib/components/Skeleton.svelte';
     import EmptyState from '$lib/components/EmptyState.svelte';
+    import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let nodeList: NodeOut[] = $state([]);
     let toolList: ToolOut[] = $state([]);
@@ -43,8 +44,52 @@
 
 <header class="px-6 pt-6 pb-2 sm:px-8">
     <h1 class="text-2xl font-semibold tracking-tight">Tableau de bord</h1>
-    <p class="mt-1 text-sm text-neutral-500">État global de votre cluster Spouet.</p>
+    <p class="mt-1 text-sm text-neutral-500">État global de ton cluster Spouet.</p>
 </header>
+
+<div class="px-6 pt-3 sm:px-8">
+    <HelpPanel
+        title="Bienvenue — par où commencer ?"
+        storageKey="dashboard"
+    >
+        <p class="mb-2">
+            Spouet orchestre <strong>plusieurs Ollama</strong> derrière une UI unique : il
+            choisit le node ayant le modèle demandé et la VRAM la plus libre, gère le tool calling,
+            et expose un chat / RAG / scheduler.
+        </p>
+        <ol class="ml-4 list-decimal space-y-1.5">
+            <li>
+                <a class="underline hover:text-white" href="/nodes">Nodes</a> — branche au moins
+                une machine où tourne <code class="rounded bg-neutral-800 px-1">ollama serve</code
+                >. Sans node, rien d’autre ne fonctionne.
+            </li>
+            <li>
+                <a class="underline hover:text-white" href="/chat">Chat</a> — crée une
+                conversation, choisis un modèle (sélecteur en haut à droite), parle.
+            </li>
+            <li>
+                <a class="underline hover:text-white" href="/tools">Tools</a> — active les
+                capacités exécutables (web fetch, Python sandbox…). Optionnel mais puissant.
+            </li>
+            <li>
+                <a class="underline hover:text-white" href="/docs">Documents</a> +
+                <a class="underline hover:text-white" href="/memory">Mémoire</a> — fais ingérer
+                tes PDF/MD pour les rendre interrogeables, et stocke les faits stables.
+            </li>
+            <li>
+                <a class="underline hover:text-white" href="/jobs">Tâches</a> — automatise des
+                prompts récurrents (résumé matinal, monitoring, etc.).
+            </li>
+            <li>
+                <a class="underline hover:text-white" href="/connectors">Connectors</a> — fais
+                arriver des messages Discord/Telegram/IMAP directement dans Spouet.
+            </li>
+        </ol>
+        <p class="mt-2 text-xs text-neutral-400">
+            Chaque page a son propre panneau d’aide repliable (clique sur le titre cyan).
+        </p>
+    </HelpPanel>
+</div>
 
 <div class="grid gap-3 px-6 pt-4 sm:grid-cols-2 sm:px-8 lg:grid-cols-4">
     {#each stats as s, i}
