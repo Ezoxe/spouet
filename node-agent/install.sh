@@ -2,12 +2,12 @@
 # Spouet — installer node-agent Linux (one-liner).
 #
 # Usage typique :
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/main/node-agent/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/master/node-agent/install.sh \
 #     | sudo BACKEND=https://spouet.local TOKEN=<token> bash
 #
 # Variables d'env (BACKEND/TOKEN obligatoires en non-interactif) :
 #   SPOUET_REPO_URL      (def: https://github.com/<owner>/spouet.git)
-#   SPOUET_BRANCH        (def: main)
+#   SPOUET_BRANCH        (def: master)
 #   SPOUET_INSTALL_DIR   (def: /opt/spouet)
 #   BACKEND              URL du backend Spouet (ex: https://spouet.local)
 #   TOKEN                Token admin créé par le backend
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 : "${SPOUET_REPO_URL:=https://github.com/ezoxe/spouet.git}"
-: "${SPOUET_BRANCH:=main}"
+: "${SPOUET_BRANCH:=master}"
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
 : "${BACKEND:=}"
 : "${TOKEN:=}"

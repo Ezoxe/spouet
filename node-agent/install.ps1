@@ -29,13 +29,13 @@
     URL Git du dépôt Spouet.
 
 .PARAMETER Branch
-    Branche à cloner. Défaut: main
+    Branche à cloner. Défaut: master
 
 .PARAMETER ServiceName
     Nom du service Windows. Défaut: SpouetAgent
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/<owner>/spouet/main/node-agent/install.ps1 | iex
+    irm https://raw.githubusercontent.com/<owner>/spouet/master/node-agent/install.ps1 | iex
 
 .EXAMPLE
     .\install.ps1 -Backend https://spouet.local -Token xxx
@@ -49,7 +49,7 @@ param(
     [int]    $Interval    = 10,
     [string] $InstallDir  = "C:\spouet",
     [string] $RepoUrl     = "https://github.com/ezoxe/spouet.git",
-    [string] $Branch      = "main",
+    [string] $Branch      = "master",
     [string] $ServiceName = "SpouetAgent"
 )
 

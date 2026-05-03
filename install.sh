@@ -2,13 +2,13 @@
 # Spouet — installer serveur Debian/Ubuntu (one-liner).
 #
 # Usage typique :
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/master/install.sh | sudo bash
 #   # OU depuis le dépôt déjà cloné :
 #   sudo bash install.sh
 #
 # Variables d'env reconnues (toutes optionnelles) :
 #   SPOUET_REPO_URL        (def: https://github.com/ezoxe/spouet.git)
-#   SPOUET_BRANCH          (def: main)
+#   SPOUET_BRANCH          (def: master)
 #   SPOUET_INSTALL_DIR     (def: /opt/spouet)
 #   SPOUET_ADMIN_EMAIL     (def: admin@local)
 #   SPOUET_NON_INTERACTIVE (def: 0 — passe à 1 pour skip les prompts)
@@ -25,7 +25,7 @@ set -euo pipefail
 # Defaults
 # ---------------------------------------------------------------------------
 : "${SPOUET_REPO_URL:=https://github.com/ezoxe/spouet.git}"
-: "${SPOUET_BRANCH:=main}"
+: "${SPOUET_BRANCH:=master}"
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
 : "${SPOUET_ADMIN_EMAIL:=admin@local}"
 : "${SPOUET_NON_INTERACTIVE:=0}"

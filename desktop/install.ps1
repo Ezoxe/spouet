@@ -17,7 +17,7 @@
     Mettre $false pour voir l'UI MSI.
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/<owner>/spouet/main/desktop/install.ps1 | iex
+    irm https://raw.githubusercontent.com/<owner>/spouet/master/desktop/install.ps1 | iex
 
 .EXAMPLE
     .\install.ps1 -Tag v0.2.0
