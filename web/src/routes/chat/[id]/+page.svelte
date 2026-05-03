@@ -15,7 +15,7 @@
     import EmptyState from '$lib/components/EmptyState.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import { createVoiceBus } from '$lib/voice';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
     import { Sparkles, MessageSquare, Zap, AudioLines } from 'lucide-svelte';
 
     const convId = $derived($page.params.id);

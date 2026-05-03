@@ -7,7 +7,7 @@
     } from '$lib/api';
     import EmptyState from '$lib/components/EmptyState.svelte';
     import StatusDot from '$lib/components/StatusDot.svelte';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
     import {
         Plug,
         Plus,

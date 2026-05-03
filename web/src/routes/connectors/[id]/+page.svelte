@@ -7,7 +7,7 @@
         type ConnectorOut,
         type ConnectorRouteOut
     } from '$lib/api';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
     import { Plug, ArrowLeft, Save, RefreshCw } from 'lucide-svelte';
 
     const id = $derived($page.params.id);

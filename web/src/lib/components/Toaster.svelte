@@ -2,7 +2,7 @@
     import { fly } from 'svelte/transition';
     import { quintOut } from 'svelte/easing';
     import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-svelte';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
 
     const ICONS = {
         success: CheckCircle2,

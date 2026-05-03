@@ -3,7 +3,7 @@
     import { fly } from 'svelte/transition';
     import { secrets as secretsApi, type SecretOut } from '$lib/api';
     import EmptyState from '$lib/components/EmptyState.svelte';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
     import { KeyRound, Trash2, Plus, AlertTriangle } from 'lucide-svelte';
 
     let items: SecretOut[] = $state([]);

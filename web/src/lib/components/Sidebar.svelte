@@ -17,7 +17,7 @@
         KeyRound
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
-    import { toast } from '$lib/toast';
+    import { toast } from '$lib/toast.svelte';
     import Logo from './Logo.svelte';
 
     let convs: ConversationOut[] = $state([]);
