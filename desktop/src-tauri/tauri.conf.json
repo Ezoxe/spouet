@@ -4,8 +4,8 @@
     "version": "0.1.0",
     "identifier": "com.spouet.desktop",
     "build": {
-        "beforeDevCommand": "pnpm --filter spouet-web dev",
-        "beforeBuildCommand": "pnpm --filter spouet-web build",
+        "beforeDevCommand": "cd ../web && pnpm install --no-frozen-lockfile && pnpm dev",
+        "beforeBuildCommand": "cd ../web && pnpm install --no-frozen-lockfile && pnpm build",
         "devUrl": "http://localhost:5173",
         "frontendDist": "../web/build"
     },
