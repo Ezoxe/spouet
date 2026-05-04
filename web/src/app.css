@@ -46,6 +46,55 @@
 }
 
 /* ----------------------------------------------------------------------------
+ * Theme : clair (crème) — défaut. Surcharge les tokens du @theme.
+ * Activé par data-theme="light" sur <html> ou par défaut sans data-theme.
+ * Le mode sombre est explicite via data-theme="dark".
+ * ---------------------------------------------------------------------------- */
+
+:root,
+:root[data-theme='light'] {
+    color-scheme: light;
+
+    --color-bg-0: oklch(0.97 0.012 85);
+    --color-bg-1: oklch(0.945 0.014 85);
+    --color-bg-2: oklch(0.91 0.016 85);
+    --color-bg-3: oklch(0.87 0.018 85);
+
+    --color-border-subtle: oklch(0.88 0.014 85);
+    --color-border: oklch(0.82 0.016 85);
+    --color-border-strong: oklch(0.7 0.018 85);
+
+    --color-text: oklch(0.22 0.014 260);
+    --color-text-muted: oklch(0.42 0.016 260);
+    --color-text-subtle: oklch(0.55 0.014 260);
+
+    --color-accent: oklch(0.55 0.16 210);
+    --color-accent-fg: oklch(0.98 0 0);
+    --color-accent-soft: oklch(0.85 0.07 210);
+}
+
+:root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --color-bg-0: oklch(0.13 0.012 260);
+    --color-bg-1: oklch(0.17 0.012 260);
+    --color-bg-2: oklch(0.21 0.012 260);
+    --color-bg-3: oklch(0.26 0.012 260);
+
+    --color-border-subtle: oklch(0.27 0.012 260);
+    --color-border: oklch(0.32 0.014 260);
+    --color-border-strong: oklch(0.4 0.014 260);
+
+    --color-text: oklch(0.96 0.01 260);
+    --color-text-muted: oklch(0.7 0.018 260);
+    --color-text-subtle: oklch(0.55 0.014 260);
+
+    --color-accent: oklch(0.78 0.16 200);
+    --color-accent-fg: oklch(0.18 0.04 220);
+    --color-accent-soft: oklch(0.32 0.08 210);
+}
+
+/* ----------------------------------------------------------------------------
  * Reset / base
  * ---------------------------------------------------------------------------- */
 
@@ -65,7 +114,7 @@ body {
     font-feature-settings: 'cv11', 'ss01';
 }
 
-/* Halo d'arrière-plan : grand spot cyan flou en haut à droite, léger noir en bas-gauche */
+/* Halo d'arrière-plan — adapté à chaque thème */
 body::before {
     content: '';
     position: fixed;
@@ -73,12 +122,85 @@ body::before {
     pointer-events: none;
     z-index: 0;
     background:
+        radial-gradient(900px circle at 85% -10%, oklch(0.7 0.14 210 / 0.12), transparent 55%),
+        radial-gradient(700px circle at -10% 110%, oklch(0.7 0.12 30 / 0.08), transparent 60%);
+}
+:root[data-theme='dark'] body::before {
+    background:
         radial-gradient(900px circle at 85% -10%, oklch(0.55 0.18 210 / 0.15), transparent 55%),
         radial-gradient(700px circle at -10% 110%, oklch(0.4 0.14 290 / 0.12), transparent 60%);
 }
 body > div {
     position: relative;
     z-index: 1;
+}
+
+/* ----------------------------------------------------------------------------
+ * Mode clair : map les classes Tailwind "neutral-*" hardcodées (héritées du
+ * design sombre) vers des équivalents lisibles sur fond crème. Pragmatique :
+ * évite de refactorer chaque composant pour ne consommer que des CSS vars.
+ * ---------------------------------------------------------------------------- */
+
+:root[data-theme='light'],
+:root:not([data-theme='dark']) {
+    /* Backgrounds */
+    --light-surface-1: oklch(0.94 0.014 85);
+    --light-surface-2: oklch(0.9 0.016 85);
+    --light-surface-3: oklch(0.86 0.018 85);
+
+    /* Texte hiérarchisé */
+    --light-text-strong: oklch(0.2 0.014 260);
+    --light-text: oklch(0.32 0.014 260);
+    --light-text-muted: oklch(0.5 0.016 260);
+    --light-text-subtle: oklch(0.62 0.014 260);
+}
+
+:root:not([data-theme='dark']) .bg-neutral-950,
+:root:not([data-theme='dark']) .bg-neutral-900,
+:root:not([data-theme='dark']) .bg-neutral-900\/60,
+:root:not([data-theme='dark']) .bg-neutral-900\/80 {
+    background-color: var(--light-surface-1);
+}
+:root:not([data-theme='dark']) .bg-neutral-800,
+:root:not([data-theme='dark']) .bg-neutral-800\/60 {
+    background-color: var(--light-surface-2);
+}
+:root:not([data-theme='dark']) .hover\:bg-neutral-800:hover,
+:root:not([data-theme='dark']) .hover\:bg-neutral-900:hover {
+    background-color: var(--light-surface-3);
+}
+
+:root:not([data-theme='dark']) .border-neutral-700,
+:root:not([data-theme='dark']) .border-neutral-800,
+:root:not([data-theme='dark']) .border-neutral-900 {
+    border-color: oklch(0.84 0.016 85);
+}
+:root:not([data-theme='dark']) .hover\:border-neutral-700:hover {
+    border-color: oklch(0.74 0.018 85);
+}
+
+:root:not([data-theme='dark']) .text-neutral-100,
+:root:not([data-theme='dark']) .text-neutral-200 {
+    color: var(--light-text-strong);
+}
+:root:not([data-theme='dark']) .text-neutral-300,
+:root:not([data-theme='dark']) .text-neutral-400 {
+    color: var(--light-text);
+}
+:root:not([data-theme='dark']) .text-neutral-500 {
+    color: var(--light-text-muted);
+}
+:root:not([data-theme='dark']) .text-neutral-600 {
+    color: var(--light-text-subtle);
+}
+:root:not([data-theme='dark']) .placeholder\:text-neutral-600::placeholder {
+    color: var(--light-text-subtle);
+}
+
+/* L'accent cyan reste mais légèrement assombri pour la lisibilité sur clair */
+:root:not([data-theme='dark']) .text-cyan-400,
+:root:not([data-theme='dark']) .text-cyan-300 {
+    color: oklch(0.5 0.15 210);
 }
 
 /* ----------------------------------------------------------------------------

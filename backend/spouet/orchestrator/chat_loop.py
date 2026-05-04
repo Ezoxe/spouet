@@ -87,7 +87,10 @@ async def stream_assistant_reply(
         extra_system = None
         if iteration == 1:
             persona = await build_persona_prompt(
-                db, node_name=choice.name, model_name=choice.model
+                db,
+                node_name=choice.name,
+                model_name=choice.model,
+                user_id=conversation.user_id,
             )
             extras = await build_extra_system(
                 db, user_id=conversation.user_id, last_user_text=user_text

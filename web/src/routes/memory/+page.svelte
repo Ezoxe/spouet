@@ -1,11 +1,13 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { memory, type MemoryOut } from '$lib/api';
-    import { Trash2, Plus } from 'lucide-svelte';
+    import { Trash2, Plus, Pin, PinOff, Wand2 } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
+    import MemoryWizard from '$lib/components/MemoryWizard.svelte';
 
     let list: MemoryOut[] = $state([]);
     let creating = $state(false);
+    let wizardOpen = $state(false);
     let form = $state({ key: '', value: '' });
 
     async function refresh() {
@@ -15,6 +17,10 @@
         await memory.upsert(form);
         form = { key: '', value: '' };
         creating = false;
+        await refresh();
+    }
+    async function togglePin(m: MemoryOut) {
+        await memory.patch(m.id, { pinned: !m.pinned });
         await refresh();
     }
     async function del(id: string) {
@@ -32,42 +38,60 @@
             Faits clé/valeur que les modèles voient automatiquement à chaque conversation.
         </p>
     </div>
-    <button
-        type="button"
-        onclick={() => (creating = !creating)}
-        class="flex items-center gap-2 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium
-               text-white hover:bg-cyan-500"
-    >
-        <Plus size={14} /> Ajouter
-    </button>
+    <div class="flex items-center gap-2">
+        <button
+            type="button"
+            onclick={() => (wizardOpen = true)}
+            class="flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10
+                   px-3 py-1.5 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20"
+            title="Onboarding : 6 questions pour personnaliser l'IA"
+        >
+            <Wand2 size={14} /> Onboarding
+        </button>
+        <button
+            type="button"
+            onclick={() => (creating = !creating)}
+            class="flex items-center gap-2 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium
+                   text-white hover:bg-cyan-500"
+        >
+            <Plus size={14} /> Ajouter
+        </button>
+    </div>
 </header>
 
 <div class="px-6 sm:px-8">
     <HelpPanel title="À quoi sert la mémoire long-terme" storageKey="memory">
         <p class="mb-2">
-            Contrairement aux <a href="/docs" class="underline hover:text-white">documents</a>
-            (vectoriels, recherchés à la demande), la mémoire est <strong>injectée
-            systématiquement</strong> dans le contexte des conversations. Idéal pour les préférences
-            stables.
+            Deux niveaux pour ne jamais encombrer le contexte :
         </p>
-        <ul class="ml-4 list-disc space-y-1">
+        <ul class="mb-2 ml-4 list-disc space-y-1">
             <li>
-                Exemples : <code class="rounded bg-neutral-800 px-1">prenom</code> = Maxime,
-                <code class="rounded bg-neutral-800 px-1">langue</code> = français,
-                <code class="rounded bg-neutral-800 px-1">ton</code> = direct, sans politesse
-                superflue.
+                <strong>Épinglées</strong> (icône
+                <Pin size={10} class="inline" />) : injectées <em>à chaque</em> conversation.
+                Réservées aux ~6 faits identitaires (prénom, nom de l'IA, totem, ton…).
+                L'<strong>Onboarding</strong> les remplit en 6 questions.
             </li>
             <li>
-                Évite d’y mettre des secrets ou des données qui changent souvent — ce n’est ni
-                chiffré ni horodaté finement.
-            </li>
-            <li>
-                Pour les secrets API, utiliser plutôt la page
-                <a class="underline hover:text-white" href="/secrets">Secrets</a>.
+                <strong>Recall</strong> (les autres) : chargées <em>uniquement</em> si pertinentes
+                (recherche vectorielle sur le dernier message). Tu peux en stocker autant que tu veux
+                sans surcharge.
             </li>
         </ul>
+        <p class="mb-2">
+            Évite d'y mettre des secrets ou des données très volatiles — ce n'est ni chiffré ni
+            horodaté finement. Pour les secrets API, utiliser plutôt la page
+            <a class="underline hover:text-white" href="/secrets">Secrets</a>.
+        </p>
     </HelpPanel>
 </div>
+
+{#if wizardOpen}
+    <MemoryWizard
+        existing={list}
+        onclose={() => (wizardOpen = false)}
+        onsaved={refresh}
+    />
+{/if}
 
 {#if creating}
     <form
@@ -98,16 +122,43 @@
 
 <div class="space-y-2 px-6 pb-6 sm:px-8">
     {#each list as m (m.id)}
-        <article class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+        <article
+            class="rounded-xl border p-4 {m.pinned
+                ? 'border-cyan-500/40 bg-cyan-500/5'
+                : 'border-neutral-800 bg-neutral-900/60'}"
+        >
             <div class="mb-1 flex items-center justify-between">
-                <p class="font-mono text-xs uppercase tracking-wider text-cyan-400">{m.key}</p>
-                <button
-                    type="button"
-                    onclick={() => del(m.id)}
-                    class="rounded p-1 text-neutral-500 hover:bg-red-950 hover:text-red-300"
-                >
-                    <Trash2 size={12} />
-                </button>
+                <div class="flex items-center gap-2">
+                    {#if m.pinned}
+                        <Pin size={11} class="text-cyan-400" />
+                    {/if}
+                    <p class="font-mono text-xs uppercase tracking-wider text-cyan-400">{m.key}</p>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button
+                        type="button"
+                        onclick={() => togglePin(m)}
+                        class="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-cyan-300"
+                        title={m.pinned
+                            ? 'Désépingler (passera en recall sémantique)'
+                            : 'Épingler (toujours injectée dans le contexte)'}
+                        aria-label={m.pinned ? 'Désépingler' : 'Épingler'}
+                    >
+                        {#if m.pinned}
+                            <PinOff size={12} />
+                        {:else}
+                            <Pin size={12} />
+                        {/if}
+                    </button>
+                    <button
+                        type="button"
+                        onclick={() => del(m.id)}
+                        class="rounded p-1 text-neutral-500 hover:bg-red-950 hover:text-red-300"
+                        aria-label="Supprimer"
+                    >
+                        <Trash2 size={12} />
+                    </button>
+                </div>
             </div>
             <p class="text-sm text-neutral-200">{m.value}</p>
             {#if m.last_used_at}
@@ -117,6 +168,12 @@
             {/if}
         </article>
     {:else}
-        <p class="text-sm text-neutral-500">Aucune mémoire. Stockez les faits importants.</p>
+        <p class="text-sm text-neutral-500">
+            Aucune mémoire. Lance l'<button
+                type="button"
+                class="underline hover:text-cyan-300"
+                onclick={() => (wizardOpen = true)}>Onboarding</button
+            > ou ajoute manuellement.
+        </p>
     {/each}
 </div>

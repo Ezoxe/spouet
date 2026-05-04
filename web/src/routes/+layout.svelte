@@ -5,6 +5,7 @@
     import { page } from '$app/stores';
     import { fade } from 'svelte/transition';
     import { getToken } from '$lib/api';
+    import { initTheme } from '$lib/theme';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Toaster from '$lib/components/Toaster.svelte';
 
@@ -12,6 +13,7 @@
     let ready = $state(false);
 
     onMount(() => {
+        initTheme();
         if (!getToken() && $page.url.pathname !== '/login') {
             goto('/login');
             return;

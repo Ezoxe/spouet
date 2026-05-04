@@ -22,6 +22,35 @@ export function setToken(t: string | null): void {
     else localStorage.setItem(TOKEN_KEY, t);
 }
 
+/**
+ * Génère un UUID v4. Préfère `crypto.randomUUID()` quand disponible (HTTPS ou
+ * localhost) ; sinon fallback `getRandomValues` ; en dernier recours, Math.random.
+ *
+ * Pourquoi : `crypto.randomUUID` n'existe que dans les "secure contexts". L'app
+ * est souvent servie en HTTP simple sur le LAN — un appel direct lève
+ * `TypeError: crypto.randomUUID is not a function` qui crashait silencieusement
+ * `send()` dans la conversation (aucun message envoyé, aucun log backend).
+ */
+export function uuid(): string {
+    const c: Crypto | undefined =
+        typeof crypto !== 'undefined' ? (crypto as Crypto) : undefined;
+    if (c?.randomUUID) return c.randomUUID();
+    if (c?.getRandomValues) {
+        const b = new Uint8Array(16);
+        c.getRandomValues(b);
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+        return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    }
+    // Fallback ultime — non cryptographique, suffisant comme clé de liste UI.
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
 export class ApiError extends Error {
     constructor(
         public status: number,
@@ -232,6 +261,7 @@ export interface MemoryOut {
     key: string;
     value: string;
     score: number;
+    pinned: boolean;
     created_at: string;
     last_used_at: string | null;
 }
@@ -306,8 +336,10 @@ export const rag = {
 
 export const memory = {
     list: () => api<MemoryOut[]>('/memory'),
-    upsert: (json: { key: string; value: string }) =>
+    upsert: (json: { key: string; value: string; pinned?: boolean }) =>
         api<MemoryOut>('/memory', { method: 'POST', json }),
+    patch: (id: string, json: { pinned?: boolean; value?: string }) =>
+        api<MemoryOut>(`/memory/${id}`, { method: 'PATCH', json }),
     delete: (id: string) => api<void>(`/memory/${id}`, { method: 'DELETE' })
 };
 

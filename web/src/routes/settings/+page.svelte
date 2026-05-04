@@ -3,11 +3,19 @@
     import { goto } from '$app/navigation';
     import { ApiError, auth, setToken, type MeOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
-    import { LogOut, RefreshCw, Copy } from 'lucide-svelte';
+    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
+    import { theme, setTheme, type Theme } from '$lib/theme';
 
     let me: MeOut | null = $state(null);
     let newToken: string | null = $state(null);
+    let currentTheme: Theme = $state('light');
+
+    const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
+        { value: 'light', label: 'Clair', icon: Sun },
+        { value: 'dark', label: 'Sombre', icon: Moon },
+        { value: 'system', label: 'Système', icon: Monitor }
+    ];
 
     function isHandledAuthError(e: unknown): boolean {
         return e instanceof ApiError && e.status === 401;
@@ -45,7 +53,15 @@
         if (!newToken) return;
         navigator.clipboard.writeText(newToken);
     }
-    onMount(refresh);
+    onMount(() => {
+        refresh();
+        const unsub = theme.subscribe((t) => (currentTheme = t));
+        return unsub;
+    });
+
+    function pickTheme(t: Theme) {
+        setTheme(t);
+    }
 </script>
 
 <header class="px-6 py-5 sm:px-8">
@@ -76,6 +92,32 @@
     <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
         <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-neutral-400">Compte</h2>
         <p class="text-sm text-neutral-300">Email : <code>{me?.email ?? '…'}</code></p>
+    </section>
+
+    <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
+        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-neutral-400">Apparence</h2>
+        <p class="mb-3 text-xs text-neutral-500">
+            Mode clair (crème) par défaut. Le mode sombre conserve l'ancien design « nuit ».
+            « Système » suit la préférence de ton OS.
+        </p>
+        <div class="grid gap-2 sm:grid-cols-3">
+            {#each themeOptions as opt (opt.value)}
+                {@const Icon = opt.icon}
+                <button
+                    type="button"
+                    onclick={() => pickTheme(opt.value)}
+                    aria-pressed={currentTheme === opt.value}
+                    class="flex items-center justify-center gap-2 rounded-lg border px-3 py-2
+                           text-sm transition
+                           {currentTheme === opt.value
+                        ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                        : 'border-neutral-700 hover:bg-neutral-800'}"
+                >
+                    <Icon size={14} />
+                    {opt.label}
+                </button>
+            {/each}
+        </div>
     </section>
 
     <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">

@@ -3,17 +3,22 @@
 Construit un system prompt qui donne à l'IA conscience d'elle-même : son nom,
 le node sur lequel elle s'exécute, le modèle Ollama actif, ses ressources et
 les capacités de la plateforme. Injecté au premier tour via build_extra_system.
+
+Si l'utilisateur a renseigné des memories pinned (`ia_nom`, `prenom`,
+`ia_emoji_totem`, etc. — typiquement remplies via l'onboarding mémoire),
+elles surchargent la persona par défaut.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from spouet.core.config import settings
-from spouet.db.models import Model, Node, Tool
+from spouet.db.models import Memory, Model, Node, Tool
 
 PERSONA_NAME = "Spouet"
 
@@ -34,14 +39,21 @@ async def build_persona_prompt(
     *,
     node_name: str | None = None,
     model_name: str | None = None,
+    user_id: UUID | None = None,
 ) -> str:
     """Construit le system prompt complet en prenant en compte l'état du cluster.
 
     `node_name` / `model_name` : si fournis, le prompt mentionne explicitement
     où la requête s'exécute (à passer après pick_node). Sinon, on liste l'état
     global du cluster.
+    `user_id` : si fourni, on intègre l'identité personnalisée (memories pinned).
     """
-    parts: list[str] = [BASE_PERSONA]
+    pinned_kv = await _pinned_identity(db, user_id) if user_id else {}
+    parts: list[str] = [_personalize_base(pinned_kv)]
+
+    identity = _identity_block(pinned_kv)
+    if identity:
+        parts.append(identity)
 
     cluster = await _cluster_summary(db)
     if cluster:
@@ -61,6 +73,48 @@ async def build_persona_prompt(
     )
 
     return "\n\n".join(parts)
+
+
+async def _pinned_identity(db: AsyncSession, user_id: UUID) -> dict[str, str]:
+    rows = (
+        await db.execute(
+            select(Memory).where(Memory.user_id == user_id, Memory.pinned.is_(True))
+        )
+    ).scalars().all()
+    return {m.key: m.value for m in rows if m.key and m.value}
+
+
+def _personalize_base(kv: dict[str, str]) -> str:
+    """Si l'utilisateur a renommé l'IA via `ia_nom`, on remplace 'Spouet' dans
+    la persona de base. Reste minimaliste : on ne re-rédige pas tout."""
+    name = (kv.get("ia_nom") or "").strip()
+    if not name or name.lower() == PERSONA_NAME.lower():
+        return BASE_PERSONA
+    return BASE_PERSONA.replace("Spouet", name, 1)
+
+
+def _identity_block(kv: dict[str, str]) -> str | None:
+    """Bloc compact (max ~6 lignes) injecté pour personnaliser le ton et la
+    signature. Rien si rien n'est défini → garde le contexte minimal."""
+    lines: list[str] = []
+    prenom = (kv.get("prenom") or "").strip()
+    if prenom:
+        lines.append(f"L'utilisateur s'appelle {prenom}.")
+    role = (kv.get("role_utilisateur") or "").strip()
+    if role:
+        lines.append(f"Contexte utilisateur : {role}.")
+    langue = (kv.get("langue") or "").strip()
+    if langue and langue.lower() not in {"français", "francais", "fr"}:
+        lines.append(f"Langue préférée : {langue}.")
+    ton = (kv.get("ton") or "").strip()
+    if ton:
+        lines.append(f"Ton attendu : {ton}.")
+    totem = (kv.get("ia_emoji_totem") or "").strip()
+    if totem:
+        lines.append(
+            f"Termine systématiquement chacune de tes réponses par l'émoji {totem} (ton totem)."
+        )
+    return "\n".join(lines) if lines else None
 
 
 async def _cluster_summary(db: AsyncSession) -> str | None:

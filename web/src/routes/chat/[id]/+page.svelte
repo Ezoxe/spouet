@@ -6,6 +6,7 @@
         conversations,
         nodes as nodesApi,
         tools as toolsApi,
+        uuid,
         type ConversationOut,
         type MessageOut,
         type ModelAgg
@@ -47,12 +48,21 @@
     }
 
     async function send(text: string) {
-        if (!selectedModel) return;
+        if (!selectedModel) {
+            if (models.length === 0) {
+                toast.error(
+                    'Aucun modèle disponible. Vérifie que ton node est en ligne et qu\'au moins un modèle Ollama y est installé (ollama pull …).'
+                );
+            } else {
+                toast.error('Sélectionne un modèle dans la liste en haut à droite.');
+            }
+            return;
+        }
         // Optimistic user message
         messages = [
             ...messages,
             {
-                id: crypto.randomUUID(),
+                id: uuid(),
                 role: 'user',
                 content: text,
                 model_used: null,
@@ -68,7 +78,7 @@
         streaming = true;
         nodeBadge = null;
         let assistant: MessageOut = {
-            id: crypto.randomUUID(),
+            id: uuid(),
             role: 'assistant',
             content: '',
             model_used: selectedModel,
@@ -232,7 +242,24 @@
     </div>
 {/if}
 
-<Composer disabled={streaming} onsend={send} />
+{#if models.length === 0}
+    <div class="border-t border-amber-900/50 bg-amber-950/40 px-4 py-3 sm:px-8">
+        <div class="mx-auto max-w-3xl text-sm text-amber-100">
+            Aucun modèle Ollama disponible.
+            <a href="/nodes" class="underline">Vérifie tes nodes</a>
+            (le node doit être <em>online</em> et avoir au moins un modèle installé via
+            <code class="rounded bg-amber-950/60 px-1">ollama pull …</code>).
+        </div>
+    </div>
+{/if}
+
+<Composer
+    disabled={streaming || !selectedModel}
+    placeholder={!selectedModel
+        ? 'Aucun modèle disponible — voir bandeau ci-dessus.'
+        : 'Écrivez votre message…'}
+    onsend={send}
+/>
 
 <VoiceMode
     bind:open={voiceOpen}

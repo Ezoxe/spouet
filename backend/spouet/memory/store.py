@@ -16,8 +16,15 @@ logger = get_logger(__name__)
 
 
 async def upsert(
-    db: AsyncSession, *, user_id: UUID, key: str, value: str
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    key: str,
+    value: str,
+    pinned: bool | None = None,
 ) -> Memory:
+    """Insère ou met à jour une mémoire. Si `pinned` est None, on garde la
+    valeur existante (ou False si nouveau)."""
     existing = await db.scalar(
         select(Memory).where(Memory.user_id == user_id, Memory.key == key)
     )
@@ -28,22 +35,48 @@ async def upsert(
         vec = None
 
     if existing is None:
-        mem = Memory(user_id=user_id, key=key, value=value, embedding=vec)
+        mem = Memory(
+            user_id=user_id,
+            key=key,
+            value=value,
+            embedding=vec,
+            pinned=bool(pinned) if pinned is not None else False,
+        )
         db.add(mem)
     else:
         existing.value = value
         existing.embedding = vec
+        if pinned is not None:
+            existing.pinned = pinned
         mem = existing
     await db.commit()
     await db.refresh(mem)
     return mem
 
 
+async def list_pinned(db: AsyncSession, *, user_id: UUID) -> list[Memory]:
+    """Mémoires épinglées : injectées systématiquement dans le system prompt.
+
+    Convention : les clés courantes attendues par la persona sont
+    `prenom`, `ia_nom`, `ia_emoji_totem`, `langue`, `ton`, `role_utilisateur`.
+    """
+    rows = (
+        await db.execute(
+            select(Memory)
+            .where(Memory.user_id == user_id, Memory.pinned.is_(True))
+            .order_by(Memory.key.asc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
 async def recall_relevant(
     db: AsyncSession, *, user_id: UUID, query: str, k: int = 5
 ) -> list[Memory]:
-    """Top-k memories les plus proches sémantiquement de `query`.
+    """Top-k memories non-pinned les plus proches sémantiquement de `query`.
 
+    Les pinned sont déjà chargées via `list_pinned` (toujours présentes), donc
+    on les exclut ici pour ne pas doublonner et garder le contexte compact.
     Met à jour `last_used_at` pour les memories effectivement renvoyées.
     """
     if not query.strip():
@@ -59,7 +92,11 @@ async def recall_relevant(
         rows = (
             await db.execute(
                 select(Memory)
-                .where(Memory.user_id == user_id, Memory.embedding.is_not(None))
+                .where(
+                    Memory.user_id == user_id,
+                    Memory.embedding.is_not(None),
+                    Memory.pinned.is_(False),
+                )
                 .order_by(distance)
                 .limit(k)
             )
@@ -69,7 +106,7 @@ async def recall_relevant(
         rows = (
             await db.execute(
                 select(Memory)
-                .where(Memory.user_id == user_id)
+                .where(Memory.user_id == user_id, Memory.pinned.is_(False))
                 .order_by(Memory.score.desc())
                 .limit(k)
             )

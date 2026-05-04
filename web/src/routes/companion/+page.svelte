@@ -4,6 +4,7 @@
     import {
         nodes as nodesApi,
         conversations,
+        uuid,
         type ModelAgg,
         type MessageOut
     } from '$lib/api';
@@ -39,7 +40,7 @@
         messages = [
             ...messages,
             {
-                id: crypto.randomUUID(),
+                id: uuid(),
                 role: 'user',
                 content: userText,
                 model_used: null,
@@ -50,7 +51,7 @@
             }
         ];
         const assistant: MessageOut = {
-            id: crypto.randomUUID(),
+            id: uuid(),
             role: 'assistant',
             content: '',
             model_used: selectedModel,

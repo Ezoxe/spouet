@@ -3,6 +3,8 @@
  * Usage : `toast.push({ kind: 'success', message: '...' })`
  */
 
+import { uuid } from './api';
+
 export type ToastKind = 'success' | 'error' | 'info' | 'warning';
 
 export interface Toast {
@@ -19,7 +21,7 @@ export const toast = {
         return _toasts;
     },
     push(t: { kind?: ToastKind; message: string; duration?: number }): string {
-        const id = crypto.randomUUID();
+        const id = uuid();
         const item: Toast = {
             id,
             kind: t.kind ?? 'info',

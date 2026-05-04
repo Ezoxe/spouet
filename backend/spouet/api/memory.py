@@ -19,6 +19,12 @@ router = APIRouter()
 class MemoryUpsert(BaseModel):
     key: str = Field(min_length=1, max_length=120)
     value: str = Field(min_length=1)
+    pinned: bool | None = None
+
+
+class MemoryPatch(BaseModel):
+    pinned: bool | None = None
+    value: str | None = Field(default=None, min_length=1)
 
 
 class MemoryOut(BaseModel):
@@ -26,6 +32,7 @@ class MemoryOut(BaseModel):
     key: str
     value: str
     score: float
+    pinned: bool
     created_at: datetime
     last_used_at: datetime | None
 
@@ -42,7 +49,37 @@ async def list_memories(user: CurrentUser, db: DbSession) -> list[MemoryOut]:
 
 @router.post("", response_model=MemoryOut, status_code=status.HTTP_201_CREATED)
 async def create_or_update(payload: MemoryUpsert, user: CurrentUser, db: DbSession) -> MemoryOut:
-    mem = await upsert_memory(db, user_id=user.id, key=payload.key, value=payload.value)
+    mem = await upsert_memory(
+        db,
+        user_id=user.id,
+        key=payload.key,
+        value=payload.value,
+        pinned=payload.pinned,
+    )
+    return _to_out(mem)
+
+
+@router.patch("/{memory_id}", response_model=MemoryOut)
+async def patch_memory(
+    memory_id: UUID, payload: MemoryPatch, user: CurrentUser, db: DbSession
+) -> MemoryOut:
+    mem = await db.get(Memory, memory_id)
+    if mem is None or mem.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    if payload.pinned is not None:
+        mem.pinned = payload.pinned
+    if payload.value is not None:
+        # Re-upsert pour réembedder la nouvelle valeur
+        mem = await upsert_memory(
+            db,
+            user_id=user.id,
+            key=mem.key,
+            value=payload.value,
+            pinned=mem.pinned,
+        )
+    else:
+        await db.commit()
+        await db.refresh(mem)
     return _to_out(mem)
 
 
@@ -61,6 +98,7 @@ def _to_out(m: Memory) -> MemoryOut:
         key=m.key,
         value=m.value,
         score=m.score,
+        pinned=m.pinned,
         created_at=m.created_at,
         last_used_at=m.last_used_at,
     )

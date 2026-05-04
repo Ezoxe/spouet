@@ -314,6 +314,9 @@ class Memory(Base, TimestampMixin):
     )
     score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # pinned : injecté systématiquement dans le system prompt (issu de l'onboarding
+    # — identité IA, prénom user, totem). Les non-pinned passent par recall sémantique.
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 # ---------------------------------------------------------------------------
