@@ -146,9 +146,10 @@ User=spouet
 Environment=UV_CACHE_DIR=$UV_CACHE
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
-ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent run \\
-    --backend \${SPOUET_BACKEND} \\
-    --ollama  \${OLLAMA_URL} \\
+ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\
+    --backend  \${SPOUET_BACKEND} \\
+    --token    \${SPOUET_AGENT_TOKEN} \\
+    --ollama   \${OLLAMA_URL} \\
     --interval \${HEARTBEAT_INTERVAL}
 Restart=always
 RestartSec=5
