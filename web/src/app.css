@@ -46,7 +46,9 @@
 }
 
 /* ----------------------------------------------------------------------------
- * Theme : clair (crème) — défaut. Surcharge les tokens du @theme.
+ * Theme : clair — défaut. Surcharge les tokens du @theme.
+ * Palette neutre fraîche (gris très légèrement bleuté), surfaces nettement
+ * différenciées, accent franc pour la lisibilité.
  * Activé par data-theme="light" sur <html> ou par défaut sans data-theme.
  * Le mode sombre est explicite via data-theme="dark".
  * ---------------------------------------------------------------------------- */
@@ -55,22 +57,22 @@
 :root[data-theme='light'] {
     color-scheme: light;
 
-    --color-bg-0: oklch(0.97 0.012 85);
-    --color-bg-1: oklch(0.945 0.014 85);
-    --color-bg-2: oklch(0.91 0.016 85);
-    --color-bg-3: oklch(0.87 0.018 85);
+    --color-bg-0: oklch(0.985 0.003 240);
+    --color-bg-1: oklch(0.96 0.004 240);
+    --color-bg-2: oklch(0.925 0.005 240);
+    --color-bg-3: oklch(0.88 0.006 240);
 
-    --color-border-subtle: oklch(0.88 0.014 85);
-    --color-border: oklch(0.82 0.016 85);
-    --color-border-strong: oklch(0.7 0.018 85);
+    --color-border-subtle: oklch(0.9 0.005 240);
+    --color-border: oklch(0.82 0.007 240);
+    --color-border-strong: oklch(0.68 0.009 240);
 
-    --color-text: oklch(0.22 0.014 260);
-    --color-text-muted: oklch(0.42 0.016 260);
-    --color-text-subtle: oklch(0.55 0.014 260);
+    --color-text: oklch(0.18 0.014 260);
+    --color-text-muted: oklch(0.42 0.014 260);
+    --color-text-subtle: oklch(0.55 0.012 260);
 
-    --color-accent: oklch(0.55 0.16 210);
-    --color-accent-fg: oklch(0.98 0 0);
-    --color-accent-soft: oklch(0.85 0.07 210);
+    --color-accent: oklch(0.5 0.18 232);
+    --color-accent-fg: oklch(0.99 0 0);
+    --color-accent-soft: oklch(0.92 0.06 230);
 }
 
 :root[data-theme='dark'] {
@@ -114,7 +116,9 @@ body {
     font-feature-settings: 'cv11', 'ss01';
 }
 
-/* Halo d'arrière-plan — adapté à chaque thème */
+/* Halo d'arrière-plan — adapté à chaque thème
+ * Light : très discret, pas de tache colorée flagrante en haut à droite.
+ * Dark  : halos cyan / mauve plus marqués pour le côté "compagnon nocturne". */
 body::before {
     content: '';
     position: fixed;
@@ -122,8 +126,8 @@ body::before {
     pointer-events: none;
     z-index: 0;
     background:
-        radial-gradient(900px circle at 85% -10%, oklch(0.7 0.14 210 / 0.12), transparent 55%),
-        radial-gradient(700px circle at -10% 110%, oklch(0.7 0.12 30 / 0.08), transparent 60%);
+        radial-gradient(1200px circle at 110% -20%, oklch(0.7 0.05 230 / 0.05), transparent 60%),
+        radial-gradient(900px circle at -20% 120%, oklch(0.7 0.04 30 / 0.04), transparent 65%);
 }
 :root[data-theme='dark'] body::before {
     background:
@@ -136,27 +140,51 @@ body > div {
 }
 
 /* ----------------------------------------------------------------------------
- * Mode clair : map les classes Tailwind "neutral-*" hardcodées (héritées du
- * design sombre) vers des équivalents lisibles sur fond crème. Pragmatique :
- * évite de refactorer chaque composant pour ne consommer que des CSS vars.
+ * Mode clair : map les classes Tailwind sombres hardcodées (héritées du
+ * design originel sombre) vers des équivalents lisibles. Pragmatique : évite
+ * de refactorer chaque composant pour ne consommer que des CSS vars.
  * ---------------------------------------------------------------------------- */
 
 :root[data-theme='light'],
 :root:not([data-theme='dark']) {
-    /* Backgrounds */
-    --light-surface-1: oklch(0.94 0.014 85);
-    --light-surface-2: oklch(0.9 0.016 85);
-    --light-surface-3: oklch(0.86 0.018 85);
+    /* Surfaces (du plus clair au plus marqué) */
+    --light-surface-1: oklch(0.965 0.004 240);
+    --light-surface-2: oklch(0.93 0.005 240);
+    --light-surface-3: oklch(0.88 0.007 240);
+    --light-surface-elevated: oklch(0.99 0.002 240);
 
     /* Texte hiérarchisé */
-    --light-text-strong: oklch(0.2 0.014 260);
-    --light-text: oklch(0.32 0.014 260);
-    --light-text-muted: oklch(0.5 0.016 260);
-    --light-text-subtle: oklch(0.62 0.014 260);
+    --light-text-strong: oklch(0.16 0.014 260);
+    --light-text: oklch(0.3 0.013 260);
+    --light-text-muted: oklch(0.48 0.014 260);
+    --light-text-subtle: oklch(0.6 0.012 260);
+
+    /* Tints sémantiques (fond + bord + texte) */
+    --light-cyan-bg: oklch(0.95 0.04 230);
+    --light-cyan-bg-strong: oklch(0.9 0.06 230);
+    --light-cyan-border: oklch(0.78 0.09 230);
+    --light-cyan-text: oklch(0.34 0.13 232);
+
+    --light-amber-bg: oklch(0.96 0.05 90);
+    --light-amber-bg-strong: oklch(0.92 0.08 88);
+    --light-amber-border: oklch(0.82 0.11 85);
+    --light-amber-text: oklch(0.36 0.1 70);
+
+    --light-emerald-bg: oklch(0.95 0.05 155);
+    --light-emerald-bg-strong: oklch(0.9 0.08 155);
+    --light-emerald-border: oklch(0.78 0.1 155);
+    --light-emerald-text: oklch(0.34 0.11 155);
+
+    --light-red-bg: oklch(0.96 0.04 25);
+    --light-red-bg-strong: oklch(0.92 0.07 25);
+    --light-red-border: oklch(0.82 0.1 25);
+    --light-red-text: oklch(0.42 0.16 25);
 }
 
+/* ---- Neutres (anciens fonds sombres) ---- */
 :root:not([data-theme='dark']) .bg-neutral-950,
 :root:not([data-theme='dark']) .bg-neutral-900,
+:root:not([data-theme='dark']) .bg-neutral-900\/40,
 :root:not([data-theme='dark']) .bg-neutral-900\/60,
 :root:not([data-theme='dark']) .bg-neutral-900\/80 {
     background-color: var(--light-surface-1);
@@ -164,6 +192,9 @@ body > div {
 :root:not([data-theme='dark']) .bg-neutral-800,
 :root:not([data-theme='dark']) .bg-neutral-800\/60 {
     background-color: var(--light-surface-2);
+}
+:root:not([data-theme='dark']) .bg-neutral-700 {
+    background-color: var(--light-surface-3);
 }
 :root:not([data-theme='dark']) .hover\:bg-neutral-800:hover,
 :root:not([data-theme='dark']) .hover\:bg-neutral-900:hover {
@@ -173,10 +204,10 @@ body > div {
 :root:not([data-theme='dark']) .border-neutral-700,
 :root:not([data-theme='dark']) .border-neutral-800,
 :root:not([data-theme='dark']) .border-neutral-900 {
-    border-color: oklch(0.84 0.016 85);
+    border-color: oklch(0.85 0.006 240);
 }
 :root:not([data-theme='dark']) .hover\:border-neutral-700:hover {
-    border-color: oklch(0.74 0.018 85);
+    border-color: oklch(0.7 0.008 240);
 }
 
 :root:not([data-theme='dark']) .text-neutral-100,
@@ -197,10 +228,232 @@ body > div {
     color: var(--light-text-subtle);
 }
 
-/* L'accent cyan reste mais légèrement assombri pour la lisibilité sur clair */
+/* ---- text-white & overlays blancs (mode hover sombre) ---- */
+:root:not([data-theme='dark']) .text-white,
+:root:not([data-theme='dark']) .hover\:text-white:hover,
+:root:not([data-theme='dark']) .group-hover\/conv\:text-white,
+:root:not([data-theme='dark']) .group-hover\:text-white {
+    color: var(--light-text-strong);
+}
+/* …sauf à l'intérieur d'un fond accent saturé : on garde le blanc */
+:root:not([data-theme='dark']) .bg-cyan-600 .text-white,
+:root:not([data-theme='dark']) .bg-cyan-500 .text-white,
+:root:not([data-theme='dark']) .bg-emerald-600 .text-white,
+:root:not([data-theme='dark']) .bg-gradient-to-br.from-cyan-500 .text-white,
+:root:not([data-theme='dark']) .bg-gradient-to-br.from-cyan-600 .text-white {
+    color: oklch(0.99 0 0);
+}
+
+:root:not([data-theme='dark']) .bg-white\/5 {
+    background-color: oklch(0.2 0.01 260 / 0.05);
+}
+:root:not([data-theme='dark']) .bg-white\/10 {
+    background-color: oklch(0.2 0.01 260 / 0.08);
+}
+:root:not([data-theme='dark']) .hover\:bg-white\/5:hover {
+    background-color: oklch(0.2 0.01 260 / 0.07);
+}
+:root:not([data-theme='dark']) .hover\:bg-white\/10:hover {
+    background-color: oklch(0.2 0.01 260 / 0.1);
+}
+:root:not([data-theme='dark']) .border-white\/10 {
+    border-color: oklch(0.2 0.01 260 / 0.12);
+}
+
+/* ---- Accent cyan : icônes, libellés ---- */
 :root:not([data-theme='dark']) .text-cyan-400,
 :root:not([data-theme='dark']) .text-cyan-300 {
-    color: oklch(0.5 0.15 210);
+    color: oklch(0.46 0.16 232);
+}
+:root:not([data-theme='dark']) .text-cyan-100 {
+    color: var(--light-cyan-text);
+}
+:root:not([data-theme='dark']) .bg-cyan-500\/5,
+:root:not([data-theme='dark']) .bg-cyan-500\/10,
+:root:not([data-theme='dark']) .bg-cyan-500\/15 {
+    background-color: var(--light-cyan-bg);
+}
+:root:not([data-theme='dark']) .hover\:bg-cyan-500\/20:hover,
+:root:not([data-theme='dark']) .bg-cyan-500\/20 {
+    background-color: var(--light-cyan-bg-strong);
+}
+:root:not([data-theme='dark']) .border-cyan-500\/20,
+:root:not([data-theme='dark']) .border-cyan-500\/30,
+:root:not([data-theme='dark']) .border-cyan-500\/40,
+:root:not([data-theme='dark']) .border-cyan-500\/50,
+:root:not([data-theme='dark']) .border-cyan-500\/60 {
+    border-color: var(--light-cyan-border);
+}
+:root:not([data-theme='dark']) .ring-cyan-500\/20 {
+    --tw-ring-color: oklch(0.5 0.18 232 / 0.25);
+}
+:root:not([data-theme='dark']) .focus\:border-cyan-500\/50:focus,
+:root:not([data-theme='dark']) .focus\:ring-cyan-500\/20:focus {
+    border-color: oklch(0.5 0.18 232 / 0.7);
+    --tw-ring-color: oklch(0.5 0.18 232 / 0.2);
+}
+
+/* Bandeaux d'aide / info */
+:root:not([data-theme='dark']) .bg-cyan-950\/10,
+:root:not([data-theme='dark']) .bg-cyan-950\/20,
+:root:not([data-theme='dark']) .bg-cyan-900\/30,
+:root:not([data-theme='dark']) .bg-cyan-900\/40 {
+    background-color: var(--light-cyan-bg);
+}
+:root:not([data-theme='dark']) .bg-cyan-950\/40 {
+    background-color: var(--light-cyan-bg-strong);
+}
+:root:not([data-theme='dark']) .border-cyan-900\/40,
+:root:not([data-theme='dark']) .border-cyan-900\/50 {
+    border-color: var(--light-cyan-border);
+}
+:root:not([data-theme='dark']) .hover\:bg-cyan-900\/20:hover {
+    background-color: var(--light-cyan-bg-strong);
+}
+
+/* Boutons cyan pleins : on les fonce un peu pour le contraste avec le texte blanc */
+:root:not([data-theme='dark']) .bg-cyan-600 {
+    background-color: oklch(0.5 0.18 232);
+}
+:root:not([data-theme='dark']) .hover\:bg-cyan-500:hover {
+    background-color: oklch(0.58 0.17 232);
+}
+:root:not([data-theme='dark']) .bg-cyan-500 {
+    background-color: oklch(0.58 0.17 232);
+}
+:root:not([data-theme='dark']) .bg-cyan-400 {
+    background-color: oklch(0.66 0.16 232);
+}
+:root:not([data-theme='dark']) .from-cyan-500 {
+    --tw-gradient-from: oklch(0.55 0.18 232);
+}
+:root:not([data-theme='dark']) .to-cyan-700 {
+    --tw-gradient-to: oklch(0.42 0.18 232);
+}
+:root:not([data-theme='dark']) .from-cyan-600 {
+    --tw-gradient-from: oklch(0.48 0.18 232);
+}
+
+/* ---- Amber : tools / approval / warnings ---- */
+:root:not([data-theme='dark']) .text-amber-100,
+:root:not([data-theme='dark']) .text-amber-200,
+:root:not([data-theme='dark']) .text-amber-300 {
+    color: var(--light-amber-text);
+}
+:root:not([data-theme='dark']) .text-amber-400 {
+    color: oklch(0.5 0.13 80);
+}
+:root:not([data-theme='dark']) .bg-amber-950\/30,
+:root:not([data-theme='dark']) .bg-amber-950\/40,
+:root:not([data-theme='dark']) .bg-amber-950\/60,
+:root:not([data-theme='dark']) .bg-amber-900\/40 {
+    background-color: var(--light-amber-bg);
+}
+:root:not([data-theme='dark']) .border-amber-900\/40,
+:root:not([data-theme='dark']) .border-amber-900\/50 {
+    border-color: var(--light-amber-border);
+}
+:root:not([data-theme='dark']) .bg-amber-500 {
+    background-color: oklch(0.74 0.16 75);
+}
+:root:not([data-theme='dark']) .hover\:bg-amber-400:hover {
+    background-color: oklch(0.8 0.15 80);
+}
+
+/* ---- Emerald : succès / online ---- */
+:root:not([data-theme='dark']) .text-emerald-100,
+:root:not([data-theme='dark']) .text-emerald-200,
+:root:not([data-theme='dark']) .text-emerald-300 {
+    color: var(--light-emerald-text);
+}
+:root:not([data-theme='dark']) .text-emerald-400 {
+    color: oklch(0.55 0.16 155);
+}
+:root:not([data-theme='dark']) .bg-emerald-400 {
+    background-color: oklch(0.7 0.18 155);
+}
+:root:not([data-theme='dark']) .bg-emerald-500 {
+    background-color: oklch(0.6 0.18 155);
+}
+:root:not([data-theme='dark']) .bg-emerald-600 {
+    background-color: oklch(0.5 0.16 155);
+}
+:root:not([data-theme='dark']) .hover\:bg-emerald-500:hover {
+    background-color: oklch(0.58 0.17 155);
+}
+:root:not([data-theme='dark']) .bg-emerald-950\/30,
+:root:not([data-theme='dark']) .bg-emerald-950\/40,
+:root:not([data-theme='dark']) .hover\:bg-emerald-950:hover {
+    background-color: var(--light-emerald-bg);
+}
+:root:not([data-theme='dark']) .border-emerald-900\/40,
+:root:not([data-theme='dark']) .border-emerald-900\/50 {
+    border-color: var(--light-emerald-border);
+}
+:root:not([data-theme='dark']) .hover\:text-emerald-300:hover {
+    color: var(--light-emerald-text);
+}
+
+/* ---- Red : danger / supprimer ---- */
+:root:not([data-theme='dark']) .text-red-100,
+:root:not([data-theme='dark']) .text-red-200,
+:root:not([data-theme='dark']) .text-red-300 {
+    color: var(--light-red-text);
+}
+:root:not([data-theme='dark']) .text-red-400 {
+    color: oklch(0.52 0.2 25);
+}
+:root:not([data-theme='dark']) .bg-red-400 {
+    background-color: oklch(0.65 0.2 25);
+}
+:root:not([data-theme='dark']) .bg-red-950,
+:root:not([data-theme='dark']) .bg-red-950\/30,
+:root:not([data-theme='dark']) .bg-red-950\/40,
+:root:not([data-theme='dark']) .hover\:bg-red-950:hover,
+:root:not([data-theme='dark']) .hover\:bg-red-950\/40:hover {
+    background-color: var(--light-red-bg);
+}
+:root:not([data-theme='dark']) .bg-red-500\/10,
+:root:not([data-theme='dark']) .hover\:bg-red-500\/10:hover {
+    background-color: var(--light-red-bg);
+}
+:root:not([data-theme='dark']) .border-red-900\/40,
+:root:not([data-theme='dark']) .border-red-900\/50 {
+    border-color: var(--light-red-border);
+}
+:root:not([data-theme='dark']) .hover\:text-red-300:hover,
+:root:not([data-theme='dark']) .hover\:text-red-400:hover {
+    color: var(--light-red-text);
+}
+
+/* ---- Cartes & glass : surface élevée nettement détachée du fond ---- */
+:root:not([data-theme='dark']) .glass {
+    background: var(--light-surface-elevated);
+    border-color: var(--color-border-subtle);
+    backdrop-filter: saturate(120%) blur(8px);
+    box-shadow:
+        0 1px 0 oklch(1 0 0 / 0.6) inset,
+        0 4px 16px -8px oklch(0.2 0.01 260 / 0.08);
+}
+
+/* Pastille de notif : dégradé carte plus contrasté */
+:root:not([data-theme='dark']) .from-\[var\(--color-bg-1\)\].to-\[var\(--color-bg-0\)\] {
+    background-image: linear-gradient(
+        to bottom right,
+        var(--light-surface-elevated),
+        var(--color-bg-1)
+    );
+}
+
+/* Scrollbars adaptées au clair */
+:root:not([data-theme='dark']) * {
+    scrollbar-color: oklch(0.7 0.005 240) transparent;
+}
+:root:not([data-theme='dark']) *::-webkit-scrollbar-thumb {
+    background: oklch(0.78 0.005 240);
+}
+:root:not([data-theme='dark']) *::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.62 0.007 240);
 }
 
 /* ----------------------------------------------------------------------------
