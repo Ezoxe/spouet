@@ -171,6 +171,10 @@ export interface NodeOut {
     last_seen: string | null;
     vram_total_mb: number | null;
     vram_used_mb: number | null;
+    ram_total_mb: number | null;
+    ram_used_mb: number | null;
+    disk_total_mb: number | null;
+    disk_used_mb: number | null;
     gpu_model: string | null;
     agent_version: string | null;
     tags: string[];

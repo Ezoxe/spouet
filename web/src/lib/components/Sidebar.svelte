@@ -20,6 +20,7 @@
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import Logo from './Logo.svelte';
+    import { BarChart3 } from 'lucide-svelte';
 
     let convs: ConversationOut[] = $state([]);
 
@@ -27,6 +28,7 @@
         { href: '/', label: 'Tableau de bord', icon: Activity },
         { href: '/chat', label: 'Conversations', icon: MessageSquare },
         { href: '/nodes', label: 'Nodes', icon: Server },
+        { href: '/statistics', label: 'Statistiques', icon: BarChart3 },
         { href: '/tools', label: 'Tools', icon: Wrench },
         { href: '/connectors', label: 'Connectors', icon: Plug },
         { href: '/jobs', label: 'Tâches', icon: Clock },

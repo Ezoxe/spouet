@@ -22,6 +22,7 @@ from spouet.api import (
     nodes,
     rag,
     secrets as secrets_api,
+    statistics,
     tools,
 )
 from spouet.api.realtime import connector_ws, sse, websocket
@@ -72,6 +73,7 @@ app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(secrets_api.router, prefix="/api/secrets", tags=["secrets"])
 app.include_router(connectors.router, prefix="/api/connectors", tags=["connectors"])
+app.include_router(statistics.router, prefix="/api/statistics", tags=["statistics"])
 
 # Realtime
 app.include_router(sse.router, prefix="/sse", tags=["realtime"])

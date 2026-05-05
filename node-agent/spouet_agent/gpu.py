@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ class GpuInfo:
 
 
 def probe_gpu() -> GpuInfo:
-    """Tente nvidia-smi puis rocm-smi. Retourne None partout si rien trouvé."""
+    """Tente nvidia-smi puis rocm-smi. Retourne le CPU et la RAM système si rien trouvé."""
     if shutil.which("nvidia-smi"):
         info = _probe_nvidia()
         if info is not None:
@@ -24,7 +25,42 @@ def probe_gpu() -> GpuInfo:
         info = _probe_rocm()
         if info is not None:
             return info
-    return GpuInfo(model=None, vram_total_mb=None, vram_used_mb=None)
+    return _probe_cpu()
+
+
+def _probe_cpu() -> GpuInfo:
+    try:
+        with open("/proc/meminfo", "r") as f:
+            meminfo = f.read()
+        total_kb = 0
+        available_kb = 0
+        for line in meminfo.splitlines():
+            if line.startswith("MemTotal:"):
+                total_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                available_kb = int(line.split()[1])
+
+        if total_kb > 0 and available_kb > 0:
+            used_kb = total_kb - available_kb
+        else:
+            used_kb = 0
+
+        vram_total_mb = total_kb // 1024
+        vram_used_mb = used_kb // 1024
+
+        model = "CPU"
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        model = line.split(":", 1)[1].strip()
+                        break
+        except FileNotFoundError:
+            model = platform.processor() or "CPU"
+
+        return GpuInfo(model=model, vram_total_mb=vram_total_mb, vram_used_mb=vram_used_mb)
+    except Exception:
+        return GpuInfo(model=None, vram_total_mb=None, vram_used_mb=None)
 
 
 def _probe_nvidia() -> GpuInfo | None:

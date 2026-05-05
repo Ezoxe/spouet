@@ -41,6 +41,10 @@ class HeartbeatRequest(BaseModel):
     gpu_model: str | None = None
     vram_total_mb: int | None = Field(default=None, ge=0)
     vram_used_mb: int | None = Field(default=None, ge=0)
+    ram_total_mb: int | None = Field(default=None, ge=0)
+    ram_used_mb: int | None = Field(default=None, ge=0)
+    disk_total_mb: int | None = Field(default=None, ge=0)
+    disk_used_mb: int | None = Field(default=None, ge=0)
     tags: list[str] = Field(default_factory=list)
     models: list[HeartbeatModel] = Field(default_factory=list)
 
@@ -67,6 +71,10 @@ class NodeOut(BaseModel):
     last_seen: datetime | None
     vram_total_mb: int | None
     vram_used_mb: int | None
+    ram_total_mb: int | None
+    ram_used_mb: int | None
+    disk_total_mb: int | None
+    disk_used_mb: int | None
     gpu_model: str | None
     agent_version: str | None
     tags: list[str]
@@ -95,6 +103,10 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     node.last_seen = now
     node.vram_total_mb = payload.vram_total_mb
     node.vram_used_mb = payload.vram_used_mb
+    node.ram_total_mb = payload.ram_total_mb
+    node.ram_used_mb = payload.ram_used_mb
+    node.disk_total_mb = payload.disk_total_mb
+    node.disk_used_mb = payload.disk_used_mb
     node.gpu_model = payload.gpu_model
     node.agent_version = payload.agent_version
     node.tags = payload.tags
@@ -232,6 +244,10 @@ async def create_node(payload: NodeCreate, _: CurrentUser, db: DbSession) -> Nod
         last_seen=node.last_seen,
         vram_total_mb=node.vram_total_mb,
         vram_used_mb=node.vram_used_mb,
+        ram_total_mb=node.ram_total_mb,
+        ram_used_mb=node.ram_used_mb,
+        disk_total_mb=node.disk_total_mb,
+        disk_used_mb=node.disk_used_mb,
         gpu_model=node.gpu_model,
         agent_version=node.agent_version,
         tags=node.tags,
@@ -264,6 +280,10 @@ async def list_nodes(_: CurrentUser, db: DbSession) -> list[NodeOut]:
                 last_seen=n.last_seen,
                 vram_total_mb=n.vram_total_mb,
                 vram_used_mb=n.vram_used_mb,
+                ram_total_mb=n.ram_total_mb,
+                ram_used_mb=n.ram_used_mb,
+                disk_total_mb=n.disk_total_mb,
+                disk_used_mb=n.disk_used_mb,
                 gpu_model=n.gpu_model,
                 agent_version=n.agent_version,
                 tags=n.tags,

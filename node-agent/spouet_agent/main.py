@@ -12,6 +12,7 @@ import typer
 
 from spouet_agent import __version__
 from spouet_agent.gpu import probe_gpu
+from spouet_agent.system import probe_disk, probe_ram
 from spouet_agent.ollama import list_models
 
 app = typer.Typer(help="Spouet node agent — heartbeat from an Ollama machine.")
@@ -61,6 +62,8 @@ async def _run(
             try:
                 models = await list_models(ollama_url, client)
                 gpu = probe_gpu()
+                ram = probe_ram()
+                disk = probe_disk()
                 payload = {
                     "name": name,
                     "host": ollama_host,
@@ -69,6 +72,10 @@ async def _run(
                     "gpu_model": gpu.model,
                     "vram_total_mb": gpu.vram_total_mb,
                     "vram_used_mb": gpu.vram_used_mb,
+                    "ram_total_mb": ram.ram_total_mb,
+                    "ram_used_mb": ram.ram_used_mb,
+                    "disk_total_mb": disk.disk_total_mb,
+                    "disk_used_mb": disk.disk_used_mb,
                     "tags": tags,
                     "models": [asdict(m) for m in models],
                 }

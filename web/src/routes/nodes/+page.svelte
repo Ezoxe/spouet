@@ -537,15 +537,27 @@ cd C:\\spouet\\node-agent\\nssm
                         <Trash2 size={14} />
                     </button>
                 </div>
-                <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-6">
                     <div>
-                        <dt class="text-xs text-neutral-500">GPU</dt>
+                        <dt class="text-xs text-neutral-500">GPU / CPU</dt>
                         <dd>{n.gpu_model ?? '—'}</dd>
                     </div>
                     <div>
                         <dt class="text-xs text-neutral-500">VRAM</dt>
                         <dd>
                             {n.vram_used_mb ?? '—'} / {n.vram_total_mb ?? '—'} MB
+                        </dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-neutral-500">RAM Sys</dt>
+                        <dd>
+                            {n.ram_used_mb ?? '—'} / {n.ram_total_mb ?? '—'} MB
+                        </dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-neutral-500">Disque</dt>
+                        <dd>
+                            {n.disk_used_mb ?? '—'} / {n.disk_total_mb ?? '—'} MB
                         </dd>
                     </div>
                     <div>
