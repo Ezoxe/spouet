@@ -16,7 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from spouet.core.config import settings
+from spouet.core.logging import get_logger
 from spouet.db.models import Model, Node
+
+logger = get_logger(__name__)
 
 
 class NoSuitableNodeError(RuntimeError):
@@ -62,7 +65,35 @@ async def pick_node(
         (n, m) for (n, m) in rows if n.id not in exclude
     ]
     if not candidates:
-        raise NoSuitableNodeError(f"No online node has model '{model}'")
+        # Diagnostic : remonter ce qui est réellement disponible pour aider à
+        # identifier les divergences (modèle absent, node offline, nom mal
+        # normalisé côté agent…).
+        diag_rows = (
+            await db.execute(
+                select(Node, Model)
+                .join(Model, Model.node_id == Node.id)
+                .where(Node.last_seen.is_not(None), Node.last_seen >= threshold)
+            )
+        ).all()
+        seen: dict[str, list[str]] = {}
+        for n, m in diag_rows:
+            seen.setdefault(n.name, []).append(m.name)
+        logger.warning(
+            "router.no_suitable_node",
+            requested_model=model,
+            requested_repr=repr(model),
+            online_nodes=list(seen.keys()),
+            online_models={k: v for k, v in seen.items()},
+            excluded=[str(x) for x in exclude],
+        )
+        if not seen:
+            detail = "no node is online (heartbeat stale or absent)"
+        else:
+            avail = "; ".join(f"{n}=[{', '.join(sorted(ms))}]" for n, ms in seen.items())
+            detail = f"online nodes report: {avail}"
+        raise NoSuitableNodeError(
+            f"No online node has model '{model}'. {detail}"
+        )
 
     def sort_key(item: tuple[Node, Model]) -> tuple[int, str]:
         node, _ = item
