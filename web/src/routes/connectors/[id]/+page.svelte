@@ -18,6 +18,7 @@
     let saving = $state(false);
 
     async function load() {
+        if (!id) return;
         try {
             const list = await connectorsApi.list();
             conn = list.find((c) => c.id === id) ?? null;
@@ -27,8 +28,8 @@
                 connectorsApi.routes(id).catch(() => []),
                 connectorsApi.logs(id, 200).catch(() => ({ logs: '' }))
             ]);
-            routes = r;
-            logs = l.logs;
+            routes = r as ConnectorRouteOut[];
+            logs = (l as { logs: string }).logs;
         } catch {
             toast.error('Chargement échoué');
         }

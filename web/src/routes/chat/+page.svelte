@@ -13,7 +13,12 @@
     }
 
     async function newConv() {
-        const c = await conversations.create({ title: 'Nouvelle conversation' });
+        const defaultModel = typeof localStorage !== 'undefined' ? localStorage.getItem('spouet:default_model') : '';
+        const payload: { title: string; model_pref?: string } = { title: 'Nouvelle conversation' };
+        if (defaultModel) {
+            payload.model_pref = defaultModel;
+        }
+        const c = await conversations.create(payload);
         goto(`/chat/${c.id}`);
     }
 
