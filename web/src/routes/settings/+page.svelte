@@ -1,15 +1,17 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
-    import { ApiError, auth, setToken, type MeOut } from '$lib/api';
+    import { ApiError, auth, setToken, type MeOut, nodes as nodesApi, type ModelAgg } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
-    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor } from 'lucide-svelte';
+    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor, Sparkles } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import { theme, setTheme, type Theme } from '$lib/theme';
 
     let me: MeOut | null = $state(null);
     let newToken: string | null = $state(null);
     let currentTheme: Theme = $state('light');
+    let models: ModelAgg[] = $state([]);
+    let defaultModel: string = $state('');
 
     const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
         { value: 'light', label: 'Clair', icon: Sun },
@@ -62,6 +64,29 @@
     function pickTheme(t: Theme) {
         setTheme(t);
     }
+
+    async function loadModels() {
+        try {
+            models = await nodesApi.models();
+        } catch (e) {
+            console.error('Failed to load models', e);
+        }
+
+        if (typeof localStorage !== 'undefined') {
+            defaultModel = localStorage.getItem('spouet:default_model') || '';
+        }
+    }
+
+    function saveDefaultModel() {
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('spouet:default_model', defaultModel);
+            toast.success('Modèle par défaut enregistré');
+        }
+    }
+
+    onMount(() => {
+        loadModels();
+    });
 </script>
 
 <header class="px-6 py-5 sm:px-8">
@@ -117,6 +142,31 @@
                     {opt.label}
                 </button>
             {/each}
+        </div>
+    </section>
+
+    <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
+        <h2 class="mb-3 text-sm font-medium uppercase tracking-wider text-neutral-400">Préférences</h2>
+        <p class="mb-3 text-xs text-neutral-500">
+            Choisis le modèle de base utilisé par défaut lors des nouvelles conversations.
+        </p>
+        <div class="flex max-w-sm flex-col gap-2">
+            <label class="flex flex-col gap-1 text-xs text-neutral-400">
+                Modèle préféré
+                <div class="relative">
+                    <Sparkles size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400" />
+                    <select
+                        bind:value={defaultModel}
+                        onchange={saveDefaultModel}
+                        class="w-full appearance-none rounded-md border border-neutral-700 bg-neutral-950 py-2 pl-9 pr-8 text-sm focus:border-cyan-500/50 focus:outline-none"
+                    >
+                        <option value="">Aucun (choix dynamique)</option>
+                        {#each models as m}
+                            <option value={m.name}>{m.name}</option>
+                        {/each}
+                    </select>
+                </div>
+            </label>
         </div>
     </section>
 

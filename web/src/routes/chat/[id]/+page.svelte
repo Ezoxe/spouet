@@ -17,7 +17,7 @@
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines } from 'lucide-svelte';
+    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown } from 'lucide-svelte';
 
     const convId = $derived($page.params.id);
 
@@ -30,15 +30,27 @@
     let approval: { request_id: string; tool: string } | null = $state(null);
     let scroller: HTMLElement | undefined = $state();
 
+    // Dropdown models
+    let isModelDropdownOpen = $state(false);
+
     // Mode vocal
     let voiceOpen = $state(false);
     const voiceBus = createVoiceBus();
 
     async function load() {
+        if (!convId) return;
         conv = await conversations.get(convId);
         messages = await conversations.messages(convId);
         models = await nodesApi.models().catch(() => []);
-        selectedModel = conv.model_pref ?? models[0]?.name ?? '';
+        let defaultModel = '';
+        if (typeof localStorage !== 'undefined') {
+            defaultModel = localStorage.getItem('spouet:default_model') || '';
+        }
+        selectedModel = conv.model_pref ?? defaultModel ?? models[0]?.name ?? '';
+        // If default model wasn't available in the nodes list, fallback to first available
+        if (selectedModel && models.length > 0 && !models.some(m => m.name === selectedModel)) {
+             selectedModel = models[0].name;
+        }
         await tick();
         scrollBottom();
     }
@@ -90,6 +102,7 @@
         messages = [...messages, assistant];
 
         try {
+            if (!convId) return;
             for await (const ev of conversations.send(convId, { text, model: selectedModel })) {
                 if (ev.event === 'node') {
                     const d = ev.data as { name: string; model: string };
@@ -105,7 +118,7 @@
                     approval = { request_id: d.request_id, tool: d.tool };
                 } else if (ev.event === 'tool_result') {
                     // Recharge l'historique : un message role=tool a été ajouté
-                    messages = await conversations.messages(convId);
+                    if (convId) messages = await conversations.messages(convId);
                 } else if (ev.event === 'done') {
                     const d = ev.data as { tokens_out: number; latency_ms: number };
                     assistant.tokens_out = d.tokens_out;
@@ -173,27 +186,55 @@
         >
             <AudioLines size={14} />
         </button>
-        <label
-            class="flex items-center gap-2 rounded-md border border-[var(--color-border)]
-                   bg-[var(--color-bg-1)] px-2 py-1 text-sm focus-within:border-cyan-500/50"
-            title="Modèle Ollama utilisé pour répondre"
-        >
-            <Sparkles size={14} class="text-cyan-400" />
-            <span class="hidden text-xs text-neutral-500 sm:inline">Modèle</span>
-            <select
-                bind:value={selectedModel}
-                aria-label="Modèle Ollama"
-                class="cursor-pointer appearance-none border-0 bg-transparent pr-1 text-neutral-200
-                       focus:outline-none"
+        <div class="relative">
+            <button
+                type="button"
+                onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
+                class="flex items-center gap-2 rounded-md border border-[var(--color-border)]
+                       bg-[var(--color-bg-1)] px-3 py-1.5 text-sm transition hover:border-cyan-500/50"
+                title="Modèle Ollama utilisé pour répondre"
             >
-                {#if models.length === 0}
-                    <option value="">Aucun modèle disponible</option>
-                {/if}
-                {#each models as m}
-                    <option value={m.name}>{m.name}</option>
-                {/each}
-            </select>
-        </label>
+                <Sparkles size={14} class="text-cyan-400" />
+                <span class="hidden text-xs text-neutral-500 sm:inline">Modèle :</span>
+                <span class="max-w-[120px] truncate text-neutral-200 sm:max-w-[160px]">
+                    {selectedModel || 'Aucun modèle'}
+                </span>
+                <ChevronDown size={14} class="text-neutral-500 transition-transform {isModelDropdownOpen ? 'rotate-180' : ''}" />
+            </button>
+            {#if isModelDropdownOpen}
+                <div
+                    class="absolute right-0 top-full mt-2 z-50 w-56 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-1)] p-1 shadow-xl"
+                >
+                    {#if models.length === 0}
+                        <div class="px-3 py-2 text-xs text-neutral-500">Aucun modèle disponible</div>
+                    {/if}
+                    <ul class="max-h-60 overflow-y-auto">
+                        {#each models as m}
+                            <li>
+                                <button
+                                    type="button"
+                                    class="w-full rounded px-3 py-2 text-left text-sm transition
+                                           {selectedModel === m.name ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-300 hover:bg-neutral-800'}"
+                                    onclick={() => {
+                                        selectedModel = m.name;
+                                        isModelDropdownOpen = false;
+                                    }}
+                                >
+                                    {m.name}
+                                </button>
+                            </li>
+                        {/each}
+                    </ul>
+                </div>
+                <!-- Svelte 5 - overlay to catch clicks outside -->
+                <button
+                    type="button"
+                    class="fixed inset-0 z-40 cursor-default"
+                    aria-label="Fermer le menu"
+                    onclick={() => (isModelDropdownOpen = false)}
+                ></button>
+            {/if}
+        </div>
     </div>
 </header>
 
