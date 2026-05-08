@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -57,14 +57,16 @@ async def stream_assistant_reply(
     excluded: set[UUID] = set()
     iteration = 0
     last_user_id = user_msg.id
+    last_error: str | None = None
 
     while iteration < MAX_TOOL_ITERATIONS:
         iteration += 1
         try:
             choice = await pick_node(db, model, exclude_node_ids=excluded)
         except NoSuitableNodeError as e:
-            yield {"event": "error", "data": {"message": str(e)}}
-            await publish(channel, "error", {"message": str(e)})
+            err_msg = last_error if last_error and excluded else str(e)
+            yield {"event": "error", "data": {"message": err_msg}}
+            await publish(channel, "error", {"message": err_msg})
             return
 
         active_tools = tools_payload if (tools_payload and choice.supports_tools) else None
@@ -138,6 +140,7 @@ async def stream_assistant_reply(
         except OllamaError as e:
             logger.warning("chat.node_error", node=choice.name, error=str(e))
             excluded.add(choice.node_id)
+            last_error = str(e)
             await publish(channel, "node_error", {"node": choice.name, "error": str(e)})
             continue  # failover
 
@@ -272,7 +275,7 @@ async def _execute_tool_call(
         tool_id=tool.id,
         args_json=raw_args,
         status="running",
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
     )
     db.add(exec_row)
     await db.commit()
@@ -293,7 +296,7 @@ async def _execute_tool_call(
     exec_row.exit_code = res.exit_code
     exec_row.duration_ms = res.duration_ms
     exec_row.container_id = res.container_id
-    exec_row.finished_at = datetime.now(timezone.utc)
+    exec_row.finished_at = datetime.now(UTC)
     await db.commit()
 
     await publish(

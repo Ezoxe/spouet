@@ -13,6 +13,7 @@ from slowapi.util import get_remote_address
 
 from spouet import __version__
 from spouet.api import (
+    stats,
     auth,
     connectors,
     conversations,
@@ -72,6 +73,7 @@ app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(secrets_api.router, prefix="/api/secrets", tags=["secrets"])
 app.include_router(connectors.router, prefix="/api/connectors", tags=["connectors"])
+app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 
 # Realtime
 app.include_router(sse.router, prefix="/sse", tags=["realtime"])

@@ -57,10 +57,10 @@
 :root[data-theme='light'] {
     color-scheme: light;
 
-    --color-bg-0: oklch(0.985 0.003 240);
-    --color-bg-1: oklch(0.96 0.004 240);
-    --color-bg-2: oklch(0.925 0.005 240);
-    --color-bg-3: oklch(0.88 0.006 240);
+    --color-bg-0: oklch(0.97 0.01 90);
+    --color-bg-1: oklch(0.95 0.01 90);
+    --color-bg-2: oklch(0.93 0.01 90);
+    --color-bg-3: oklch(0.90 0.01 90);
 
     --color-border-subtle: oklch(0.9 0.005 240);
     --color-border: oklch(0.82 0.007 240);

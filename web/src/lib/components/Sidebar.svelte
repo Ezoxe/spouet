@@ -15,13 +15,15 @@
         Server,
         Plug,
         KeyRound,
-        Trash2
+        Trash2,
+        Menu
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import Logo from './Logo.svelte';
 
     let convs: ConversationOut[] = $state([]);
+    let isOpen = $state(false);
 
     const items = [
         { href: '/', label: 'Tableau de bord', icon: Activity },
@@ -33,6 +35,7 @@
         { href: '/docs', label: 'Documents', icon: FileText },
         { href: '/memory', label: 'Mémoire', icon: Brain },
         { href: '/secrets', label: 'Secrets', icon: KeyRound },
+        { href: '/stats', label: 'Statistiques', icon: Activity },
         { href: '/settings', label: 'Paramètres', icon: Settings }
     ];
 
@@ -75,9 +78,32 @@
     onMount(refreshConvs);
 </script>
 
+
+<!-- Mobile header & toggle -->
+<div class="md:hidden flex w-full shrink-0 items-center justify-between px-4 py-3 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-1)] z-50 relative">
+    <div class="flex items-center gap-2">
+        <Logo size={24} glow />
+        <span class="font-semibold text-sm">Spouet</span>
+    </div>
+    <button id="toggle-menu-btn" aria-label="Toggle menu" onclick={() => {isOpen = !isOpen}} class="p-2 rounded text-neutral-400 hover:text-white focus:outline-none z-50 relative pointer-events-auto">
+        <Menu size={24} />
+    </button>
+</div>
+
+<!-- Backdrop for mobile -->
+{#if isOpen}
+    <button
+        type="button"
+        class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+        onclick={() => isOpen = false}
+        aria-label="Fermer le menu"
+    ></button>
+{/if}
+
 <aside
-    class="hidden w-64 shrink-0 flex-col border-r border-[var(--color-border-subtle)]
-           bg-[color-mix(in_oklch,var(--color-bg-1)_85%,transparent)] backdrop-blur-md md:flex"
+    class="{isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
+           fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col border-r border-[var(--color-border-subtle)]
+           bg-[color-mix(in_oklch,var(--color-bg-1)_85%,transparent)] backdrop-blur-md transition-transform duration-200 ease-in-out md:static md:flex"
 >
     <div class="flex items-center gap-2.5 px-4 py-4">
         <div
@@ -97,6 +123,7 @@
             {@const active = isActive(it.href)}
             <a
                 href={it.href}
+                onclick={() => isOpen = false}
                 class="group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm
                        {active ? 'text-white' : 'text-neutral-400 hover:bg-white/5 hover:text-neutral-100'}"
             >
