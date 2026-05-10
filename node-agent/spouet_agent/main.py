@@ -69,6 +69,10 @@ async def _run(
                     "gpu_model": gpu.model,
                     "vram_total_mb": gpu.vram_total_mb,
                     "vram_used_mb": gpu.vram_used_mb,
+                    "ram_total_mb": gpu.ram_total_mb,
+                    "ram_used_mb": gpu.ram_used_mb,
+                    "disk_total_mb": gpu.disk_total_mb,
+                    "disk_used_mb": gpu.disk_used_mb,
                     "tags": tags,
                     "models": [asdict(m) for m in models],
                 }

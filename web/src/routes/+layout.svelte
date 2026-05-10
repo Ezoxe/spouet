@@ -32,7 +32,7 @@
 {:else if isLogin || isCompanion}
     {@render children?.()}
 {:else}
-    <div class="flex h-screen overflow-hidden">
+    <div class="flex h-screen flex-col md:flex-row overflow-hidden">
         <Sidebar />
         <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
             {#key $page.url.pathname}

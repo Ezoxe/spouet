@@ -48,8 +48,8 @@
     <button
         type="button"
         onclick={newConv}
-        class="flex items-center gap-2 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium
-               text-white hover:bg-cyan-500"
+        class="flex items-center gap-2 rounded-lg border border-cyan-500/50 bg-[var(--color-bg-1)] px-3 py-1.5 text-sm font-medium
+               text-[var(--color-accent)] hover:bg-[var(--color-bg-2)]"
     >
         <Plus size={14} /> Nouvelle
     </button>

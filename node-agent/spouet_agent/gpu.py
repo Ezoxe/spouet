@@ -13,19 +13,55 @@ class GpuInfo:
     model: str | None
     vram_total_mb: int | None
     vram_used_mb: int | None
+    ram_total_mb: int | None
+    ram_used_mb: int | None
+    disk_total_mb: int | None
+    disk_used_mb: int | None
 
+
+def _get_ram_and_disk() -> tuple[int|None, int|None, int|None, int|None]:
+    import shutil
+    try:
+        with open("/proc/meminfo", "r") as f:
+            meminfo = f.read()
+        total_kb = 0
+        available_kb = 0
+        for line in meminfo.splitlines():
+            if line.startswith("MemTotal:"):
+                total_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                available_kb = int(line.split()[1])
+
+        ram_total_mb = total_kb // 1024 if total_kb > 0 else None
+        ram_used_mb = (total_kb - available_kb) // 1024 if total_kb > 0 and available_kb > 0 else None
+    except Exception:
+        ram_total_mb, ram_used_mb = None, None
+
+    try:
+        usage = shutil.disk_usage("/")
+        disk_total_mb = usage.total // (1024 * 1024)
+        disk_used_mb = usage.used // (1024 * 1024)
+    except Exception:
+        disk_total_mb, disk_used_mb = None, None
+
+    return ram_total_mb, ram_used_mb, disk_total_mb, disk_used_mb
 
 def probe_gpu() -> GpuInfo:
     """Tente nvidia-smi puis rocm-smi. Retourne le CPU et la RAM système si rien trouvé."""
+    ram_total, ram_used, disk_total, disk_used = _get_ram_and_disk()
+    info = None
     if shutil.which("nvidia-smi"):
         info = _probe_nvidia()
-        if info is not None:
-            return info
-    if shutil.which("rocm-smi"):
+    if info is None and shutil.which("rocm-smi"):
         info = _probe_rocm()
-        if info is not None:
-            return info
-    return _probe_cpu()
+    if info is None:
+        info = _probe_cpu()
+
+    info.ram_total_mb = ram_total
+    info.ram_used_mb = ram_used
+    info.disk_total_mb = disk_total
+    info.disk_used_mb = disk_used
+    return info
 
 
 def _probe_cpu() -> GpuInfo:
@@ -58,9 +94,9 @@ def _probe_cpu() -> GpuInfo:
         except FileNotFoundError:
             model = platform.processor() or "CPU"
 
-        return GpuInfo(model=model, vram_total_mb=vram_total_mb, vram_used_mb=vram_used_mb)
+        return GpuInfo(model=model, vram_total_mb=vram_total_mb, vram_used_mb=vram_used_mb, ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None)
     except Exception:
-        return GpuInfo(model=None, vram_total_mb=None, vram_used_mb=None)
+        return GpuInfo(model=None, vram_total_mb=None, vram_used_mb=None, ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None)
 
 
 def _probe_nvidia() -> GpuInfo | None:
@@ -83,7 +119,7 @@ def _probe_nvidia() -> GpuInfo | None:
     if len(parts) != 3:
         return None
     try:
-        return GpuInfo(model=parts[0], vram_total_mb=int(parts[1]), vram_used_mb=int(parts[2]))
+        return GpuInfo(model=parts[0], vram_total_mb=int(parts[1]), vram_used_mb=int(parts[2]), ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None)
     except ValueError:
         return None
 
@@ -119,4 +155,8 @@ def _probe_rocm() -> GpuInfo | None:
         model=model,
         vram_total_mb=total_b // (1024 * 1024) if total_b else None,
         vram_used_mb=used_b // (1024 * 1024) if used_b else None,
+        ram_total_mb=None,
+        ram_used_mb=None,
+        disk_total_mb=None,
+        disk_used_mb=None,
     )
