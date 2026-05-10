@@ -160,6 +160,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now spouet-agent
+systemctl restart spouet-agent
 
 log "✓ spouet-agent actif."
 log "  → status : systemctl status spouet-agent"
