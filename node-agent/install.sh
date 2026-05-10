@@ -263,8 +263,8 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         log "✓ llama-server installé : $BIN_DIR/llama-server"
 
         # Vérifie le binaire
-        if ! "$BIN_DIR/llama-server" --version &>/dev/null; then
-            warn "llama-server --version échoue (lib CUDA/ROCm manquante ?). Installez les drivers GPU."
+        if ! "$BIN_DIR/llama-server" --version 2>&1; then
+            warn "llama-server --version a échoué (bibliothèque manquante ?). Vérifiez : ldd $BIN_DIR/llama-server"
         fi
     fi
 else
