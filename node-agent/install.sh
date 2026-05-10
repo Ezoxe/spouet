@@ -213,40 +213,45 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 
     if [[ "$SKIP_LLAMA" == "0" ]]; then
         log "Récupération de la dernière release llama.cpp…"
-        LLAMA_RELEASE=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        [[ -n "$LLAMA_RELEASE" ]] || die "Impossible de récupérer la release llama.cpp."
+        RELEASE_JSON=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest)
+        LLAMA_RELEASE=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+        [[ -n "$LLAMA_RELEASE" && "$LLAMA_RELEASE" != "null" ]] || die "Impossible de récupérer la release llama.cpp."
         log "  → Release : $LLAMA_RELEASE"
 
+        # Sélectionne dynamiquement l'asset depuis la liste réelle de la release GitHub.
+        # Utilise jq pour filtrer par regex plutôt que de deviner le nom exact.
+        _pick_asset() { echo "$RELEASE_JSON" | jq -r --arg p "$1" \
+            '.assets[] | select(.name | test($p; "i")) | .name' | head -1; }
+
+        ASSET=""
         case "$GPU_TYPE" in
             cuda)
-                # Détecte la version CUDA installée (majeure)
-                CUDA_VER=$(nvcc --version 2>/dev/null | grep -o 'release [0-9]*' | head -1 | awk '{print $2}' || echo "12")
-                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
-                # Fallback cu12 si la version exacte n'existe pas
-                FALLBACK_ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-x64-cuda-cu12.tar.gz"
+                CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1 || echo "12")
+                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda-cu${CUDA_VER}.*\\.tar\\.gz")
+                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda-cu12.*\\.tar\\.gz")
+                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda.*\\.tar\\.gz")
                 ;;
             rocm)
-                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}-rocm.tar.gz"
-                FALLBACK_ASSET="$ASSET"
+                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}.*rocm.*\\.tar\\.gz")
                 ;;
             cpu)
-                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}-cpu.tar.gz"
-                FALLBACK_ASSET="$ASSET"
+                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-avx2\\.tar\\.gz")
+                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-avx\\.tar\\.gz")
+                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cpu\\.tar\\.gz")
+                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}.*\\.tar\\.gz")
                 ;;
         esac
 
+        [[ -n "$ASSET" ]] || die "Aucun asset llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Utilisez --skip-llama."
         LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/${ASSET}"
-        FALLBACK_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/${FALLBACK_ASSET}"
+        log "  → Asset : $ASSET"
 
         TMPDIR_LLAMA=$(mktemp -d)
         trap "rm -rf $TMPDIR_LLAMA" EXIT
 
         log "Téléchargement : $LLAMA_URL"
-        if ! wget -qO "$TMPDIR_LLAMA/llama.tar.gz" "$LLAMA_URL"; then
-            warn "Asset principal introuvable, tentative fallback : $FALLBACK_URL"
-            wget -qO "$TMPDIR_LLAMA/llama.tar.gz" "$FALLBACK_URL" \
-                || die "Échec téléchargement llama.cpp. Utilisez --skip-llama pour passer."
-        fi
+        wget -qO "$TMPDIR_LLAMA/llama.tar.gz" "$LLAMA_URL" \
+            || die "Échec téléchargement llama.cpp. Utilisez --skip-llama pour passer."
 
         log "Extraction de llama-server…"
         tar xzf "$TMPDIR_LLAMA/llama.tar.gz" -C "$TMPDIR_LLAMA"

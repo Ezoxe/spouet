@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import platform
+import re
 import shutil
+import subprocess as _subprocess
+import tarfile as _tarfile
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +17,8 @@ import httpx
 import typer
 
 from spouet_agent.llama_config import LlamaConfig
+
+GITHUB_LLAMA_LATEST = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 
 LLAMA_SERVER_DEFAULT_PORT = 8080
 STARTUP_TIMEOUT_S = 180  # modèles lourds à charger
@@ -179,6 +186,168 @@ class LlamaServer:
                 typer.echo(f"[llama-server] {text}")
         except Exception:
             pass
+
+
+    def get_installed_version(self) -> str | None:
+        """Retourne le tag de build installé (ex. 'b9101'), ou None."""
+        if not self.bin_path.exists():
+            return None
+        try:
+            r = _subprocess.run(
+                [str(self.bin_path), "--version"],
+                capture_output=True, text=True, timeout=10,
+            )
+            output = r.stdout + r.stderr
+            m = re.search(r'\bb(\d+)\b', output)
+            return m.group(0) if m else None
+        except Exception:
+            return None
+
+    async def check_and_update(self) -> bool:
+        """Vérifie GitHub et met à jour llama-server si une version plus récente existe.
+        Retourne True si une mise à jour a été appliquée."""
+        # Version actuellement installée
+        current = self.get_installed_version()
+        current_num = int(current[1:]) if current else None
+
+        # Dernière release GitHub
+        async with httpx.AsyncClient(timeout=20, headers={"Accept": "application/vnd.github.v3+json"}) as client:
+            try:
+                r = await client.get(GITHUB_LLAMA_LATEST)
+                r.raise_for_status()
+                release = r.json()
+            except Exception as exc:
+                typer.echo(f"[llama-update] vérification impossible : {exc}", err=True)
+                return False
+
+        latest_tag: str = release.get("tag_name", "")
+        m = re.search(r'\bb(\d+)\b', latest_tag)
+        latest_num = int(m.group(1)) if m else None
+
+        if current_num is not None and latest_num is not None and current_num >= latest_num:
+            typer.echo(f"[llama-update] à jour ({current}).")
+            return False
+
+        typer.echo(f"[llama-update] mise à jour {current} → {latest_tag}")
+
+        # Détecte GPU et architecture
+        gpu_type = _detect_gpu_type()
+        arch_tag = {"x86_64": "x64", "aarch64": "arm64"}.get(platform.machine())
+        if arch_tag is None:
+            typer.echo(f"[llama-update] architecture {platform.machine()} non supportée.", err=True)
+            return False
+
+        assets: list[dict] = release.get("assets", [])
+        asset_name = _pick_asset(assets, gpu_type, arch_tag)
+        if not asset_name:
+            typer.echo(f"[llama-update] aucun asset pour {gpu_type}/{arch_tag}.", err=True)
+            return False
+
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/{latest_tag}/{asset_name}"
+        typer.echo(f"[llama-update] téléchargement : {url}")
+
+        was_running = self.is_running()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive = Path(tmpdir) / "llama.tar.gz"
+            try:
+                async with httpx.AsyncClient(timeout=600, follow_redirects=True) as dl:
+                    async with dl.stream("GET", url) as resp:
+                        resp.raise_for_status()
+                        with archive.open("wb") as fout:
+                            async for chunk in resp.aiter_bytes(65536):
+                                fout.write(chunk)
+            except Exception as exc:
+                typer.echo(f"[llama-update] téléchargement échoué : {exc}", err=True)
+                return False
+
+            # Extraire le binaire llama-server depuis l'archive
+            new_bin = Path(tmpdir) / "llama-server"
+            try:
+                with _tarfile.open(archive) as tar:
+                    for member in tar.getmembers():
+                        if member.isfile() and Path(member.name).name == "llama-server":
+                            fobj = tar.extractfile(member)
+                            if fobj:
+                                new_bin.write_bytes(fobj.read())
+                            break
+            except Exception as exc:
+                typer.echo(f"[llama-update] extraction échouée : {exc}", err=True)
+                return False
+
+            if not new_bin.exists():
+                typer.echo("[llama-update] llama-server introuvable dans l'archive.", err=True)
+                return False
+
+            new_bin.chmod(0o755)
+            if was_running:
+                await self.stop()
+
+            target = self.bin_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.move(str(new_bin), str(target))
+            except Exception as exc:
+                typer.echo(f"[llama-update] remplacement binaire impossible : {exc}", err=True)
+                return False
+
+        typer.echo(f"[llama-update] ✓ llama-server mis à jour vers {latest_tag}.")
+
+        if was_running:
+            try:
+                await self.restart()
+            except Exception as exc:
+                typer.echo(f"[llama-update] redémarrage échoué : {exc}", err=True)
+
+        return True
+
+
+def _detect_gpu_type() -> str:
+    if shutil.which("nvidia-smi"):
+        try:
+            if _subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=5).returncode == 0:
+                return "cuda"
+        except Exception:
+            pass
+    if shutil.which("rocm-smi"):
+        try:
+            if _subprocess.run(["rocm-smi"], capture_output=True, timeout=5).returncode == 0:
+                return "rocm"
+        except Exception:
+            pass
+    return "cpu"
+
+
+def _pick_asset(assets: list[dict], gpu_type: str, arch_tag: str) -> str | None:
+    def match(pattern: str) -> str | None:
+        for a in assets:
+            if re.search(pattern, a["name"], re.IGNORECASE):
+                return a["name"]
+        return None
+
+    if gpu_type == "cuda":
+        cuda_ver = "12"
+        try:
+            r = _subprocess.run(["nvcc", "--version"], capture_output=True, text=True, timeout=5)
+            m = re.search(r'release (\d+)', r.stdout)
+            if m:
+                cuda_ver = m.group(1)
+        except Exception:
+            pass
+        return (
+            match(rf"bin-ubuntu-{arch_tag}-cuda-cu{cuda_ver}.*\.tar\.gz")
+            or match(rf"bin-ubuntu-{arch_tag}-cuda-cu12.*\.tar\.gz")
+            or match(rf"bin-ubuntu-{arch_tag}-cuda.*\.tar\.gz")
+        )
+    if gpu_type == "rocm":
+        return match(rf"bin-ubuntu-{arch_tag}.*rocm.*\.tar\.gz")
+    # cpu
+    return (
+        match(rf"bin-ubuntu-{arch_tag}-avx2\.tar\.gz")
+        or match(rf"bin-ubuntu-{arch_tag}-avx\.tar\.gz")
+        or match(rf"bin-ubuntu-{arch_tag}-cpu\.tar\.gz")
+        or match(rf"bin-ubuntu-{arch_tag}.*\.tar\.gz")
+    )
 
 
 def find_llama_server(install_dir: Path) -> Path | None:

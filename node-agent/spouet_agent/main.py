@@ -116,8 +116,8 @@ async def _run(
     # Initialise l'API de contrôle
     init_control(server, models_dir, gpu)
 
-    # Lance l'API de contrôle et le heartbeat en parallèle
-    await asyncio.gather(
+    # Lance l'API de contrôle, le heartbeat, et la mise à jour automatique en parallèle
+    tasks: list = [
         _serve_control_api(agent_port),
         _heartbeat_loop(
             backend=backend,
@@ -132,8 +132,21 @@ async def _run(
             models_dir=models_dir,
             gpu_info_ref=[gpu],
         ),
-        return_exceptions=True,
-    )
+    ]
+    if llama_bin is not None:
+        tasks.append(_update_loop(server))
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _update_loop(server: LlamaServer) -> None:
+    """Vérifie et applique les mises à jour llama.cpp toutes les 6h (première vérif après 5 min)."""
+    await asyncio.sleep(300)
+    while True:
+        try:
+            await server.check_and_update()
+        except Exception as exc:
+            typer.echo(f"[llama-update] erreur inattendue : {exc}", err=True)
+        await asyncio.sleep(6 * 3600)
 
 
 async def _serve_control_api(port: int) -> None:
