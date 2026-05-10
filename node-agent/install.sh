@@ -255,11 +255,15 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 
         log "Extraction de llama-server…"
         tar xzf "$TMPDIR_LLAMA/llama.tar.gz" -C "$TMPDIR_LLAMA"
-        # Cherche le binaire llama-server dans l'archive (nom peut varier)
+        # Copie le binaire principal
         LLAMA_BIN=$(find "$TMPDIR_LLAMA" -name "llama-server" -type f | head -1)
         [[ -n "$LLAMA_BIN" ]] || die "Binaire llama-server introuvable dans l'archive."
         install -m 755 "$LLAMA_BIN" "$BIN_DIR/llama-server"
-        chown spouet:spouet "$BIN_DIR/llama-server"
+        # Copie les bibliothèques partagées bundlées (libllama-common.so.0, etc.)
+        find "$TMPDIR_LLAMA" -name "*.so*" -type f | while read -r sofile; do
+            install -m 644 "$sofile" "$BIN_DIR/"
+        done
+        chown -R spouet:spouet "$BIN_DIR"
         log "✓ llama-server installé : $BIN_DIR/llama-server"
 
         # Vérifie le binaire
@@ -307,6 +311,7 @@ Wants=network-online.target
 Type=simple
 User=spouet
 Environment=UV_CACHE_DIR=$UV_CACHE
+Environment=LD_LIBRARY_PATH=$BIN_DIR
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\

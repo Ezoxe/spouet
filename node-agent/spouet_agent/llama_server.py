@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
 import re
 import shutil
@@ -56,8 +57,14 @@ class LlamaServer:
         await self.stop()
         cmd = self._build_cmd(model_path, config)
         typer.echo(f"[llama-server] starting: {' '.join(cmd)}")
+        # Ajoute bin_dir dans LD_LIBRARY_PATH pour les .so bundlés dans l'archive
+        env = os.environ.copy()
+        bin_dir = str(self.bin_path.parent)
+        prev = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{prev}" if prev else bin_dir
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -261,16 +268,24 @@ class LlamaServer:
                 typer.echo(f"[llama-update] téléchargement échoué : {exc}", err=True)
                 return False
 
-            # Extraire le binaire llama-server depuis l'archive
+            # Extraire le binaire + les bibliothèques partagées bundlées (.so*)
             new_bin = Path(tmpdir) / "llama-server"
+            so_files: list[Path] = []
             try:
                 with _tarfile.open(archive) as tar:
                     for member in tar.getmembers():
-                        if member.isfile() and Path(member.name).name == "llama-server":
-                            fobj = tar.extractfile(member)
-                            if fobj:
-                                new_bin.write_bytes(fobj.read())
-                            break
+                        if not member.isfile():
+                            continue
+                        fname = Path(member.name).name
+                        fobj = tar.extractfile(member)
+                        if fobj is None:
+                            continue
+                        if fname == "llama-server":
+                            new_bin.write_bytes(fobj.read())
+                        elif ".so" in fname:
+                            so_path = Path(tmpdir) / fname
+                            so_path.write_bytes(fobj.read())
+                            so_files.append(so_path)
             except Exception as exc:
                 typer.echo(f"[llama-update] extraction échouée : {exc}", err=True)
                 return False
@@ -287,6 +302,8 @@ class LlamaServer:
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 shutil.move(str(new_bin), str(target))
+                for so in so_files:
+                    shutil.move(str(so), str(target.parent / so.name))
             except Exception as exc:
                 typer.echo(f"[llama-update] remplacement binaire impossible : {exc}", err=True)
                 return False
