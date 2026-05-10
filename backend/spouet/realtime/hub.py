@@ -51,6 +51,10 @@ def connector_inbound_channel(connector_id: UUID | str) -> str:
     return f"connector:{connector_id}:inbound"
 
 
+def workspace_channel(workspace_id: UUID | str) -> str:
+    return f"workspace:{workspace_id}"
+
+
 # ---------------------------------------------------------------------------
 # Publish
 # ---------------------------------------------------------------------------

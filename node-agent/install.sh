@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Spouet — installer node-agent Linux (one-liner).
+# Spouet — installer node-agent + llama.cpp-server Linux (one-liner).
 #
 # Usage typique :
 #   curl -fsSL https://raw.githubusercontent.com/<owner>/spouet/master/node-agent/install.sh \
 #     | sudo BACKEND=https://spouet.local TOKEN=<token> bash
 #
-# Variables d'env (BACKEND/TOKEN obligatoires en non-interactif) :
-#   SPOUET_REPO_URL      (def: https://github.com/<owner>/spouet.git)
+# Variables d'env :
+#   SPOUET_REPO_URL      (def: https://github.com/ezoxe/spouet.git)
 #   SPOUET_BRANCH        (def: master)
 #   SPOUET_INSTALL_DIR   (def: /opt/spouet)
-#   BACKEND              URL du backend Spouet (ex: https://spouet.local)
-#   TOKEN                Token admin créé par le backend
-#   OLLAMA_URL           (def: http://localhost:11434)
+#   BACKEND              URL du backend Spouet  [obligatoire]
+#   TOKEN                Token API Spouet        [obligatoire]
 #   HEARTBEAT_INTERVAL   (def: 10)
+#   LLAMA_PORT           Port llama-server       (def: 8080)
+#   AGENT_PORT           Port agent API          (def: 8765)
+#   SKIP_LLAMA           Si "1", ne (ré)installe pas llama.cpp (def: 0)
 #   SPOUET_NON_INTERACTIVE (def: 0)
 
 set -euo pipefail
@@ -22,21 +24,25 @@ set -euo pipefail
 : "${SPOUET_INSTALL_DIR:=/opt/spouet}"
 : "${BACKEND:=}"
 : "${TOKEN:=}"
-: "${OLLAMA_URL:=http://localhost:11434}"
 : "${HEARTBEAT_INTERVAL:=10}"
+: "${LLAMA_PORT:=8080}"
+: "${AGENT_PORT:=8765}"
+: "${SKIP_LLAMA:=0}"
 : "${SPOUET_NON_INTERACTIVE:=0}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --backend=*) BACKEND="${1#*=}" ;;
-        --token=*)   TOKEN="${1#*=}" ;;
-        --ollama=*)  OLLAMA_URL="${1#*=}" ;;
-        --interval=*) HEARTBEAT_INTERVAL="${1#*=}" ;;
-        --dir=*)     SPOUET_INSTALL_DIR="${1#*=}" ;;
-        --branch=*)  SPOUET_BRANCH="${1#*=}" ;;
-        --repo=*)    SPOUET_REPO_URL="${1#*=}" ;;
+        --backend=*)   BACKEND="${1#*=}" ;;
+        --token=*)     TOKEN="${1#*=}" ;;
+        --interval=*)  HEARTBEAT_INTERVAL="${1#*=}" ;;
+        --llama-port=*) LLAMA_PORT="${1#*=}" ;;
+        --agent-port=*) AGENT_PORT="${1#*=}" ;;
+        --dir=*)        SPOUET_INSTALL_DIR="${1#*=}" ;;
+        --branch=*)     SPOUET_BRANCH="${1#*=}" ;;
+        --repo=*)       SPOUET_REPO_URL="${1#*=}" ;;
+        --skip-llama)   SKIP_LLAMA=1 ;;
         --non-interactive) SPOUET_NON_INTERACTIVE=1 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "Argument inconnu: $1" >&2; exit 2 ;;
     esac
     shift
@@ -63,20 +69,23 @@ prompt TOKEN   "Token agent (créé par spouet-admin create-token)"
 [[ -n "$BACKEND" ]] || die "BACKEND requis."
 [[ -n "$TOKEN"   ]] || die "TOKEN requis."
 
+MODELS_DIR="$SPOUET_INSTALL_DIR/models"
+BIN_DIR="$SPOUET_INSTALL_DIR/bin"
+
 # ---------------------------------------------------------------------------
-# Dépendances
+# Dépendances système
 # ---------------------------------------------------------------------------
 log "Installation des dépendances système…"
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
-    apt-get install -y -qq git curl ca-certificates
+    apt-get install -y -qq git curl ca-certificates wget jq
 elif command -v dnf &>/dev/null; then
-    dnf install -y -q git curl ca-certificates
+    dnf install -y -q git curl ca-certificates wget jq
 fi
 
 # ---------------------------------------------------------------------------
-# uv (installé dans /usr/local/bin pour être accessible à l'utilisateur spouet)
+# uv
 # ---------------------------------------------------------------------------
 install -d /usr/local/bin
 if [[ ! -x /usr/local/bin/uv ]]; then
@@ -97,7 +106,7 @@ if ! id -u spouet &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# Clone / pull
+# Clone / pull du dépôt
 # ---------------------------------------------------------------------------
 if [[ -d "$SPOUET_INSTALL_DIR/.git" ]]; then
     log "Dépôt existant — git pull…"
@@ -108,9 +117,92 @@ else
     log "Clone $SPOUET_REPO_URL → $SPOUET_INSTALL_DIR…"
     git clone --quiet --branch "$SPOUET_BRANCH" "$SPOUET_REPO_URL" "$SPOUET_INSTALL_DIR"
 fi
+
+install -d -o spouet -g spouet -m 0755 "$MODELS_DIR"
+install -d -o spouet -g spouet -m 0755 "$BIN_DIR"
 chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
 
-# Cache uv dans l'arbo Spouet (le HOME de spouet n'est pas garanti d'exister)
+# ---------------------------------------------------------------------------
+# llama.cpp-server (binaire précompilé depuis les releases GitHub)
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_LLAMA" == "0" ]]; then
+    log "Détection GPU…"
+    GPU_TYPE="cpu"
+    if command -v nvidia-smi &>/dev/null && nvidia-smi -L &>/dev/null 2>&1; then
+        GPU_TYPE="cuda"
+        log "  → GPU NVIDIA détecté — build CUDA"
+    elif command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null 2>&1; then
+        GPU_TYPE="rocm"
+        log "  → GPU AMD détecté — build ROCm"
+    else
+        log "  → Pas de GPU — build CPU AVX2"
+    fi
+
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) ARCH_TAG="x64" ;;
+        aarch64) ARCH_TAG="arm64" ;;
+        *) warn "Architecture $ARCH non supportée pour les binaires précompilés, skip llama.cpp."; SKIP_LLAMA=1 ;;
+    esac
+
+    if [[ "$SKIP_LLAMA" == "0" ]]; then
+        log "Récupération de la dernière release llama.cpp…"
+        LLAMA_RELEASE=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+        [[ -n "$LLAMA_RELEASE" ]] || die "Impossible de récupérer la release llama.cpp."
+        log "  → Release : $LLAMA_RELEASE"
+
+        case "$GPU_TYPE" in
+            cuda)
+                # Détecte la version CUDA installée (majeure)
+                CUDA_VER=$(nvcc --version 2>/dev/null | grep -o 'release [0-9]*' | head -1 | awk '{print $2}' || echo "12")
+                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
+                # Fallback cu12 si la version exacte n'existe pas
+                FALLBACK_ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-x64-cuda-cu12.tar.gz"
+                ;;
+            rocm)
+                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}-rocm.tar.gz"
+                FALLBACK_ASSET="$ASSET"
+                ;;
+            cpu)
+                ASSET="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}-cpu.tar.gz"
+                FALLBACK_ASSET="$ASSET"
+                ;;
+        esac
+
+        LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/${ASSET}"
+        FALLBACK_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/${FALLBACK_ASSET}"
+
+        TMPDIR_LLAMA=$(mktemp -d)
+        trap "rm -rf $TMPDIR_LLAMA" EXIT
+
+        log "Téléchargement : $LLAMA_URL"
+        if ! wget -qO "$TMPDIR_LLAMA/llama.tar.gz" "$LLAMA_URL"; then
+            warn "Asset principal introuvable, tentative fallback : $FALLBACK_URL"
+            wget -qO "$TMPDIR_LLAMA/llama.tar.gz" "$FALLBACK_URL" \
+                || die "Échec téléchargement llama.cpp. Utilisez --skip-llama pour passer."
+        fi
+
+        log "Extraction de llama-server…"
+        tar xzf "$TMPDIR_LLAMA/llama.tar.gz" -C "$TMPDIR_LLAMA"
+        # Cherche le binaire llama-server dans l'archive (nom peut varier)
+        LLAMA_BIN=$(find "$TMPDIR_LLAMA" -name "llama-server" -type f | head -1)
+        [[ -n "$LLAMA_BIN" ]] || die "Binaire llama-server introuvable dans l'archive."
+        install -m 755 "$LLAMA_BIN" "$BIN_DIR/llama-server"
+        chown spouet:spouet "$BIN_DIR/llama-server"
+        log "✓ llama-server installé : $BIN_DIR/llama-server"
+
+        # Vérifie le binaire
+        if ! "$BIN_DIR/llama-server" --version &>/dev/null; then
+            warn "llama-server --version échoue (lib CUDA/ROCm manquante ?). Installez les drivers GPU."
+        fi
+    fi
+else
+    log "SKIP_LLAMA=1 — llama.cpp non (ré)installé."
+fi
+
+# ---------------------------------------------------------------------------
+# uv sync node-agent
+# ---------------------------------------------------------------------------
 UV_CACHE="$SPOUET_INSTALL_DIR/.cache/uv"
 install -d -o spouet -g spouet -m 0755 "$UV_CACHE"
 
@@ -124,19 +216,19 @@ install -d -m 0750 /etc/spouet
 cat > /etc/spouet/agent.env <<EOF
 SPOUET_BACKEND=$BACKEND
 SPOUET_AGENT_TOKEN=$TOKEN
-OLLAMA_URL=$OLLAMA_URL
 HEARTBEAT_INTERVAL=$HEARTBEAT_INTERVAL
+LLAMA_MODELS_DIR=$MODELS_DIR
 EOF
 chmod 0640 /etc/spouet/agent.env
 chown root:spouet /etc/spouet/agent.env
 
 # ---------------------------------------------------------------------------
-# systemd unit (généré pour pointer sur uv run)
+# Service systemd spouet-agent
 # ---------------------------------------------------------------------------
 log "Installation du service systemd spouet-agent…"
 cat > /etc/systemd/system/spouet-agent.service <<EOF
 [Unit]
-Description=Spouet Ollama node agent
+Description=Spouet node agent (llama.cpp lifecycle + heartbeat)
 After=network-online.target
 Wants=network-online.target
 
@@ -147,10 +239,13 @@ Environment=UV_CACHE_DIR=$UV_CACHE
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\
-    --backend  \${SPOUET_BACKEND} \\
-    --token    \${SPOUET_AGENT_TOKEN} \\
-    --ollama   \${OLLAMA_URL} \\
-    --interval \${HEARTBEAT_INTERVAL}
+    --backend    \${SPOUET_BACKEND} \\
+    --token      \${SPOUET_AGENT_TOKEN} \\
+    --interval   \${HEARTBEAT_INTERVAL} \\
+    --llama-port $LLAMA_PORT \\
+    --agent-port $AGENT_PORT \\
+    --install-dir $SPOUET_INSTALL_DIR \\
+    --models-dir $MODELS_DIR
 Restart=always
 RestartSec=5
 
@@ -162,6 +257,12 @@ systemctl daemon-reload
 systemctl enable --now spouet-agent
 systemctl restart spouet-agent
 
-log "✓ spouet-agent actif."
-log "  → status : systemctl status spouet-agent"
-log "  → logs   : journalctl -u spouet-agent -f"
+log "✓ spouet-agent actif (llama-server port $LLAMA_PORT, agent API port $AGENT_PORT)."
+log "  → status  : systemctl status spouet-agent"
+log "  → logs    : journalctl -u spouet-agent -f"
+log "  → modèles : ls $MODELS_DIR"
+log ""
+log "Pour charger un modèle depuis HuggingFace :"
+log "  curl -X POST http://localhost:$AGENT_PORT/models/download \\"
+log "    -H 'Content-Type: application/json' \\"
+log "    -d '{\"hf_repo\":\"bartowski/Meta-Llama-3.1-8B-Instruct-GGUF\",\"filename\":\"Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf\"}'"

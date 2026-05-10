@@ -16,7 +16,8 @@
         Plug,
         KeyRound,
         Trash2,
-        Menu
+        Menu,
+        LayoutPanelLeft
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -28,6 +29,7 @@
     const items = [
         { href: '/', label: 'Tableau de bord', icon: Activity },
         { href: '/chat', label: 'Conversations', icon: MessageSquare },
+        { href: '/workspaces', label: 'Workspaces', icon: LayoutPanelLeft },
         { href: '/nodes', label: 'Nodes', icon: Server },
         { href: '/tools', label: 'Tools', icon: Wrench },
         { href: '/connectors', label: 'Connectors', icon: Plug },
@@ -72,6 +74,14 @@
 
     function isActive(href: string): boolean {
         if (href === '/') return $page.url.pathname === '/';
+        // /workspaces couvre aussi /workspace/[id]
+        if (href === '/workspaces') {
+            return (
+                $page.url.pathname === '/workspaces' ||
+                $page.url.pathname.startsWith('/workspaces/') ||
+                $page.url.pathname.startsWith('/workspace/')
+            );
+        }
         return $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
     }
 

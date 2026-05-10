@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -44,12 +45,14 @@ async def _create_token_async(email: str) -> None:
     async with async_session_factory()() as db:
         user = await db.scalar(select(User).where(User.email == email))
         token = generate_token()
+        now = datetime.now(timezone.utc)
         if user is None:
-            user = User(email=email, api_token_hash=hash_token(token))
+            user = User(email=email, api_token_hash=hash_token(token), token_created_at=now)
             db.add(user)
             action = "created"
         else:
             user.api_token_hash = hash_token(token)
+            user.token_created_at = now
             action = "rotated"
         await db.commit()
     typer.echo(f"User {email} {action}.")

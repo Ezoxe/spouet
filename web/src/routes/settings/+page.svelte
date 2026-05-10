@@ -3,12 +3,13 @@
     import { goto } from '$app/navigation';
     import { ApiError, auth, setToken, type MeOut, nodes as nodesApi, type ModelAgg } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
-    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor, Sparkles } from 'lucide-svelte';
+    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor, Sparkles, Clock } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import { theme, setTheme, type Theme } from '$lib/theme';
 
     let me: MeOut | null = $state(null);
     let newToken: string | null = $state(null);
+    let tokenExpiresAt: string | null = $state(null);
     let currentTheme: Theme = $state('light');
     let models: ModelAgg[] = $state([]);
     let defaultModel: string = $state('');
@@ -26,6 +27,8 @@
     async function refresh() {
         try {
             me = await auth.me();
+            const info = await auth.tokenInfo();
+            tokenExpiresAt = info.expires_at;
         } catch (e) {
             if (!isHandledAuthError(e)) {
                 toast.error('Impossible de charger le compte.');
@@ -192,10 +195,16 @@
                 </div>
             </div>
         {/if}
+        {#if tokenExpiresAt}
+            <p class="mt-3 flex items-center gap-1.5 text-xs text-neutral-500">
+                <Clock size={12} />
+                Expire le {new Date(tokenExpiresAt).toLocaleString('fr-FR')}
+            </p>
+        {/if}
         <button
             type="button"
             onclick={rotate}
-            class="flex items-center gap-2 rounded-lg border border-neutral-700 px-3 py-1.5 text-sm
+            class="mt-3 flex items-center gap-2 rounded-lg border border-neutral-700 px-3 py-1.5 text-sm
                    hover:bg-neutral-800"
         >
             <RefreshCw size={14} /> Régénérer le token

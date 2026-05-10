@@ -19,30 +19,44 @@ class GpuInfo:
     disk_used_mb: int | None
 
 
-def _get_ram_and_disk() -> tuple[int|None, int|None, int|None, int|None]:
-    import shutil
-    try:
-        with open("/proc/meminfo", "r") as f:
-            meminfo = f.read()
-        total_kb = 0
-        available_kb = 0
-        for line in meminfo.splitlines():
-            if line.startswith("MemTotal:"):
-                total_kb = int(line.split()[1])
-            elif line.startswith("MemAvailable:"):
-                available_kb = int(line.split()[1])
+def _get_ram_and_disk() -> tuple[int | None, int | None, int | None, int | None]:
+    ram_total_mb: int | None = None
+    ram_used_mb: int | None = None
+    disk_total_mb: int | None = None
+    disk_used_mb: int | None = None
 
-        ram_total_mb = total_kb // 1024 if total_kb > 0 else None
-        ram_used_mb = (total_kb - available_kb) // 1024 if total_kb > 0 and available_kb > 0 else None
-    except Exception:
-        ram_total_mb, ram_used_mb = None, None
+    if platform.system() == "Windows":
+        try:
+            import psutil  # type: ignore[import-untyped]
+            mem = psutil.virtual_memory()
+            ram_total_mb = mem.total // (1024 * 1024)
+            ram_used_mb = mem.used // (1024 * 1024)
+        except Exception:
+            pass
+    else:
+        try:
+            with open("/proc/meminfo") as f:
+                meminfo = f.read()
+            total_kb = available_kb = 0
+            for line in meminfo.splitlines():
+                if line.startswith("MemTotal:"):
+                    total_kb = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    available_kb = int(line.split()[1])
+            if total_kb > 0:
+                ram_total_mb = total_kb // 1024
+            if total_kb > 0 and available_kb > 0:
+                ram_used_mb = (total_kb - available_kb) // 1024
+        except Exception:
+            pass
 
     try:
-        usage = shutil.disk_usage("/")
+        root = "C:\\" if platform.system() == "Windows" else "/"
+        usage = shutil.disk_usage(root)
         disk_total_mb = usage.total // (1024 * 1024)
         disk_used_mb = usage.used // (1024 * 1024)
     except Exception:
-        disk_total_mb, disk_used_mb = None, None
+        pass
 
     return ram_total_mb, ram_used_mb, disk_total_mb, disk_used_mb
 

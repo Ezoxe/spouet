@@ -1,4 +1,8 @@
-"""Client httpx async vers Ollama : streaming /api/chat."""
+"""Client httpx async vers llama.cpp-server (API OpenAI-compatible) ou Ollama ≥ 0.1.14.
+
+Les deux serveurs exposent /v1/chat/completions, /v1/models, /v1/embeddings.
+Les chunks SSE sont normalisés vers le format interne attendu par chat_loop.py.
+"""
 
 from __future__ import annotations
 
@@ -10,31 +14,22 @@ from typing import Any
 import httpx
 
 
-class OllamaError(RuntimeError):
+class LlamaError(RuntimeError):
     pass
 
 
-# Valeur sentinelle inscrite dans Node.agent_version pour distinguer les nodes
-# enregistrés manuellement (pingés directement par le backend) de ceux qui
-# tournent un node-agent (et envoient leur propre version dans le heartbeat).
+# Rétrocompat pour les workers qui importent OllamaError
+OllamaError = LlamaError
+
+# Sentinelle pour les nodes enregistrés manuellement (pas de node-agent)
 DIRECT_AGENT_MARKER = "direct"
 
-
-# Modèles Ollama connus comme supportant le tool calling natif.
-# Doublé dans node-agent/spouet_agent/ollama.py : si tu modifies ici, modifie là-bas aussi.
+# Modèles supportant les tool_calls — détection par nom de fichier GGUF ou tag Ollama
 _TOOL_CAPABLE_PREFIXES = (
-    "llama3.1",
-    "llama3.2",
-    "llama3.3",
-    "llama4",
-    "qwen2.5",
-    "qwen3",
-    "mistral",
-    "mistral-nemo",
-    "mixtral",
-    "command-r",
-    "firefunction",
-    "hermes",
+    "llama3.1", "llama3.2", "llama3.3", "llama4",
+    "llama-3.1", "llama-3.2", "llama-3.3", "llama-4",
+    "qwen2.5", "qwen3", "mistral", "mistral-nemo", "mixtral",
+    "command-r", "firefunction", "hermes",
 )
 
 
@@ -55,18 +50,60 @@ class ProbeResult:
     models: list[ProbedModel]
 
 
+def _model_supports_tools(name: str) -> bool:
+    name_lower = name.lower()
+    return any(p.lower() in name_lower for p in _TOOL_CAPABLE_PREFIXES)
+
+
 async def probe(base_url: str, *, timeout_s: float = 5.0) -> ProbeResult:
-    """Joint un Ollama et liste ses modèles. Sert pour les nodes "direct" (sans agent)."""
+    """Sonde un nœud (llama.cpp-server ou Ollama) et liste ses modèles.
+
+    Essaie /v1/models (OpenAI-compatible, Ollama ≥ 0.1.14 + llama.cpp-server).
+    Fallback sur /api/tags (Ollama legacy) si /v1/models est indisponible.
+    """
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
+            # Tentative /v1/models
+            try:
+                r = await client.get(f"{base_url}/v1/models")
+                if r.status_code == 200:
+                    return _parse_v1_models(r.json())
+            except httpx.HTTPError:
+                pass
+
+            # Fallback Ollama legacy
             r = await client.get(f"{base_url}/api/tags")
             r.raise_for_status()
-            data = r.json() or {}
+            return _parse_ollama_tags(r.json())
+
     except httpx.HTTPError as e:
         return ProbeResult(reachable=False, error=str(e), models=[])
     except ValueError as e:
         return ProbeResult(reachable=False, error=f"invalid json: {e}", models=[])
 
+
+def _parse_v1_models(data: dict[str, Any]) -> ProbeResult:
+    """Parse la réponse /v1/models (OpenAI-compatible)."""
+    models: list[ProbedModel] = []
+    for m in data.get("data", []):
+        name = m.get("id") or ""
+        if not name:
+            continue
+        models.append(
+            ProbedModel(
+                name=name,
+                digest=None,
+                size_bytes=None,
+                parameter_size=None,
+                quant=None,
+                supports_tools=_model_supports_tools(name),
+            )
+        )
+    return ProbeResult(reachable=True, error=None, models=models)
+
+
+def _parse_ollama_tags(data: dict[str, Any]) -> ProbeResult:
+    """Parse la réponse /api/tags (Ollama legacy)."""
     models: list[ProbedModel] = []
     for m in data.get("models", []):
         name = m.get("name") or m.get("model") or ""
@@ -80,7 +117,7 @@ async def probe(base_url: str, *, timeout_s: float = 5.0) -> ProbeResult:
                 size_bytes=m.get("size"),
                 parameter_size=details.get("parameter_size"),
                 quant=details.get("quantization_level"),
-                supports_tools=any(name.startswith(p) for p in _TOOL_CAPABLE_PREFIXES),
+                supports_tools=_model_supports_tools(name),
             )
         )
     return ProbeResult(reachable=True, error=None, models=models)
@@ -95,42 +132,134 @@ async def chat_stream(
     options: dict[str, Any] | None = None,
     timeout_s: float = 600.0,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Stream `/api/chat` chunk par chunk.
+    """Stream /v1/chat/completions.
 
-    Chaque chunk Ollama est une ligne JSON. Yield ces dicts tels quels.
+    Les chunks SSE sont normalisés vers le format Ollama attendu par chat_loop.py :
+      {"message": {"content": "...", "tool_calls": [...]}, "done": bool,
+       "done_reason": str|None, "prompt_eval_count": int|None, "eval_count": int|None}
     """
-    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
     if tools:
         payload["tools"] = tools
-    if options:
-        payload["options"] = options
+
+    # Accumulation des tool_calls sur plusieurs chunks (OpenAI streaming incrémental)
+    accumulated_tool_calls: dict[int, dict[str, Any]] = {}
 
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         try:
-            async with client.stream("POST", f"{base_url}/api/chat", json=payload) as resp:
+            async with client.stream(
+                "POST", f"{base_url}/v1/chat/completions", json=payload
+            ) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
-                    raise OllamaError(f"Ollama {resp.status_code}: {body.decode(errors='replace')}")
+                    raise LlamaError(f"llama-server {resp.status_code}: {body.decode(errors='replace')}")
+
                 async for line in resp.aiter_lines():
-                    if not line:
+                    line = line.strip()
+                    if not line or not line.startswith("data: "):
                         continue
+                    raw = line[6:]
+                    if raw == "[DONE]":
+                        break
                     try:
-                        chunk = json.loads(line)
+                        chunk = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
-                    yield chunk
+
+                    normalized = _normalize_chunk(chunk, accumulated_tool_calls)
+                    if normalized is not None:
+                        yield normalized
+
         except httpx.HTTPError as e:
-            raise OllamaError(f"http error: {e}") from e
+            raise LlamaError(f"http error: {e}") from e
+
+
+def _normalize_chunk(
+    chunk: dict[str, Any],
+    acc_tool_calls: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Convertit un chunk SSE OpenAI vers le format interne Ollama-like."""
+    choices = chunk.get("choices", [])
+    if not choices:
+        return None
+
+    choice = choices[0]
+    delta = choice.get("delta", {})
+    finish_reason: str | None = choice.get("finish_reason")
+    usage: dict[str, Any] = chunk.get("usage") or {}
+
+    content = delta.get("content") or ""
+
+    # Accumulation des tool_calls (OpenAI stream les envoie par morceaux)
+    raw_tcs = delta.get("tool_calls")
+    if raw_tcs:
+        for tc in raw_tcs:
+            idx = tc.get("index", 0)
+            if idx not in acc_tool_calls:
+                acc_tool_calls[idx] = {
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
+            fn = tc.get("function", {})
+            if fn.get("name"):
+                acc_tool_calls[idx]["function"]["name"] += fn["name"]
+            if fn.get("arguments"):
+                acc_tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+
+    tool_calls: list[dict[str, Any]] | None = None
+    if finish_reason in ("tool_calls", "stop") and acc_tool_calls:
+        # Émet les tool_calls complets. Convertit arguments JSON string → dict.
+        tool_calls = []
+        for tc in sorted(acc_tool_calls.values(), key=lambda x: list(acc_tool_calls.values()).index(x)):
+            args = tc["function"].get("arguments", "{}")
+            try:
+                parsed_args = json.loads(args) if isinstance(args, str) else args
+            except json.JSONDecodeError:
+                parsed_args = {}
+            tool_calls.append({
+                "type": "function",
+                "function": {"name": tc["function"]["name"], "arguments": parsed_args},
+            })
+
+    done = finish_reason is not None
+    return {
+        "message": {
+            "role": delta.get("role", "assistant"),
+            "content": content,
+            "tool_calls": tool_calls,
+        },
+        "done": done,
+        "done_reason": finish_reason,
+        "prompt_eval_count": usage.get("prompt_tokens"),
+        "eval_count": usage.get("completion_tokens"),
+    }
 
 
 async def embed(base_url: str, *, model: str, texts: list[str]) -> list[list[float]]:
-    """Embeddings batch via /api/embed."""
+    """Embeddings via /v1/embeddings (OpenAI-compatible) ou /api/embed (Ollama legacy)."""
     async with httpx.AsyncClient(timeout=120) as client:
+        # Essaie /v1/embeddings
+        try:
+            resp = await client.post(
+                f"{base_url}/v1/embeddings",
+                json={"model": model, "input": texts},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return [item["embedding"] for item in sorted(data.get("data", []), key=lambda x: x.get("index", 0))]
+        except httpx.HTTPError:
+            pass
+
+        # Fallback Ollama
         resp = await client.post(
             f"{base_url}/api/embed",
             json={"model": model, "input": texts},
         )
         if resp.status_code >= 400:
-            raise OllamaError(f"Ollama embed {resp.status_code}: {resp.text}")
+            raise LlamaError(f"embed {resp.status_code}: {resp.text}")
         data = resp.json()
         return list(data.get("embeddings", []))

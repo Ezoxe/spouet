@@ -56,6 +56,7 @@ class User(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     api_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    token_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +75,23 @@ class Node(Base, TimestampMixin):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     vram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     vram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gpu_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    # Champs llama.cpp (remontés par heartbeat)
+    llama_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    llama_model_loaded: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    llama_n_ctx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_n_gpu_layers: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_tps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llama_slots_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_prompt_tokens_processed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_tokens_generated: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     models: Mapped[list[Model]] = relationship(
         back_populates="node", cascade="all, delete-orphan"
@@ -111,6 +126,28 @@ class Model(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# Workspaces multi-agents
+# ---------------------------------------------------------------------------
+
+
+class WorkspaceSession(Base, TimestampMixin):
+    __tablename__ = "workspace_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), default="New workspace", nullable=False)
+
+    conversations: Mapped[list["Conversation"]] = relationship(
+        "Conversation",
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        foreign_keys="[Conversation.workspace_id]",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Conversations / Messages
 # ---------------------------------------------------------------------------
 
@@ -126,11 +163,26 @@ class Conversation(Base, TimestampMixin):
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_pref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspace_sessions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    workspace_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    allowed_tool_slugs: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+    workspace: Mapped["WorkspaceSession | None"] = relationship(
+        "WorkspaceSession",
+        back_populates="conversations",
+        foreign_keys=[workspace_id],
     )
 
 

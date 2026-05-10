@@ -18,7 +18,7 @@ from spouet.nodes.client import OllamaError, chat_stream
 from spouet.nodes.router import NoSuitableNodeError, pick_node
 from spouet.orchestrator.context import build_extra_system, build_messages
 from spouet.orchestrator.persona import build_persona_prompt
-from spouet.realtime.hub import conv_channel, publish
+from spouet.realtime.hub import conv_channel, publish, workspace_channel
 from spouet.secrets.store import SecretMissingError, resolve_env
 from spouet.tools.approval import request_approval, wait_for_decision
 from spouet.tools.manifest import validate_args
@@ -27,6 +27,32 @@ from spouet.tools.runner import run_tool
 logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 8
+DELEGATE_TOOL_SLUG = "delegate_to_node"
+
+_DELEGATE_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": DELEGATE_TOOL_SLUG,
+        "description": (
+            "Délègue une sous-tâche à un agent worker du workspace. "
+            "Retourne le résultat complet produit par le worker."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "worker_conversation_id": {
+                    "type": "string",
+                    "description": "UUID de la conversation worker cible (fourni dans le system prompt)",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Description détaillée de la tâche à confier au worker",
+                },
+            },
+            "required": ["worker_conversation_id", "prompt"],
+        },
+    },
+}
 
 
 async def stream_assistant_reply(
@@ -52,7 +78,11 @@ async def stream_assistant_reply(
     channel = conv_channel(conversation.id)
     await publish(channel, "message", _msg_payload(user_msg))
 
-    tools_payload, tools_by_slug = await _load_active_tools(db) if enable_tools else (None, {})
+    tools_payload, tools_by_slug = (
+        await _load_active_tools(db, conversation=conversation)
+        if enable_tools
+        else (None, {})
+    )
 
     excluded: set[UUID] = set()
     iteration = 0
@@ -98,6 +128,12 @@ async def stream_assistant_reply(
                 db, user_id=conversation.user_id, last_user_text=user_text
             )
             extra_system = persona if not extras else f"{persona}\n\n{extras}"
+
+            # Workspace manager : injecter la liste des workers
+            if conversation.workspace_role == "manager" and conversation.workspace_id is not None:
+                wctx = await _build_workspace_manager_context(db, conversation)
+                if wctx:
+                    extra_system = f"{extra_system}\n\n{wctx}" if extra_system else wctx
         messages = await build_messages(
             db, conversation=conversation, extra_system=extra_system
         )
@@ -185,11 +221,20 @@ async def stream_assistant_reply(
 
 async def _load_active_tools(
     db: AsyncSession,
+    *,
+    conversation: Conversation | None = None,
 ) -> tuple[list[dict[str, Any]] | None, dict[str, Tool]]:
     rows = (await db.execute(select(Tool).where(Tool.enabled.is_(True)))).scalars().all()
-    if not rows:
-        return None, {}
-    payload = [
+
+    # Workers avec restriction de tools → filtrer
+    if (
+        conversation is not None
+        and conversation.workspace_role == "worker"
+        and conversation.allowed_tool_slugs
+    ):
+        rows = [t for t in rows if t.slug in conversation.allowed_tool_slugs]
+
+    payload: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -200,7 +245,12 @@ async def _load_active_tools(
         }
         for t in rows
     ]
-    return payload, {t.slug: t for t in rows}
+
+    # Manager → ajouter delegate_to_node
+    if conversation is not None and conversation.workspace_role == "manager":
+        payload.append(_DELEGATE_TOOL_DEF)
+
+    return (payload if payload else None), {t.slug: t for t in rows}
 
 
 async def _execute_tool_call(
@@ -219,6 +269,15 @@ async def _execute_tool_call(
             raw_args = json.loads(raw_args)
         except json.JSONDecodeError:
             raw_args = {}
+
+    # Built-in workspace delegation
+    if slug == DELEGATE_TOOL_SLUG:
+        return await _execute_delegate(
+            db,
+            conversation=conversation,
+            args=raw_args,
+            channel=channel,
+        )
 
     tool = tools_by_slug.get(slug or "")
     if tool is None:
@@ -339,3 +398,133 @@ def _msg_payload(m: Message) -> dict[str, Any]:
         "content": m.content,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
+
+
+async def _build_workspace_manager_context(
+    db: AsyncSession, conversation: Conversation
+) -> str | None:
+    """Construit le contexte injecté dans le system prompt du manager."""
+    workers = (
+        await db.execute(
+            select(Conversation).where(
+                Conversation.workspace_id == conversation.workspace_id,
+                Conversation.workspace_role == "worker",
+            )
+        )
+    ).scalars().all()
+
+    if not workers:
+        return None
+
+    lines = [
+        "Tu es le manager d'un espace de travail multi-agents. "
+        "Tu peux déléguer des sous-tâches aux agents workers via l'outil `delegate_to_node`. "
+        "Chaque délégation retourne le résultat complet du worker dans un message role=tool.\n",
+        "Agents workers disponibles :",
+    ]
+    for w in workers:
+        lines.append(
+            f"  - « {w.title} » (modèle : {w.model_pref or '?'}) "
+            f"[worker_conversation_id: {w.id}]"
+        )
+    return "\n".join(lines)
+
+
+async def _execute_delegate(
+    db: AsyncSession,
+    *,
+    conversation: Conversation,
+    args: dict[str, Any],
+    channel: str,
+) -> Message:
+    """Exécute une délégation vers un agent worker du même workspace."""
+    worker_conv_id_raw = args.get("worker_conversation_id", "")
+    prompt = args.get("prompt", "")
+
+    if not worker_conv_id_raw or not prompt:
+        return await _persist_tool_message(
+            db,
+            conversation,
+            DELEGATE_TOOL_SLUG,
+            {"error": "worker_conversation_id and prompt are required"},
+        )
+
+    try:
+        wid = UUID(str(worker_conv_id_raw))
+    except ValueError:
+        return await _persist_tool_message(
+            db,
+            conversation,
+            DELEGATE_TOOL_SLUG,
+            {"error": f"invalid worker_conversation_id: {worker_conv_id_raw}"},
+        )
+
+    if conversation.workspace_id is None:
+        return await _persist_tool_message(
+            db,
+            conversation,
+            DELEGATE_TOOL_SLUG,
+            {"error": "delegate_to_node requires a workspace context"},
+        )
+
+    worker_conv = await db.get(Conversation, wid)
+    if worker_conv is None or worker_conv.workspace_id != conversation.workspace_id:
+        return await _persist_tool_message(
+            db,
+            conversation,
+            DELEGATE_TOOL_SLUG,
+            {"error": "worker conversation not found or not in same workspace"},
+        )
+
+    ws_channel = workspace_channel(conversation.workspace_id)
+    await publish(
+        ws_channel,
+        "worker_start",
+        {"conv_id": str(worker_conv.id), "title": worker_conv.title},
+    )
+
+    result_text = ""
+    async for ev in stream_assistant_reply(
+        db,
+        conversation=worker_conv,
+        user_text=prompt,
+        enable_tools=bool(worker_conv.allowed_tool_slugs),
+    ):
+        evt = ev["event"]
+        if evt == "token":
+            t = ev["data"]["text"]
+            result_text += t
+            await publish(
+                ws_channel,
+                "worker_token",
+                {"conv_id": str(worker_conv.id), "text": t},
+            )
+        elif evt == "done":
+            await publish(
+                ws_channel,
+                "worker_done",
+                {
+                    "conv_id": str(worker_conv.id),
+                    "tokens_out": ev["data"].get("tokens_out"),
+                },
+            )
+        elif evt == "error":
+            await publish(
+                ws_channel,
+                "worker_error",
+                {
+                    "conv_id": str(worker_conv.id),
+                    "message": ev["data"].get("message", ""),
+                },
+            )
+
+    return await _persist_tool_message(
+        db,
+        conversation,
+        DELEGATE_TOOL_SLUG,
+        {
+            "worker_conversation_id": str(worker_conv.id),
+            "worker_title": worker_conv.title,
+            "result": result_text,
+        },
+    )

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { Trash2, RefreshCw, Plus, Check, X, Loader2, Copy } from 'lucide-svelte';
+    import { Trash2, RefreshCw, Plus, Check, X, Loader2, Copy, ExternalLink } from 'lucide-svelte';
     import { nodes as nodesApi, ApiError, type NodeOut, type NodeProbeOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
@@ -509,7 +509,9 @@ cd C:\\spouet\\node-agent\\nssm
                             class:bg-emerald-400={n.status === 'online'}
                             class:bg-neutral-600={n.status !== 'online'}
                         ></span>
-                        <h3 class="font-medium">{n.name}</h3>
+                        <a href="/nodes/{n.id}" class="font-medium hover:text-cyan-300 flex items-center gap-1">
+                            {n.name} <ExternalLink size={11} class="text-neutral-600" />
+                        </a>
                         <span class="text-xs text-neutral-500">{n.host}:{n.port}</span>
                         {#if n.agent_version === 'direct'}
                             <span
@@ -537,36 +539,39 @@ cd C:\\spouet\\node-agent\\nssm
                         <Trash2 size={14} />
                     </button>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
                     <div>
                         <dt class="text-xs text-neutral-500">GPU</dt>
-                        <dd>{n.gpu_model ?? '—'}</dd>
+                        <dd class="truncate max-w-[12ch]" title={n.gpu_model ?? '—'}>{n.gpu_model ?? '—'}</dd>
                     </div>
                     <div>
                         <dt class="text-xs text-neutral-500">VRAM</dt>
-                        <dd>
-                            {n.vram_used_mb ?? '—'} / {n.vram_total_mb ?? '—'} MB
-                        </dd>
+                        <dd>{n.vram_used_mb ?? '—'} / {n.vram_total_mb ?? '—'} MB</dd>
                     </div>
                     <div>
                         <dt class="text-xs text-neutral-500">RAM</dt>
-                        <dd>
-                            {n.ram_used_mb ?? '—'} / {n.ram_total_mb ?? '—'} MB
+                        <dd>{n.ram_used_mb ?? '—'} / {n.ram_total_mb ?? '—'} MB</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-neutral-500">llama.cpp</dt>
+                        <dd class="flex items-center gap-1.5">
+                            <span class="h-1.5 w-1.5 rounded-full {n.llama_running ? 'bg-emerald-400' : 'bg-neutral-600'}"></span>
+                            {#if n.llama_running && n.llama_tps != null}
+                                {n.llama_tps.toFixed(1)} t/s
+                            {:else}
+                                {n.llama_running ? 'actif' : 'arrêté'}
+                            {/if}
                         </dd>
                     </div>
                     <div>
-                        <dt class="text-xs text-neutral-500">Disque</dt>
-                        <dd>
-                            {n.disk_used_mb ?? '—'} / {n.disk_total_mb ?? '—'} MB
+                        <dt class="text-xs text-neutral-500">Modèle chargé</dt>
+                        <dd class="truncate max-w-[14ch] text-xs" title={n.llama_model_loaded ?? '—'}>
+                            {n.llama_model_loaded ?? '—'}
                         </dd>
                     </div>
                     <div>
                         <dt class="text-xs text-neutral-500">Modèles</dt>
                         <dd>{n.models.length}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-neutral-500">Agent</dt>
-                        <dd>{n.agent_version ?? '—'}</dd>
                     </div>
                 </div>
                 {#if n.models.length}

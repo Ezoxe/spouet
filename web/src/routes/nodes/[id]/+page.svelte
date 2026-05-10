@@ -1,0 +1,461 @@
+<script lang="ts">
+    import { onMount } from 'svelte';
+    import { page } from '$app/stores';
+    import {
+        nodes as nodesApi,
+        type NodeOut,
+        type LocalModelOut,
+        ApiError
+    } from '$lib/api';
+    import { toast } from '$lib/toast.svelte';
+    import {
+        RefreshCw, Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap
+    } from 'lucide-svelte';
+    import { goto } from '$app/navigation';
+
+    const nodeId = $derived($page.params.id);
+
+    let node: NodeOut | null = $state(null);
+    let localModels: LocalModelOut[] = $state([]);
+    let loading = $state(true);
+    let modelsLoading = $state(false);
+    let pullStatus: Record<string, unknown> | null = $state(null);
+    let polling: ReturnType<typeof setInterval> | null = null;
+
+    // Formulaire pull
+    let showPullForm = $state(false);
+    let pullForm = $state({ hf_repo: '', filename: '' });
+    let pulling = $state(false);
+
+    // Formulaire config llama
+    let showConfig = $state(false);
+    let configForm = $state({ n_ctx: 8192, n_gpu_layers: -1, n_batch: 512, n_parallel: 1 });
+    let configSaving = $state(false);
+
+    // Modèle à charger
+    let loadingModel: string | null = $state(null);
+
+    function fmtSize(bytes: number): string {
+        if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+        if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+        return bytes + ' B';
+    }
+
+    async function loadNode() {
+        if (!nodeId) return;
+        loading = true;
+        try {
+            const list = await nodesApi.list();
+            node = list.find((n) => n.id === nodeId) ?? null;
+            if (node && node.llama_n_ctx) {
+                configForm.n_ctx = node.llama_n_ctx;
+                configForm.n_gpu_layers = node.llama_n_gpu_layers ?? -1;
+            }
+        } finally {
+            loading = false;
+        }
+    }
+
+    async function loadLocalModels() {
+        if (!nodeId || !node?.agent_port) return;
+        modelsLoading = true;
+        try {
+            localModels = await nodesApi.localModels(nodeId);
+        } catch {
+            /* agent pas encore disponible */
+        } finally {
+            modelsLoading = false;
+        }
+    }
+
+    async function startPull() {
+        if (!nodeId || !pullForm.hf_repo || !pullForm.filename) {
+            toast.error('Renseigne le repo HuggingFace et le nom du fichier.');
+            return;
+        }
+        pulling = true;
+        try {
+            await nodesApi.pullModel(nodeId, pullForm);
+            toast.success('Téléchargement démarré…');
+            showPullForm = false;
+            startPollingPullStatus();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur inconnue');
+        } finally {
+            pulling = false;
+        }
+    }
+
+    function startPollingPullStatus() {
+        if (polling || !nodeId) return;
+        const id = nodeId;
+        polling = setInterval(async () => {
+            try {
+                pullStatus = await nodesApi.pullStatus(id);
+                if (pullStatus?.status === 'done' || pullStatus?.status === 'error') {
+                    clearInterval(polling!);
+                    polling = null;
+                    if (pullStatus?.status === 'done') {
+                        toast.success(`Modèle téléchargé : ${pullStatus.filename}`);
+                        await loadLocalModels();
+                    } else {
+                        toast.error(`Échec : ${pullStatus?.error}`);
+                    }
+                    pullStatus = null;
+                }
+            } catch { /* ignore */ }
+        }, 2000);
+    }
+
+    async function loadModel(filename: string) {
+        if (!nodeId) return;
+        loadingModel = filename;
+        try {
+            await nodesApi.loadModel(nodeId, { filename });
+            toast.success(`Chargement de ${filename} en cours…`);
+            await loadNode();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        } finally {
+            loadingModel = null;
+        }
+    }
+
+    async function deleteModel(filename: string) {
+        if (!nodeId || !confirm(`Supprimer ${filename} ?`)) return;
+        try {
+            await nodesApi.deleteLocalModel(nodeId, filename);
+            toast.success('Modèle supprimé.');
+            await loadLocalModels();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        }
+    }
+
+    async function saveConfig() {
+        if (!nodeId) return;
+        configSaving = true;
+        try {
+            await nodesApi.patchLlamaConfig(nodeId, configForm);
+            toast.success('Redémarrage llama-server en cours…');
+            showConfig = false;
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        } finally {
+            configSaving = false;
+        }
+    }
+
+    onMount(() => {
+        loadNode().then(() => loadLocalModels());
+        const i = setInterval(() => { loadNode(); }, 8000);
+        return () => {
+            clearInterval(i);
+            if (polling) clearInterval(polling);
+        };
+    });
+</script>
+
+<header class="flex items-center gap-3 px-6 py-5 sm:px-8">
+    <button type="button" onclick={() => goto('/nodes')} class="rounded p-1 hover:bg-neutral-800">
+        <ChevronLeft size={18} />
+    </button>
+    <div class="min-w-0">
+        <h1 class="text-xl font-semibold tracking-tight truncate">
+            {node?.name ?? '…'}
+        </h1>
+        <p class="text-xs text-neutral-500">{node?.host}:{node?.port}</p>
+    </div>
+    {#if node}
+        <span
+            class="ml-auto h-2 w-2 rounded-full flex-shrink-0"
+            class:bg-emerald-400={node.status === 'online'}
+            class:bg-neutral-600={node.status !== 'online'}
+        ></span>
+    {/if}
+</header>
+
+<div class="space-y-4 px-6 pb-6 sm:px-8">
+
+    <!-- Stats hardware -->
+    {#if node}
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-neutral-400">Matériel</h2>
+            <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div class="flex items-start gap-2">
+                    <Cpu size={14} class="mt-0.5 shrink-0 text-neutral-500" />
+                    <div>
+                        <dt class="text-xs text-neutral-500">GPU</dt>
+                        <dd class="truncate max-w-[14ch]" title={node.gpu_model ?? '—'}>{node.gpu_model ?? '—'}</dd>
+                    </div>
+                </div>
+                <div class="flex items-start gap-2">
+                    <Zap size={14} class="mt-0.5 shrink-0 text-neutral-500" />
+                    <div>
+                        <dt class="text-xs text-neutral-500">VRAM</dt>
+                        <dd>{node.vram_used_mb ?? '—'} / {node.vram_total_mb ?? '—'} MB</dd>
+                    </div>
+                </div>
+                <div class="flex items-start gap-2">
+                    <MemoryStick size={14} class="mt-0.5 shrink-0 text-neutral-500" />
+                    <div>
+                        <dt class="text-xs text-neutral-500">RAM</dt>
+                        <dd>{node.ram_used_mb ?? '—'} / {node.ram_total_mb ?? '—'} MB</dd>
+                    </div>
+                </div>
+                <div class="flex items-start gap-2">
+                    <HardDrive size={14} class="mt-0.5 shrink-0 text-neutral-500" />
+                    <div>
+                        <dt class="text-xs text-neutral-500">Disque</dt>
+                        <dd>{node.disk_used_mb ? Math.round(node.disk_used_mb / 1024) : '—'} / {node.disk_total_mb ? Math.round(node.disk_total_mb / 1024) : '—'} GB</dd>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats llama.cpp -->
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-xs font-medium uppercase tracking-wider text-neutral-400">llama.cpp</h2>
+                {#if node.agent_port}
+                    <button
+                        type="button"
+                        onclick={() => (showConfig = !showConfig)}
+                        class="flex items-center gap-1.5 rounded border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800"
+                    >
+                        <Settings size={12} /> Paramètres
+                    </button>
+                {/if}
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <div>
+                    <dt class="text-xs text-neutral-500">Statut</dt>
+                    <dd class="flex items-center gap-1.5">
+                        <span class="h-1.5 w-1.5 rounded-full {node.llama_running ? 'bg-emerald-400' : 'bg-neutral-600'}"></span>
+                        {node.llama_running ? 'actif' : 'arrêté'}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Modèle chargé</dt>
+                    <dd class="truncate max-w-[16ch] text-xs" title={node.llama_model_loaded ?? '—'}>
+                        {node.llama_model_loaded ?? '—'}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Tokens/s</dt>
+                    <dd>{node.llama_tps != null ? node.llama_tps.toFixed(1) : '—'}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Contexte (n_ctx)</dt>
+                    <dd>{node.llama_n_ctx ?? '—'}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Couches GPU</dt>
+                    <dd>{node.llama_n_gpu_layers ?? '—'}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Slots actifs</dt>
+                    <dd>{node.llama_slots_active ?? '—'}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Tokens générés</dt>
+                    <dd>{node.llama_tokens_generated?.toLocaleString() ?? '—'}</dd>
+                </div>
+                <div>
+                    <dt class="text-xs text-neutral-500">Tokens prompt</dt>
+                    <dd>{node.llama_prompt_tokens_processed?.toLocaleString() ?? '—'}</dd>
+                </div>
+            </div>
+
+            {#if showConfig}
+                <div class="mt-4 border-t border-neutral-800 pt-4">
+                    <h3 class="mb-3 text-xs font-medium text-neutral-400">Modifier les paramètres (redémarre llama-server)</h3>
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <label class="flex flex-col gap-1 text-xs text-neutral-400">
+                            Contexte (n_ctx)
+                            <input type="number" bind:value={configForm.n_ctx} min="512" step="512"
+                                class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 focus:border-cyan-500/50 focus:outline-none" />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs text-neutral-400">
+                            Couches GPU (n_gpu_layers)
+                            <input type="number" bind:value={configForm.n_gpu_layers} min="-1"
+                                class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 focus:border-cyan-500/50 focus:outline-none" />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs text-neutral-400">
+                            Batch size
+                            <input type="number" bind:value={configForm.n_batch} min="32" step="32"
+                                class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 focus:border-cyan-500/50 focus:outline-none" />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs text-neutral-400">
+                            Slots parallèles
+                            <input type="number" bind:value={configForm.n_parallel} min="1" max="16"
+                                class="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 focus:border-cyan-500/50 focus:outline-none" />
+                        </label>
+                    </div>
+                    <div class="mt-3 flex gap-2">
+                        <button
+                            type="button"
+                            onclick={saveConfig}
+                            disabled={configSaving}
+                            class="flex items-center gap-2 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+                        >
+                            {#if configSaving}<Loader2 size={14} class="animate-spin" />{/if}
+                            Appliquer
+                        </button>
+                        <button
+                            type="button"
+                            onclick={() => (showConfig = false)}
+                            class="rounded-lg px-3 py-1.5 text-sm text-neutral-400 hover:bg-neutral-800"
+                        >
+                            Annuler
+                        </button>
+                    </div>
+                    <p class="mt-2 text-xs text-neutral-600">-1 pour n_gpu_layers = tout mettre sur GPU.</p>
+                </div>
+            {/if}
+        </section>
+    {/if}
+
+    <!-- Modèles locaux -->
+    <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                Modèles GGUF locaux
+                {#if modelsLoading}<Loader2 size={12} class="ml-2 animate-spin inline" />{/if}
+            </h2>
+            {#if node?.agent_port}
+                <button
+                    type="button"
+                    onclick={() => (showPullForm = !showPullForm)}
+                    class="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-cyan-500"
+                >
+                    <Download size={12} /> Installer un modèle
+                </button>
+            {:else}
+                <p class="text-xs text-neutral-600">Agent v0.2+ requis pour gérer les modèles</p>
+            {/if}
+        </div>
+
+        {#if showPullForm}
+            <div class="mb-4 rounded-lg border border-neutral-700 bg-neutral-950 p-3">
+                <p class="mb-2 text-xs text-neutral-400">
+                    Télécharge un fichier GGUF depuis <a href="https://huggingface.co" target="_blank" class="underline">Hugging Face</a>.
+                </p>
+                <div class="grid gap-2 sm:grid-cols-2">
+                    <label class="flex flex-col gap-1 text-xs text-neutral-500">
+                        Repo HuggingFace
+                        <input
+                            type="text"
+                            bind:value={pullForm.hf_repo}
+                            placeholder="bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"
+                            class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 focus:border-cyan-500/50 focus:outline-none"
+                        />
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs text-neutral-500">
+                        Nom du fichier GGUF
+                        <input
+                            type="text"
+                            bind:value={pullForm.filename}
+                            placeholder="Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+                            class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 focus:border-cyan-500/50 focus:outline-none"
+                        />
+                    </label>
+                </div>
+                <div class="mt-2 flex gap-2">
+                    <button
+                        type="button"
+                        onclick={startPull}
+                        disabled={pulling}
+                        class="flex items-center gap-1.5 rounded bg-cyan-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+                    >
+                        {#if pulling}<Loader2 size={12} class="animate-spin" />{/if}
+                        Télécharger
+                    </button>
+                    <button
+                        type="button"
+                        onclick={() => (showPullForm = false)}
+                        class="rounded px-2.5 py-1 text-xs text-neutral-400 hover:bg-neutral-800"
+                    >
+                        Annuler
+                    </button>
+                </div>
+            </div>
+        {/if}
+
+        {#if pullStatus}
+            <div class="mb-3 rounded border border-cyan-900/40 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-300">
+                Téléchargement en cours : {pullStatus.filename as string}…
+            </div>
+        {/if}
+
+        {#if localModels.length > 0}
+            <ul class="space-y-2">
+                {#each localModels as m}
+                    <li class="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
+                        <div class="min-w-0">
+                            <p class="truncate font-mono text-xs">{m.name}</p>
+                            <p class="text-xs text-neutral-500">
+                                {fmtSize(m.size_bytes)}
+                                {#if m.quant}<span class="ml-2 text-neutral-600">{m.quant}</span>{/if}
+                                {#if m.parameter_size}<span class="ml-2 text-neutral-600">{m.parameter_size}</span>{/if}
+                                {#if m.supports_tools}
+                                    <span class="ml-2 rounded bg-cyan-900/40 px-1 py-0.5 text-[10px] text-cyan-300">tools</span>
+                                {/if}
+                                {#if node?.llama_model_loaded === m.name}
+                                    <span class="ml-2 rounded bg-emerald-900/40 px-1 py-0.5 text-[10px] text-emerald-300">chargé</span>
+                                {/if}
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-1.5 ml-3">
+                            {#if node?.llama_model_loaded !== m.name}
+                                <button
+                                    type="button"
+                                    onclick={() => loadModel(m.name)}
+                                    disabled={loadingModel === m.name}
+                                    class="flex items-center gap-1 rounded border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800 disabled:opacity-50"
+                                    title="Charger ce modèle"
+                                >
+                                    {#if loadingModel === m.name}
+                                        <Loader2 size={11} class="animate-spin" />
+                                    {:else}
+                                        <Play size={11} />
+                                    {/if}
+                                </button>
+                            {/if}
+                            <button
+                                type="button"
+                                onclick={() => deleteModel(m.name)}
+                                class="rounded border border-neutral-800 p-1 text-neutral-500 hover:bg-red-950 hover:text-red-300"
+                                title="Supprimer"
+                            >
+                                <Trash2 size={11} />
+                            </button>
+                        </div>
+                    </li>
+                {/each}
+            </ul>
+        {:else if !modelsLoading}
+            <p class="text-xs text-neutral-600">
+                {node?.agent_port ? 'Aucun modèle GGUF installé.' : 'Installe spouet-agent ≥ 0.2.0 sur ce node pour gérer les modèles depuis l\'interface.'}
+            </p>
+        {/if}
+    </section>
+
+    <!-- Modèles Ollama/llama.cpp déclarés (depuis heartbeat) -->
+    {#if node?.models && node.models.length > 0}
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-neutral-400">Modèles déclarés (heartbeat)</h2>
+            <ul class="space-y-1">
+                {#each node.models as m}
+                    <li class="flex items-center justify-between text-xs">
+                        <span class="font-mono">{m.name}</span>
+                        {#if m.supports_tools}
+                            <span class="rounded bg-cyan-900/40 px-1.5 py-0.5 text-[10px] text-cyan-300">tools</span>
+                        {/if}
+                    </li>
+                {/each}
+            </ul>
+        </section>
+    {/if}
+</div>

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -37,7 +38,8 @@ class HeartbeatModel(BaseModel):
 class HeartbeatRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     host: str = Field(min_length=1, max_length=255)
-    port: int = Field(default=11434, ge=1, le=65535)
+    port: int = Field(default=8080, ge=1, le=65535)
+    agent_port: int | None = Field(default=None, ge=1, le=65535)
     agent_version: str
     gpu_model: str | None = None
     vram_total_mb: int | None = Field(default=None, ge=0)
@@ -46,6 +48,14 @@ class HeartbeatRequest(BaseModel):
     ram_used_mb: int | None = Field(default=None, ge=0)
     disk_total_mb: int | None = Field(default=None, ge=0)
     disk_used_mb: int | None = Field(default=None, ge=0)
+    llama_running: bool | None = None
+    llama_model_loaded: str | None = None
+    llama_n_ctx: int | None = None
+    llama_n_gpu_layers: int | None = None
+    llama_tps: float | None = None
+    llama_slots_active: int | None = None
+    llama_prompt_tokens_processed: int | None = None
+    llama_tokens_generated: int | None = None
     tags: list[str] = Field(default_factory=list)
     models: list[HeartbeatModel] = Field(default_factory=list)
 
@@ -68,6 +78,7 @@ class NodeOut(BaseModel):
     name: str
     host: str
     port: int
+    agent_port: int | None
     status: str
     last_seen: datetime | None
     vram_total_mb: int | None
@@ -80,6 +91,15 @@ class NodeOut(BaseModel):
     agent_version: str | None
     tags: list[str]
     models: list[ModelOut]
+    # Champs llama.cpp
+    llama_running: bool | None
+    llama_model_loaded: str | None
+    llama_n_ctx: int | None
+    llama_n_gpu_layers: int | None
+    llama_tps: float | None
+    llama_slots_active: int | None
+    llama_prompt_tokens_processed: int | None
+    llama_tokens_generated: int | None
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +120,7 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
 
     node.host = payload.host
     node.port = payload.port
+    node.agent_port = payload.agent_port
     node.status = "online"
     node.last_seen = now
     node.vram_total_mb = payload.vram_total_mb
@@ -111,6 +132,14 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     node.disk_used_mb = payload.disk_used_mb
     node.agent_version = payload.agent_version
     node.tags = payload.tags
+    node.llama_running = payload.llama_running
+    node.llama_model_loaded = payload.llama_model_loaded
+    node.llama_n_ctx = payload.llama_n_ctx
+    node.llama_n_gpu_layers = payload.llama_n_gpu_layers
+    node.llama_tps = payload.llama_tps
+    node.llama_slots_active = payload.llama_slots_active
+    node.llama_prompt_tokens_processed = payload.llama_prompt_tokens_processed
+    node.llama_tokens_generated = payload.llama_tokens_generated
 
     await db.flush()  # garantit node.id
 
@@ -236,33 +265,7 @@ async def create_node(payload: NodeCreate, _: CurrentUser, db: DbSession) -> Nod
     )
 
     models = await _models_for_node(db, node.id)
-    return NodeOut(
-        id=str(node.id),
-        name=node.name,
-        host=node.host,
-        port=node.port,
-        status=node.status,
-        last_seen=node.last_seen,
-        vram_total_mb=node.vram_total_mb,
-        vram_used_mb=node.vram_used_mb,
-        gpu_model=node.gpu_model,
-        ram_total_mb=node.ram_total_mb,
-        ram_used_mb=node.ram_used_mb,
-        disk_total_mb=node.disk_total_mb,
-        disk_used_mb=node.disk_used_mb,
-        agent_version=node.agent_version,
-        tags=node.tags,
-        models=[
-            ModelOut(
-                name=m.name,
-                digest=m.digest,
-                size_bytes=m.size_bytes,
-                parameter_size=m.parameter_size,
-                supports_tools=m.supports_tools,
-            )
-            for m in models
-        ],
-    )
+    return _node_out(node, models)
 
 
 @router.get("", response_model=list[NodeOut])
@@ -271,35 +274,7 @@ async def list_nodes(_: CurrentUser, db: DbSession) -> list[NodeOut]:
     out: list[NodeOut] = []
     for n in rows:
         models = await _models_for_node(db, n.id)
-        out.append(
-            NodeOut(
-                id=str(n.id),
-                name=n.name,
-                host=n.host,
-                port=n.port,
-                status="online" if n.is_online() else "offline",
-                last_seen=n.last_seen,
-                vram_total_mb=n.vram_total_mb,
-                vram_used_mb=n.vram_used_mb,
-                gpu_model=n.gpu_model,
-                ram_total_mb=n.ram_total_mb,
-                ram_used_mb=n.ram_used_mb,
-                disk_total_mb=n.disk_total_mb,
-                disk_used_mb=n.disk_used_mb,
-                agent_version=n.agent_version,
-                tags=n.tags,
-                models=[
-                    ModelOut(
-                        name=m.name,
-                        digest=m.digest,
-                        size_bytes=m.size_bytes,
-                        parameter_size=m.parameter_size,
-                        supports_tools=m.supports_tools,
-                    )
-                    for m in models
-                ],
-            )
-        )
+        out.append(_node_out(n, models))
     return out
 
 
@@ -318,5 +293,168 @@ async def delete_node(node_id: UUID, _: CurrentUser, db: DbSession) -> None:
     await db.commit()
 
 
+# ---------------------------------------------------------------------------
+# Routes proxy → agent API (llama.cpp management)
+# ---------------------------------------------------------------------------
+
+async def _agent_url(db: DbSession, node_id: UUID) -> tuple[Node, str]:
+    """Retourne le node + l'URL de base de son agent API."""
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    if node.agent_port is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Node does not have an agent port — install spouet-agent ≥ 0.2.0"
+        )
+    return node, f"http://{node.host}:{node.agent_port}"
+
+
+@router.get("/{node_id}/llama-config")
+async def get_llama_config(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
+    """Retourne la config llama.cpp actuelle du node."""
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    return {
+        "llama_n_ctx": node.llama_n_ctx,
+        "llama_n_gpu_layers": node.llama_n_gpu_layers,
+        "llama_running": node.llama_running,
+        "llama_model_loaded": node.llama_model_loaded,
+        "llama_tps": node.llama_tps,
+        "llama_slots_active": node.llama_slots_active,
+    }
+
+
+class LlamaConfigPatch(BaseModel):
+    n_ctx: int | None = None
+    n_gpu_layers: int | None = None
+    n_batch: int | None = None
+    n_ubatch: int | None = None
+    n_threads: int | None = None
+    n_parallel: int | None = None
+
+
+@router.patch("/{node_id}/llama-config")
+async def patch_llama_config(
+    node_id: UUID, payload: LlamaConfigPatch, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Change les paramètres llama.cpp du node (redémarre llama-server)."""
+    node, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"{base}/config", json=payload.model_dump(exclude_none=True))
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+        return r.json()
+
+
+@router.get("/{node_id}/local-models")
+async def get_local_models(node_id: UUID, _: CurrentUser, db: DbSession) -> list[dict]:  # type: ignore[type-arg]
+    """Liste les modèles GGUF disponibles sur le node."""
+    _, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{base}/models")
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+        return r.json()
+
+
+class ModelPullRequest(BaseModel):
+    hf_repo: str
+    filename: str
+    hf_token: str | None = None
+
+
+@router.post("/{node_id}/local-models/pull", status_code=status.HTTP_202_ACCEPTED)
+async def pull_model(
+    node_id: UUID, payload: ModelPullRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Démarre le téléchargement d'un modèle GGUF sur le node."""
+    _, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{base}/models/download", json=payload.model_dump())
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+        return r.json()
+
+
+@router.get("/{node_id}/local-models/pull/status")
+async def pull_status(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
+    """Progrès du dernier téléchargement."""
+    _, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{base}/models/download/status")
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+        return r.json()
+
+
+class ModelLoadRequest(BaseModel):
+    filename: str
+
+
+@router.post("/{node_id}/local-models/load")
+async def load_model(
+    node_id: UUID, payload: ModelLoadRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Change le modèle actif sur le node."""
+    _, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{base}/models/load", json=payload.model_dump())
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+        return r.json()
+
+
+@router.delete("/{node_id}/local-models/{filename}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_local_model(
+    node_id: UUID, filename: str, _: CurrentUser, db: DbSession
+) -> None:
+    _, base = await _agent_url(db, node_id)
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.delete(f"{base}/models/{filename}")
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, r.text)
+
+
 async def _models_for_node(db, node_id: UUID) -> list[Model]:  # type: ignore[no-untyped-def]
     return list((await db.execute(select(Model).where(Model.node_id == node_id))).scalars().all())
+
+
+def _node_out(n: Node, models: list[Model]) -> NodeOut:
+    return NodeOut(
+        id=str(n.id),
+        name=n.name,
+        host=n.host,
+        port=n.port,
+        agent_port=n.agent_port,
+        status="online" if n.is_online() else "offline",
+        last_seen=n.last_seen,
+        vram_total_mb=n.vram_total_mb,
+        vram_used_mb=n.vram_used_mb,
+        gpu_model=n.gpu_model,
+        ram_total_mb=n.ram_total_mb,
+        ram_used_mb=n.ram_used_mb,
+        disk_total_mb=n.disk_total_mb,
+        disk_used_mb=n.disk_used_mb,
+        agent_version=n.agent_version,
+        tags=n.tags,
+        models=[
+            ModelOut(
+                name=m.name,
+                digest=m.digest,
+                size_bytes=m.size_bytes,
+                parameter_size=m.parameter_size,
+                supports_tools=m.supports_tools,
+            )
+            for m in models
+        ],
+        llama_running=n.llama_running,
+        llama_model_loaded=n.llama_model_loaded,
+        llama_n_ctx=n.llama_n_ctx,
+        llama_n_gpu_layers=n.llama_n_gpu_layers,
+        llama_tps=n.llama_tps,
+        llama_slots_active=n.llama_slots_active,
+        llama_prompt_tokens_processed=n.llama_prompt_tokens_processed,
+        llama_tokens_generated=n.llama_tokens_generated,
+    )

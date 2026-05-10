@@ -9,6 +9,8 @@ import { toast } from './toast.svelte';
  */
 
 const TOKEN_KEY = 'spouet:token';
+const TOKEN_CREATED_KEY = 'spouet:token_created_at';
+const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const BASE = (PUBLIC_API_BASE ?? '').replace(/\/$/, '');
 
 export function getToken(): string | null {
@@ -18,8 +20,20 @@ export function getToken(): string | null {
 
 export function setToken(t: string | null): void {
     if (typeof localStorage === 'undefined') return;
-    if (t === null) localStorage.removeItem(TOKEN_KEY);
-    else localStorage.setItem(TOKEN_KEY, t);
+    if (t === null) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_CREATED_KEY);
+    } else {
+        localStorage.setItem(TOKEN_KEY, t);
+        localStorage.setItem(TOKEN_CREATED_KEY, Date.now().toString());
+    }
+}
+
+export function isTokenExpired(): boolean {
+    if (typeof localStorage === 'undefined') return false;
+    const created = localStorage.getItem(TOKEN_CREATED_KEY);
+    if (!created) return false;
+    return Date.now() - parseInt(created, 10) > TOKEN_EXPIRY_MS;
 }
 
 /**
@@ -167,14 +181,45 @@ export interface NodeOut {
     name: string;
     host: string;
     port: number;
+    agent_port: number | null;
     status: 'online' | 'offline';
     last_seen: string | null;
     vram_total_mb: number | null;
     vram_used_mb: number | null;
+    ram_total_mb: number | null;
+    ram_used_mb: number | null;
+    disk_total_mb: number | null;
+    disk_used_mb: number | null;
     gpu_model: string | null;
     agent_version: string | null;
     tags: string[];
     models: { name: string; supports_tools: boolean; size_bytes: number | null }[];
+    // llama.cpp stats
+    llama_running: boolean | null;
+    llama_model_loaded: string | null;
+    llama_n_ctx: number | null;
+    llama_n_gpu_layers: number | null;
+    llama_tps: number | null;
+    llama_slots_active: number | null;
+    llama_prompt_tokens_processed: number | null;
+    llama_tokens_generated: number | null;
+}
+
+export interface LocalModelOut {
+    name: string;
+    path: string;
+    size_bytes: number;
+    parameter_size: string | null;
+    quant: string | null;
+    supports_tools: boolean;
+}
+
+export interface LlamaConfigPatch {
+    n_ctx?: number;
+    n_gpu_layers?: number;
+    n_batch?: number;
+    n_threads?: number;
+    n_parallel?: number;
 }
 
 export interface ModelAgg {
@@ -268,6 +313,7 @@ export interface MemoryOut {
 
 export const auth = {
     me: () => api<MeOut>('/auth/me'),
+    tokenInfo: () => api<{ created_at: string | null; expires_at: string | null }>('/auth/token-info'),
     rotate: () => api<{ token: string }>('/auth/rotate', { method: 'POST' })
 };
 
@@ -284,7 +330,19 @@ export const nodes = {
         api<NodeOut>('/nodes', { method: 'POST', json }),
     probe: (json: { name: string; host: string; port?: number }) =>
         api<NodeProbeOut>('/nodes/probe', { method: 'POST', json }),
-    delete: (id: string) => api<void>(`/nodes/${id}`, { method: 'DELETE' })
+    delete: (id: string) => api<void>(`/nodes/${id}`, { method: 'DELETE' }),
+    // llama.cpp management
+    llamaConfig: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/llama-config`),
+    patchLlamaConfig: (id: string, json: LlamaConfigPatch) =>
+        api<Record<string, unknown>>(`/nodes/${id}/llama-config`, { method: 'PATCH', json }),
+    localModels: (id: string) => api<LocalModelOut[]>(`/nodes/${id}/local-models`),
+    pullModel: (id: string, json: { hf_repo: string; filename: string; hf_token?: string }) =>
+        api<Record<string, unknown>>(`/nodes/${id}/local-models/pull`, { method: 'POST', json }),
+    pullStatus: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/local-models/pull/status`),
+    loadModel: (id: string, json: { filename: string }) =>
+        api<Record<string, unknown>>(`/nodes/${id}/local-models/load`, { method: 'POST', json }),
+    deleteLocalModel: (id: string, filename: string) =>
+        api<void>(`/nodes/${id}/local-models/${encodeURIComponent(filename)}`, { method: 'DELETE' })
 };
 
 export const conversations = {
@@ -417,4 +475,47 @@ export const connectors = {
     routes: (id: string) => api<ConnectorRouteOut[]>(`/connectors/${id}/routes`),
     logs: (id: string, tail = 200) =>
         api<{ logs: string }>(`/connectors/${id}/logs?tail=${tail}`)
+};
+
+// ----------------------------------------------------------------------------
+// Workspaces multi-agents
+// ----------------------------------------------------------------------------
+
+export interface WorkerConfig {
+    title: string;
+    model_pref: string;
+    system_prompt?: string | null;
+    allowed_tool_slugs?: string[];
+}
+
+export interface WorkspaceCreate {
+    name?: string;
+    manager_model: string;
+    manager_system_prompt?: string | null;
+    workers?: WorkerConfig[];
+}
+
+export interface ConversationRef {
+    id: string;
+    title: string;
+    workspace_role: string;
+    model_pref: string | null;
+    created_at: string;
+}
+
+export interface WorkspaceOut {
+    id: string;
+    name: string;
+    conversations: ConversationRef[];
+    created_at: string;
+    updated_at: string;
+}
+
+export const workspaces = {
+    list: () => api<WorkspaceOut[]>('/workspaces'),
+    get: (id: string) => api<WorkspaceOut>(`/workspaces/${id}`),
+    create: (json: WorkspaceCreate) =>
+        api<WorkspaceOut>('/workspaces', { method: 'POST', json }),
+    delete: (id: string) => api<void>(`/workspaces/${id}`, { method: 'DELETE' }),
+    stream: (id: string) => streamSse(`/workspaces/${id}/stream`)
 };

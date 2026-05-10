@@ -77,18 +77,28 @@ docker compose down -v               # reset complet (DROP DATA)
 ```bash
 cd node-agent
 uv sync
-uv run spouet-agent --backend http://debian:8000 --token $TOKEN --interval 10
+SPOUET_AGENT_TOKEN=$TOKEN uv run spouet-agent run \
+    --backend http://debian:8000 \
+    --ollama  http://localhost:11434 \
+    --interval 10
 ```
 
-## Architecture
+### Installeurs (prod, one-liner)
 
-Voir `docs/architecture.md` pour le détail. Points clés :
+Les scripts à la racine et dans chaque surface sont la voie d'install canonique en prod, idempotents (relancer = update) :
+- `install.sh` (root) → stack serveur Debian (clone vers `/opt/spouet`, génère `deploy/.env`, build/up, migrations, premier token admin, service `spouet-stack`).
+- `node-agent/install.sh` / `install.ps1` → daemon heartbeat Linux (systemd) ou Windows (NSSM, service `SpouetAgent`).
+- `desktop/install.ps1` → installe le dernier MSI publié par CI (`.github/workflows/release.yml` sur tag `v*`).
+
+## Architecture
 
 - **Découverte des nodes Ollama** : pas de mDNS natif Ollama. Chaque machine Ollama exécute un `node-agent` qui poste un heartbeat HTTP toutes les 10s avec son état (modèles installés, modèles en RAM, VRAM utilisée). Le backend marque un node `offline` si pas de heartbeat depuis 30s (tâche Celery périodique).
 - **Routage des prompts** : `nodes/router.py` choisit un node selon le modèle demandé + VRAM dispo + charge actuelle. Failover automatique si un node crash en streaming.
 - **Streaming** : SSE par défaut pour les tokens LLM. WebSocket pour les besoins HITL et la synchronisation multi-device. Redis pub/sub diffuse les events à tous les clients abonnés à `conv:{id}`.
 - **Tool calling** : utilise le format natif Ollama (`/api/chat` avec `tools=[...]`). L'orchestrator détecte les `tool_calls` dans le stream, suspend, exécute en Docker, réinjecte `role: tool`.
 - **Sandboxing tools** : chaque appel = un conteneur Docker jetable avec `--network none` (par défaut), `--read-only`, `--cap-drop=ALL`, mem_limit, cpu_limit, timeout. Les tools `network: bridge` requièrent une approval HITL.
+- **Coffre de secrets** : Fernet (clé dérivée de `SPOUET_SECRET_KEY`), stockage chiffré en DB, jamais réaffiché en clair. Injecté dans les tools/connectors via `manifest.secrets: { ENV_VAR: scope/key }` (scopes : `global`, `tool:<slug>`, `connector:<slug>`).
+- **Connectors persistants** : à la différence des tools (jetables), un connector est un conteneur Docker long-running (Discord, Telegram, IMAP…) qui rend l'IA joignable depuis l'extérieur. Cycle de vie géré par `connectors/manager.py` ; tâche Celery `monitor_connectors` (30s) auto-restart les conteneurs crashés. Format documenté dans `docs/connectors-authoring.md`.
 - **RAG** : embeddings via Ollama (`nomic-embed-text`), stockés dans PGVector (index `ivfflat`). Abstraction `VectorStore` permet de swap vers Qdrant plus tard.
 
 ## Modules backend
@@ -99,14 +109,16 @@ Voir `docs/architecture.md` pour le détail. Points clés :
 | `core/` | Config (pydantic-settings), logging, security, DI |
 | `db/` | Models SQLAlchemy 2 + Alembic |
 | `nodes/` | Registry, health checker, router, client httpx vers Ollama |
-| `orchestrator/` | Boucle chat ↔ tools, streaming, troncature contexte |
-| `tools/` | Loader manifest, registry, runner Docker, JSON-Schema validator |
+| `orchestrator/` | Boucle chat ↔ tools, streaming, troncature contexte, persona |
+| `tools/` | Loader manifest, registry, runner Docker jetable, JSON-Schema validator |
+| `connectors/` | Manifest + manager (cycle de vie des bridges Docker long-running) + bridge HTTP backend ↔ conteneur |
+| `secrets/` | Coffre Fernet (chiffrement, scopes, injection en env var) |
 | `scheduler/` | Définitions Celery Beat dynamiques (DB-backed) |
 | `rag/` | Ingest, retriever PGVector, abstraction VectorStore |
 | `memory/` | Key/value persistant + résumé conversationnel |
 | `realtime/` | Hub SSE/WS backed par Redis pub/sub |
-| `workers/` | Tâches Celery |
-| `cli/` | `spouet-admin` (Typer) |
+| `workers/` | Tâches Celery (heartbeat sweeper, monitor_connectors, scheduler runs) |
+| `cli/` | `spouet-admin` (Typer) — tokens, tools, secrets, connectors |
 
 ## Format des tools custom
 

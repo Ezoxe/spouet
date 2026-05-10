@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -11,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from spouet.core.security import hash_token
 from spouet.db import get_db
 from spouet.db.models import User
+
+TOKEN_EXPIRY_HOURS = 24
 
 
 async def current_user(
@@ -28,6 +31,10 @@ async def current_user(
     )
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+    if user.token_created_at is not None:
+        age = datetime.now(timezone.utc) - user.token_created_at
+        if age > timedelta(hours=TOKEN_EXPIRY_HOURS):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expired")
     return user
 
 

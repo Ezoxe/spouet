@@ -4,8 +4,9 @@
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
     import { fade } from 'svelte/transition';
-    import { getToken } from '$lib/api';
+    import { getToken, isTokenExpired, setToken } from '$lib/api';
     import { initTheme } from '$lib/theme';
+    import { toast } from '$lib/toast.svelte';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Toaster from '$lib/components/Toaster.svelte';
 
@@ -14,11 +15,29 @@
 
     onMount(() => {
         initTheme();
+
+        if (getToken() && isTokenExpired()) {
+            setToken(null);
+            toast.error('Session expirée (24h). Reconnectez-vous.');
+            goto('/login');
+            return;
+        }
+
         if (!getToken() && $page.url.pathname !== '/login') {
             goto('/login');
             return;
         }
+
+        const timer = setInterval(() => {
+            if (getToken() && isTokenExpired()) {
+                setToken(null);
+                toast.error('Session expirée (24h). Reconnectez-vous.');
+                goto('/login');
+            }
+        }, 60_000);
+
         ready = true;
+        return () => clearInterval(timer);
     });
 
     const isLogin = $derived($page.url.pathname === '/login');
