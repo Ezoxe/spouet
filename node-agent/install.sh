@@ -259,16 +259,23 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         LLAMA_BIN=$(find "$TMPDIR_LLAMA" -name "llama-server" -type f | head -1)
         [[ -n "$LLAMA_BIN" ]] || die "Binaire llama-server introuvable dans l'archive."
         install -m 755 "$LLAMA_BIN" "$BIN_DIR/llama-server"
-        # Copie les bibliothèques partagées bundlées (libllama-common.so.0, etc.)
-        find "$TMPDIR_LLAMA" -name "*.so*" -type f | while read -r sofile; do
-            install -m 644 "$sofile" "$BIN_DIR/"
+        # Copie les bibliothèques partagées bundlées dans BIN_DIR
+        find "$TMPDIR_LLAMA" \( -name "*.so*" \) \( -type f -o -type l \) | while read -r sofile; do
+            cp -P "$sofile" "$BIN_DIR/"
+        done
+        # Crée les symlinks SONAME manquants : libfoo.so.0.1.2 → libfoo.so.0
+        for sofile in "$BIN_DIR"/lib*.so.*.*; do
+            [[ -f "$sofile" ]] || continue
+            base=$(basename "$sofile")
+            soname=$(echo "$base" | sed -E 's/(.*\.so\.[0-9]+)\..*/\1/')
+            [[ "$soname" != "$base" ]] && ln -sf "$base" "$BIN_DIR/$soname"
         done
         chown -R spouet:spouet "$BIN_DIR"
         log "✓ llama-server installé : $BIN_DIR/llama-server"
 
-        # Vérifie le binaire
-        if ! "$BIN_DIR/llama-server" --version 2>&1; then
-            warn "llama-server --version a échoué (bibliothèque manquante ?). Vérifiez : ldd $BIN_DIR/llama-server"
+        # Vérifie le binaire avec LD_LIBRARY_PATH pour trouver les .so bundlés
+        if ! LD_LIBRARY_PATH="$BIN_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$BIN_DIR/llama-server" --version 2>&1; then
+            warn "llama-server --version a échoué. Vérifiez les libs : ldd $BIN_DIR/llama-server"
         fi
     fi
 else

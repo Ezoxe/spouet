@@ -308,6 +308,15 @@ class LlamaServer:
                 typer.echo(f"[llama-update] remplacement binaire impossible : {exc}", err=True)
                 return False
 
+            # Crée les symlinks SONAME manquants : libfoo.so.0.1.2 → libfoo.so.0
+            bin_dir = target.parent
+            for so in so_files:
+                m = re.match(r'^(.+\.so\.\d+)\.\d+', so.name)
+                if m:
+                    soname_path = bin_dir / m.group(1)
+                    if not soname_path.exists():
+                        soname_path.symlink_to(so.name)
+
         typer.echo(f"[llama-update] ✓ llama-server mis à jour vers {latest_tag}.")
 
         if was_running:
