@@ -167,8 +167,11 @@ class LlamaServer:
             "--batch-size", str(config.n_batch),
             "--ubatch-size", str(config.n_ubatch),
             "--parallel", str(config.n_parallel),
-            "--flash-attn", "on",
         ]
+        # Flash attention : GPU uniquement — certains modèles (Gemma 4 MoE, etc.)
+        # crashent avec --flash-attn sur CPU.
+        if config.n_gpu_layers != 0:
+            cmd += ["--flash-attn", "on"]
         if config.n_threads is not None:
             cmd += ["--threads", str(config.n_threads)]
         return cmd

@@ -82,7 +82,8 @@ def probe_gpu() -> GpuInfo:
 
 
 def _probe_drm() -> GpuInfo | None:
-    """Lit la VRAM via sysfs DRM (iGPU AMD avec pilote amdgpu, sans rocm-smi)."""
+    """Lit la VRAM via sysfs DRM (GPU discret AMD avec pilote amdgpu, sans rocm-smi).
+    Exclut les iGPU/APU dont la VRAM est partagée avec la RAM système."""
     import glob
     try:
         for card_path in sorted(glob.glob("/sys/class/drm/card*/device")):
@@ -93,10 +94,27 @@ def _probe_drm() -> GpuInfo | None:
             total_b = int(vram_total_path.read_text().strip())
             if total_b == 0:
                 continue
+            # Ignore les iGPU/APU (VRAM UMA < 4 GiB) — leur VRAM est de la RAM système
+            # réservée, pas de la mémoire graphique dédiée. Le build CPU de llama-server
+            # ne peut pas utiliser un iGPU (pas de backend ROCm/Vulkan).
+            if total_b < 4 * 1024 ** 3:
+                continue
+            # Essaie de lire le nom du GPU depuis sysfs
+            gpu_name: str | None = None
+            for name_file in ("product_name", "label"):
+                name_path = Path(card_path) / name_file
+                try:
+                    val = name_path.read_text().strip()
+                    if val:
+                        gpu_name = val
+                        break
+                except Exception:
+                    pass
+            if not gpu_name:
+                gpu_name = "AMD GPU"
             used_b = int(vram_used_path.read_text().strip()) if vram_used_path.exists() else 0
-            model = _cpu_model_name()
             return GpuInfo(
-                model=model,
+                model=gpu_name,
                 vram_total_mb=total_b // (1024 * 1024),
                 vram_used_mb=used_b // (1024 * 1024),
                 ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None,
