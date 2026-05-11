@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from pydantic import BaseModel
 
 from fastapi import APIRouter
 
-from spouet.api.deps import TOKEN_EXPIRY_HOURS, CurrentUser, DbSession
+from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.security import generate_token, hash_token
 
 router = APIRouter()
@@ -35,10 +35,7 @@ async def me(user: CurrentUser) -> MeResponse:
 
 @router.get("/token-info", response_model=TokenInfoResponse)
 async def token_info(user: CurrentUser) -> TokenInfoResponse:
-    expires_at = None
-    if user.token_created_at is not None:
-        expires_at = user.token_created_at + timedelta(hours=TOKEN_EXPIRY_HOURS)
-    return TokenInfoResponse(created_at=user.token_created_at, expires_at=expires_at)
+    return TokenInfoResponse(created_at=user.token_created_at, expires_at=None)
 
 
 @router.post("/rotate", response_model=RotateTokenResponse)

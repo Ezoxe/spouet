@@ -57,11 +57,15 @@ class LlamaServer:
         await self.stop()
         cmd = self._build_cmd(model_path, config)
         typer.echo(f"[llama-server] starting: {' '.join(cmd)}")
-        # Ajoute bin_dir dans LD_LIBRARY_PATH pour les .so bundlés dans l'archive
         env = os.environ.copy()
         bin_dir = str(self.bin_path.parent)
+        # bin_dir en tête pour les .so bundlés + plugins backends (libggml-cpu.so, libggml-cuda.so…)
+        extra_paths = [bin_dir, "/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
         prev = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{prev}" if prev else bin_dir
+        all_paths = ":".join(p for p in extra_paths if p not in prev)
+        env["LD_LIBRARY_PATH"] = f"{all_paths}:{prev}" if prev else all_paths
+        # Indique explicitement à llama.cpp où chercher les plugins backends
+        env["GGML_BACKEND_DL_PATH"] = bin_dir
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
@@ -331,7 +335,8 @@ class LlamaServer:
 def _detect_gpu_type() -> str:
     if shutil.which("nvidia-smi"):
         try:
-            if _subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=5).returncode == 0:
+            r = _subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and "GPU" in r.stdout and _cuda_libs_available():
                 return "cuda"
         except Exception:
             pass
@@ -342,6 +347,23 @@ def _detect_gpu_type() -> str:
         except Exception:
             pass
     return "cpu"
+
+
+def _cuda_libs_available() -> bool:
+    """Vérifie que libcuda.so est accessible (drivers + runtime fonctionnels)."""
+    try:
+        r = _subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=5)
+        if "libcuda.so" in r.stdout:
+            return True
+    except Exception:
+        pass
+    for path in ["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib64"]:
+        try:
+            if any(Path(path).glob("libcuda.so*")):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _pick_asset(assets: list[dict], gpu_type: str, arch_tag: str) -> str | None:

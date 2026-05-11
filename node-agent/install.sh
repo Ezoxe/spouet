@@ -194,9 +194,16 @@ chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
 if [[ "$SKIP_LLAMA" == "0" ]]; then
     log "Détection GPU…"
     GPU_TYPE="cpu"
-    if command -v nvidia-smi &>/dev/null && nvidia-smi -L &>/dev/null 2>&1; then
-        GPU_TYPE="cuda"
-        log "  → GPU NVIDIA détecté — build CUDA"
+    if command -v nvidia-smi &>/dev/null && nvidia-smi -L 2>/dev/null | grep -q "GPU"; then
+        # Vérifie que libcuda.so est accessible (drivers + runtime fonctionnels)
+        if ldconfig -p 2>/dev/null | grep -q "libcuda.so" \
+           || find /usr/local/cuda/lib64 /usr/lib/x86_64-linux-gnu /usr/lib64 \
+                   -name "libcuda.so*" 2>/dev/null | grep -q .; then
+            GPU_TYPE="cuda"
+            log "  → GPU NVIDIA + libs CUDA détectés — build CUDA"
+        else
+            warn "  → GPU NVIDIA détecté mais libcuda.so introuvable — build CPU (installez cuda-toolkit si CUDA est souhaité)"
+        fi
     elif command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null 2>&1; then
         GPU_TYPE="rocm"
         log "  → GPU AMD détecté — build ROCm"
@@ -318,7 +325,8 @@ Wants=network-online.target
 Type=simple
 User=spouet
 Environment=UV_CACHE_DIR=$UV_CACHE
-Environment=LD_LIBRARY_PATH=$BIN_DIR
+Environment=LD_LIBRARY_PATH=$BIN_DIR:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+Environment=GGML_BACKEND_DL_PATH=$BIN_DIR
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\
