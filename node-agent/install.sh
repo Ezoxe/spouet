@@ -220,55 +220,69 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
     esac
 
     if [[ "$SKIP_LLAMA" == "0" ]]; then
-        log "Récupération de la dernière release llama.cpp…"
-        LLAMA_RELEASE=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
-            | jq -r '.tag_name')
-        [[ -n "$LLAMA_RELEASE" && "$LLAMA_RELEASE" != "null" ]] || die "Impossible de récupérer la release llama.cpp."
-        log "  → Release : $LLAMA_RELEASE"
+        # La release "latest" peut avoir une CI incomplète (assets manquants).
+        # On charge les 10 dernières releases et on cherche dans leurs assets API le
+        # premier binaire Linux effectivement uploadé (browser_download_url garanti valide).
+        log "Récupération des releases llama.cpp récentes…"
+        RELEASES_JSON=$(curl -sSf \
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10")
+        [[ -n "$RELEASES_JSON" ]] || die "Impossible de récupérer les releases llama.cpp."
 
-        BASE_DOWNLOAD="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}"
+        LLAMA_RELEASE=""
+        ASSET=""
+        LLAMA_URL=""
 
-        # Les binaires Linux ne sont pas listés dans l'API assets de GitHub — ils sont
-        # hébergés à des URLs directes. On sonde les URLs candidates par ordre de priorité.
-        # Stratégie : on interroge GitHub SANS suivre le redirect (pas de -L).
-        # GitHub retourne 302 si l'asset existe, 404 s'il est absent.
-        # Cela évite tout accès au CDN (objects.githubusercontent.com) et est fiable
-        # même derrière un pare-feu qui bloquerait le CDN.
-        _url_ok() {
-            local _code
-            _code=$(curl -s -o /dev/null -w "%{http_code}" \
-                    --connect-timeout 10 "$1" 2>/dev/null || true)
-            [[ "$_code" == "302" ]] || [[ "$_code" == "200" ]]
+        # Cherche dans les assets API (browser_download_url) le premier asset dont
+        # le nom se termine par $1. Remplit LLAMA_RELEASE, ASSET, LLAMA_URL.
+        _find_asset() {
+            local _sfx="$1" _row
+            _row=$(echo "$RELEASES_JSON" | jq -r --arg s "$_sfx" \
+                '[ .[] | . as $r | .assets[]
+                   | select(.name | endswith($s))
+                   | [$r.tag_name, .name, .browser_download_url] | @tsv
+                ] | .[0] // ""')
+            [[ -n "$_row" ]] || return 1
+            IFS=$'\t' read -r LLAMA_RELEASE ASSET LLAMA_URL <<< "$_row"
         }
 
-        ASSET=""
+        # Variante regex pour ROCm (numéro de version variable).
+        _find_asset_re() {
+            local _pat="$1" _row
+            _row=$(echo "$RELEASES_JSON" | jq -r --arg p "$_pat" \
+                '[ .[] | . as $r | .assets[]
+                   | select(.name | test($p; "i"))
+                   | [$r.tag_name, .name, .browser_download_url] | @tsv
+                ] | .[0] // ""')
+            [[ -n "$_row" ]] || return 1
+            IFS=$'\t' read -r LLAMA_RELEASE ASSET LLAMA_URL <<< "$_row"
+        }
+
         case "$GPU_TYPE" in
             cuda)
                 CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1 || echo "12")
                 for _distro in debian ubuntu; do
-                    for _v in "cuda-cu${CUDA_VER}-${ARCH_TAG}" "cuda-cu12-${ARCH_TAG}" "cuda-${ARCH_TAG}" "vulkan-${ARCH_TAG}"; do
-                        _f="llama-${LLAMA_RELEASE}-bin-${_distro}-${_v}.tar.gz"
-                        if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
-                            ASSET="$_f"; log "  → Variant CUDA/Vulkan : ${_distro}/${_v}"; break 2
-                        fi
+                    for _v in "cuda-cu${CUDA_VER}-${ARCH_TAG}" "cuda-cu12-${ARCH_TAG}" \
+                              "cuda-${ARCH_TAG}" "vulkan-${ARCH_TAG}"; do
+                        _find_asset "bin-${_distro}-${_v}.tar.gz" && {
+                            log "  → Release : $LLAMA_RELEASE | Variant : ${_distro}/${_v}"
+                            break 2
+                        }
                     done
                 done
                 if [[ -z "$ASSET" ]]; then
-                    warn "  → Aucun build CUDA/Vulkan Linux pour cette release — fallback CPU"
+                    warn "  → Aucun build CUDA/Vulkan — fallback CPU"
                     GPU_TYPE="cpu"
                 fi
                 ;;
             rocm)
                 for _distro in debian ubuntu; do
-                    for _rv in 7.2 7.1 7.0 6.3 6.2; do
-                        _f="llama-${LLAMA_RELEASE}-bin-${_distro}-rocm-${_rv}-${ARCH_TAG}.tar.gz"
-                        if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
-                            ASSET="$_f"; log "  → ROCm ${_rv} (${_distro}) trouvé"; break 2
-                        fi
-                    done
+                    _find_asset_re "bin-${_distro}-rocm[^-]+-${ARCH_TAG}\\.tar\\.gz$" && {
+                        log "  → Release : $LLAMA_RELEASE | ROCm (${_distro})"
+                        break
+                    }
                 done
                 if [[ -z "$ASSET" ]]; then
-                    warn "  → Aucun build ROCm disponible pour cette release — fallback CPU"
+                    warn "  → Aucun build ROCm — fallback CPU"
                     GPU_TYPE="cpu"
                 fi
                 ;;
@@ -276,27 +290,17 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         esac
 
         if [[ "$GPU_TYPE" == "cpu" && -z "$ASSET" ]]; then
-            # Ubuntu et Debian utilisent les mêmes binaires (glibc standard).
-            # llama.cpp ne publie pas de builds bin-debian-* séparés ; on essaie ubuntu
-            # en premier, puis debian en fallback si le projet venait à les séparer.
-            # Format récent (depuis ~b7000) : pas de suffixe AVX ; anciens formats en fallback.
             for _distro in debian ubuntu; do
                 for _v in "$ARCH_TAG" "${ARCH_TAG}-avx2" "${ARCH_TAG}-avx" "${ARCH_TAG}-cpu"; do
-                    _f="llama-${LLAMA_RELEASE}-bin-${_distro}-${_v}.tar.gz"
-                    if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
-                        ASSET="$_f"; log "  → Variant CPU : ${_distro}/${_v}"; break 2
-                    fi
+                    _find_asset "bin-${_distro}-${_v}.tar.gz" && {
+                        log "  → Release : $LLAMA_RELEASE | Variant CPU : ${_distro}/${_v}"
+                        break 2
+                    }
                 done
             done
         fi
 
-        if [[ -z "$ASSET" ]]; then
-            _ref="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}.tar.gz"
-            _ref_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                        --connect-timeout 10 "${BASE_DOWNLOAD}/${_ref}" 2>/dev/null || true)
-            die "Aucun binaire llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Code HTTP de référence (ubuntu/${ARCH_TAG}): ${_ref_code}. Utilisez --skip-llama."
-        fi
-        LLAMA_URL="${BASE_DOWNLOAD}/${ASSET}"
+        [[ -n "$ASSET" ]] || die "Aucun binaire llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG dans les 10 dernières releases. Utilisez --skip-llama."
         log "  → Asset : $ASSET"
 
         TMPDIR_LLAMA=$(mktemp -d)
