@@ -221,37 +221,68 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 
     if [[ "$SKIP_LLAMA" == "0" ]]; then
         log "Récupération de la dernière release llama.cpp…"
-        RELEASE_JSON=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest)
-        LLAMA_RELEASE=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+        LLAMA_RELEASE=$(curl -sSf https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
+            | jq -r '.tag_name')
         [[ -n "$LLAMA_RELEASE" && "$LLAMA_RELEASE" != "null" ]] || die "Impossible de récupérer la release llama.cpp."
         log "  → Release : $LLAMA_RELEASE"
 
-        # Sélectionne dynamiquement l'asset depuis la liste réelle de la release GitHub.
-        # Utilise jq pour filtrer par regex plutôt que de deviner le nom exact.
-        _pick_asset() { echo "$RELEASE_JSON" | jq -r --arg p "$1" \
-            '.assets[] | select(.name | test($p; "i")) | .name' | head -1; }
+        BASE_DOWNLOAD="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}"
+
+        # Les binaires Linux ne sont pas listés dans l'API assets de GitHub — ils sont
+        # hébergés à des URLs directes. On sonde les URLs candidates par ordre de priorité.
+        _url_ok() { wget -q --spider "$1" 2>/dev/null; }
 
         ASSET=""
         case "$GPU_TYPE" in
             cuda)
                 CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+' | head -1 || echo "12")
-                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda-cu${CUDA_VER}.*\\.tar\\.gz")
-                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda-cu12.*\\.tar\\.gz")
-                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cuda.*\\.tar\\.gz")
+                for _distro in debian ubuntu; do
+                    for _v in "cuda-cu${CUDA_VER}-${ARCH_TAG}" "cuda-cu12-${ARCH_TAG}" "cuda-${ARCH_TAG}" "vulkan-${ARCH_TAG}"; do
+                        _f="llama-${LLAMA_RELEASE}-bin-${_distro}-${_v}.tar.gz"
+                        if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
+                            ASSET="$_f"; log "  → Variant CUDA/Vulkan : ${_distro}/${_v}"; break 2
+                        fi
+                    done
+                done
+                if [[ -z "$ASSET" ]]; then
+                    warn "  → Aucun build CUDA/Vulkan Linux pour cette release — fallback CPU"
+                    GPU_TYPE="cpu"
+                fi
                 ;;
             rocm)
-                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}.*rocm.*\\.tar\\.gz")
+                for _distro in debian ubuntu; do
+                    for _rv in 7.2 7.1 7.0 6.3 6.2; do
+                        _f="llama-${LLAMA_RELEASE}-bin-${_distro}-rocm-${_rv}-${ARCH_TAG}.tar.gz"
+                        if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
+                            ASSET="$_f"; log "  → ROCm ${_rv} (${_distro}) trouvé"; break 2
+                        fi
+                    done
+                done
+                if [[ -z "$ASSET" ]]; then
+                    warn "  → Aucun build ROCm disponible pour cette release — fallback CPU"
+                    GPU_TYPE="cpu"
+                fi
                 ;;
-            cpu)
-                ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-avx2\\.tar\\.gz")
-                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-avx\\.tar\\.gz")
-                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}-cpu\\.tar\\.gz")
-                [[ -z "$ASSET" ]] && ASSET=$(_pick_asset "bin-ubuntu-${ARCH_TAG}.*\\.tar\\.gz")
-                ;;
+            cpu) : ;;
         esac
 
-        [[ -n "$ASSET" ]] || die "Aucun asset llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Utilisez --skip-llama."
-        LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/${ASSET}"
+        if [[ "$GPU_TYPE" == "cpu" && -z "$ASSET" ]]; then
+            # Ubuntu et Debian utilisent les mêmes binaires (glibc standard).
+            # llama.cpp ne publie pas de builds bin-debian-* séparés ; on essaie ubuntu
+            # en premier, puis debian en fallback si le projet venait à les séparer.
+            # Format récent (depuis ~b7000) : pas de suffixe AVX ; anciens formats en fallback.
+            for _distro in debian ubuntu; do
+                for _v in "$ARCH_TAG" "${ARCH_TAG}-avx2" "${ARCH_TAG}-avx" "${ARCH_TAG}-cpu"; do
+                    _f="llama-${LLAMA_RELEASE}-bin-${_distro}-${_v}.tar.gz"
+                    if _url_ok "${BASE_DOWNLOAD}/${_f}"; then
+                        ASSET="$_f"; log "  → Variant CPU : ${_distro}/${_v}"; break 2
+                    fi
+                done
+            done
+        fi
+
+        [[ -n "$ASSET" ]] || die "Aucun binaire llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Utilisez --skip-llama."
+        LLAMA_URL="${BASE_DOWNLOAD}/${ASSET}"
         log "  → Asset : $ASSET"
 
         TMPDIR_LLAMA=$(mktemp -d)
