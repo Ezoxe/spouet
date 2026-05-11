@@ -8,6 +8,16 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
+
+def _lan_ip() -> str:
+    """Retourne l'IP LAN routable (celle de l'interface par défaut)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return socket.gethostname()
+
 import httpx
 import typer
 import uvicorn
@@ -46,7 +56,7 @@ def run(
             backend=backend.rstrip("/"),
             token=token,
             name=name or socket.gethostname(),
-            host=host or socket.gethostname(),
+            host=host or _lan_ip(),
             llama_port=llama_port,
             agent_port=agent_port,
             interval=interval,

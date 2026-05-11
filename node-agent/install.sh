@@ -315,6 +315,9 @@ chown root:spouet /etc/spouet/agent.env
 # Service systemd spouet-agent
 # ---------------------------------------------------------------------------
 log "Installation du service systemd spouet-agent…"
+# Détecte l'IP LAN routable (celle de l'interface par défaut)
+LAN_IP=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(('8.8.8.8',80)); print(s.getsockname()[0]); s.close()" 2>/dev/null || hostname -I | awk '{print $1}')
+log "  → IP routable : $LAN_IP"
 cat > /etc/systemd/system/spouet-agent.service <<EOF
 [Unit]
 Description=Spouet node agent (llama.cpp lifecycle + heartbeat)
@@ -332,6 +335,7 @@ WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\
     --backend    \${SPOUET_BACKEND} \\
     --token      \${SPOUET_AGENT_TOKEN} \\
+    --host       $LAN_IP \\
     --interval   \${HEARTBEAT_INTERVAL} \\
     --llama-port $LLAMA_PORT \\
     --agent-port $AGENT_PORT \\
