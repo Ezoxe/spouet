@@ -33,7 +33,15 @@ def compute_optimal_config(
         n_cores = os.cpu_count() or 4
         n_threads = max(1, n_cores - 1)
         ram_mb = ram_total_mb or 4096
-        n_ctx = 8192 if ram_mb >= 16000 else 4096
+        # KV cache CPU = 2 × ctx × n_layers × n_kv_heads × head_dim × 2 octets.
+        # Sur un gros modèle (≥ 14B) le cache peut dépasser la RAM dispo si ctx est grand.
+        # Règle conservatrice : laisser ≥ 4 GB pour le cache + OS + agent.
+        if ram_mb >= 64000:
+            n_ctx = 8192
+        elif ram_mb >= 32000:
+            n_ctx = 4096
+        else:
+            n_ctx = 2048   # 16–31 GB : budget serré avec les gros modèles
         return LlamaConfig(
             n_ctx=n_ctx,
             n_gpu_layers=0,
