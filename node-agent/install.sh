@@ -186,6 +186,7 @@ fi
 
 install -d -o spouet -g spouet -m 0755 "$MODELS_DIR"
 install -d -o spouet -g spouet -m 0755 "$BIN_DIR"
+install -d -o spouet -g spouet -m 0755 "$SPOUET_INSTALL_DIR/.cache/huggingface"
 chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
 
 # ---------------------------------------------------------------------------
@@ -330,6 +331,8 @@ User=spouet
 Environment=UV_CACHE_DIR=$UV_CACHE
 Environment=LD_LIBRARY_PATH=$BIN_DIR:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
 Environment=GGML_BACKEND_DL_PATH=$BIN_DIR
+Environment=HF_HOME=$SPOUET_INSTALL_DIR/.cache/huggingface
+Environment=HOME=$SPOUET_INSTALL_DIR
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
 ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\

@@ -103,12 +103,20 @@ async def download_model(
 
 
 def _download_sync(hf_repo: str, filename: str, dest_dir: Path, hf_token: str | None) -> Path:
+    import os
     from huggingface_hub import hf_hub_download  # type: ignore[import-untyped]
+
+    # Force HF_HOME dans le répertoire d'install pour éviter les erreurs de permission
+    # si $HOME n'est pas accessible (utilisateur système sans home classique).
+    hf_home = dest_dir.parent / ".cache" / "huggingface"
+    hf_home.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(hf_home))
 
     path = hf_hub_download(
         repo_id=hf_repo,
         filename=filename,
         local_dir=str(dest_dir),
+        local_dir_use_symlinks=False,
         token=hf_token,
     )
     return Path(path)
