@@ -230,13 +230,15 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 
         # Les binaires Linux ne sont pas listés dans l'API assets de GitHub — ils sont
         # hébergés à des URLs directes. On sonde les URLs candidates par ordre de priorité.
-        # Stratégie : --max-filesize 1 fait échouer curl avec code 63 quand le fichier
-        # existe (Content-Length >> 1 octet), et code 22 quand GitHub retourne 404.
+        # Stratégie : on interroge GitHub SANS suivre le redirect (pas de -L).
+        # GitHub retourne 302 si l'asset existe, 404 s'il est absent.
+        # Cela évite tout accès au CDN (objects.githubusercontent.com) et est fiable
+        # même derrière un pare-feu qui bloquerait le CDN.
         _url_ok() {
-            local _rc=0
-            curl -sLf --connect-timeout 10 --max-filesize 1 -o /dev/null "$1" 2>/dev/null \
-                || _rc=$?
-            [[ $_rc -eq 0 || $_rc -eq 63 ]]
+            local _code
+            _code=$(curl -s -o /dev/null -w "%{http_code}" \
+                    --connect-timeout 10 "$1" 2>/dev/null || true)
+            [[ "$_code" == "302" ]] || [[ "$_code" == "200" ]]
         }
 
         ASSET=""
@@ -288,7 +290,12 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
             done
         fi
 
-        [[ -n "$ASSET" ]] || die "Aucun binaire llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Utilisez --skip-llama."
+        if [[ -z "$ASSET" ]]; then
+            _ref="llama-${LLAMA_RELEASE}-bin-ubuntu-${ARCH_TAG}.tar.gz"
+            _ref_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                        --connect-timeout 10 "${BASE_DOWNLOAD}/${_ref}" 2>/dev/null || true)
+            die "Aucun binaire llama.cpp trouvé pour $GPU_TYPE/$ARCH_TAG. Code HTTP de référence (ubuntu/${ARCH_TAG}): ${_ref_code}. Utilisez --skip-llama."
+        fi
         LLAMA_URL="${BASE_DOWNLOAD}/${ASSET}"
         log "  → Asset : $ASSET"
 
