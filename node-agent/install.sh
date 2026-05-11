@@ -230,7 +230,8 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 
         # Les binaires Linux ne sont pas listés dans l'API assets de GitHub — ils sont
         # hébergés à des URLs directes. On sonde les URLs candidates par ordre de priorité.
-        _url_ok() { wget -q --spider "$1" 2>/dev/null; }
+        # wget --spider échoue sur les redirects 302→CDN ; curl -r 0-0 (1 octet) est fiable.
+        _url_ok() { curl -sLf --connect-timeout 10 -r 0-0 -o /dev/null "$1" 2>/dev/null; }
 
         ASSET=""
         case "$GPU_TYPE" in
