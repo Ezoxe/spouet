@@ -163,7 +163,7 @@ class LlamaServer:
             "--batch-size", str(config.n_batch),
             "--ubatch-size", str(config.n_ubatch),
             "--parallel", str(config.n_parallel),
-            "--flash-attn",  # flash attention pour la perf
+            "--flash-attn", "on",
         ]
         if config.n_threads is not None:
             cmd += ["--threads", str(config.n_threads)]

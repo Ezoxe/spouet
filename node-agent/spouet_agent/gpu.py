@@ -6,6 +6,7 @@ import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -61,13 +62,15 @@ def _get_ram_and_disk() -> tuple[int | None, int | None, int | None, int | None]
     return ram_total_mb, ram_used_mb, disk_total_mb, disk_used_mb
 
 def probe_gpu() -> GpuInfo:
-    """Tente nvidia-smi puis rocm-smi. Retourne le CPU et la RAM système si rien trouvé."""
+    """Tente nvidia-smi puis rocm-smi puis sysfs DRM. Retourne le CPU sans VRAM si rien trouvé."""
     ram_total, ram_used, disk_total, disk_used = _get_ram_and_disk()
     info = None
     if shutil.which("nvidia-smi"):
         info = _probe_nvidia()
     if info is None and shutil.which("rocm-smi"):
         info = _probe_rocm()
+    if info is None:
+        info = _probe_drm()
     if info is None:
         info = _probe_cpu()
 
@@ -78,39 +81,52 @@ def probe_gpu() -> GpuInfo:
     return info
 
 
-def _probe_cpu() -> GpuInfo:
+def _probe_drm() -> GpuInfo | None:
+    """Lit la VRAM via sysfs DRM (iGPU AMD avec pilote amdgpu, sans rocm-smi)."""
+    import glob
     try:
-        with open("/proc/meminfo", "r") as f:
-            meminfo = f.read()
-        total_kb = 0
-        available_kb = 0
-        for line in meminfo.splitlines():
-            if line.startswith("MemTotal:"):
-                total_kb = int(line.split()[1])
-            elif line.startswith("MemAvailable:"):
-                available_kb = int(line.split()[1])
-
-        if total_kb > 0 and available_kb > 0:
-            used_kb = total_kb - available_kb
-        else:
-            used_kb = 0
-
-        vram_total_mb = total_kb // 1024
-        vram_used_mb = used_kb // 1024
-
-        model = "CPU"
-        try:
-            with open("/proc/cpuinfo", "r") as f:
-                for line in f:
-                    if line.startswith("model name"):
-                        model = line.split(":", 1)[1].strip()
-                        break
-        except FileNotFoundError:
-            model = platform.processor() or "CPU"
-
-        return GpuInfo(model=model, vram_total_mb=vram_total_mb, vram_used_mb=vram_used_mb, ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None)
+        for card_path in sorted(glob.glob("/sys/class/drm/card*/device")):
+            vram_total_path = Path(card_path) / "mem_info_vram_total"
+            vram_used_path = Path(card_path) / "mem_info_vram_used"
+            if not vram_total_path.exists():
+                continue
+            total_b = int(vram_total_path.read_text().strip())
+            if total_b == 0:
+                continue
+            used_b = int(vram_used_path.read_text().strip()) if vram_used_path.exists() else 0
+            model = _cpu_model_name()
+            return GpuInfo(
+                model=model,
+                vram_total_mb=total_b // (1024 * 1024),
+                vram_used_mb=used_b // (1024 * 1024),
+                ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None,
+            )
     except Exception:
-        return GpuInfo(model=None, vram_total_mb=None, vram_used_mb=None, ram_total_mb=None, ram_used_mb=None, disk_total_mb=None, disk_used_mb=None)
+        pass
+    return None
+
+
+def _cpu_model_name() -> str:
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return platform.processor() or "CPU"
+
+
+def _probe_cpu() -> GpuInfo:
+    return GpuInfo(
+        model=_cpu_model_name(),
+        vram_total_mb=None,
+        vram_used_mb=None,
+        ram_total_mb=None,
+        ram_used_mb=None,
+        disk_total_mb=None,
+        disk_used_mb=None,
+    )
 
 
 def _probe_nvidia() -> GpuInfo | None:

@@ -310,6 +310,15 @@ async def _agent_url(db: DbSession, node_id: UUID) -> tuple[Node, str]:
     return node, f"http://{node.host}:{node.agent_port}"
 
 
+def _raise_agent_unreachable(base: str, exc: Exception) -> None:
+    raise HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        f"Agent injoignable ({base}). "
+        f"Relance spouet-agent avec --host <ip-routable-depuis-le-backend>. "
+        f"Détail : {exc}",
+    )
+
+
 @router.get("/{node_id}/llama-config")
 async def get_llama_config(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
     """Retourne la config llama.cpp actuelle du node."""
@@ -341,22 +350,28 @@ async def patch_llama_config(
 ) -> dict:  # type: ignore[type-arg]
     """Change les paramètres llama.cpp du node (redémarre llama-server)."""
     node, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.patch(f"{base}/config", json=payload.model_dump(exclude_none=True))
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.patch(f"{base}/config", json=payload.model_dump(exclude_none=True))
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 @router.get("/{node_id}/local-models")
 async def get_local_models(node_id: UUID, _: CurrentUser, db: DbSession) -> list[dict]:  # type: ignore[type-arg]
     """Liste les modèles GGUF disponibles sur le node."""
     _, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{base}/models")
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{base}/models")
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 class ModelPullRequest(BaseModel):
@@ -371,22 +386,28 @@ async def pull_model(
 ) -> dict:  # type: ignore[type-arg]
     """Démarre le téléchargement d'un modèle GGUF sur le node."""
     _, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{base}/models/download", json=payload.model_dump())
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{base}/models/download", json=payload.model_dump())
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 @router.get("/{node_id}/local-models/pull/status")
 async def pull_status(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
     """Progrès du dernier téléchargement."""
     _, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{base}/models/download/status")
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{base}/models/download/status")
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 class ModelLoadRequest(BaseModel):
@@ -399,11 +420,14 @@ async def load_model(
 ) -> dict:  # type: ignore[type-arg]
     """Change le modèle actif sur le node."""
     _, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{base}/models/load", json=payload.model_dump())
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
-        return r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{base}/models/load", json=payload.model_dump())
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 @router.delete("/{node_id}/local-models/{filename}", status_code=status.HTTP_204_NO_CONTENT)
@@ -411,10 +435,13 @@ async def delete_local_model(
     node_id: UUID, filename: str, _: CurrentUser, db: DbSession
 ) -> None:
     _, base = await _agent_url(db, node_id)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.delete(f"{base}/models/{filename}")
-        if r.status_code >= 400:
-            raise HTTPException(r.status_code, r.text)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.delete(f"{base}/models/{filename}")
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
 
 
 async def _models_for_node(db, node_id: UUID) -> list[Model]:  # type: ignore[no-untyped-def]
