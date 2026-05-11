@@ -6,6 +6,7 @@ Endpoints appelés par le backend Spouet pour piloter llama.cpp :
   POST /models/download     → lance téléchargement HuggingFace async
   GET  /models/download/status → progrès du dernier téléchargement
   POST /models/load         → change le modèle actif (redémarre llama-server)
+  GET  /load/status         → état explicite du chargement (idle/loading/ready/error)
   DELETE /models/{filename} → supprime un GGUF
   PATCH /config             → change les params llama.cpp (redémarre llama-server)
 """
@@ -13,11 +14,12 @@ Endpoints appelés par le backend Spouet pour piloter llama.cpp :
 from __future__ import annotations
 
 import asyncio
+import time
+import traceback
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="spouet-agent control API", docs_url=None, redoc_url=None)
@@ -26,8 +28,18 @@ app = FastAPI(title="spouet-agent control API", docs_url=None, redoc_url=None)
 _server: Any = None  # LlamaServer instance
 _models_dir: Path | None = None
 _gpu_info: Any = None  # GpuInfo
-_download_queue: asyncio.Queue[dict] = asyncio.Queue()
-_download_status: dict = {}
+_download_status: dict = {"status": "idle"}
+
+# État explicite du chargement llama-server (utilisé par le backend pour
+# attendre la fin d'un cold-start avant de POSTer sur /v1/chat/completions).
+_load_status: dict[str, Any] = {
+    "state": "idle",          # idle | loading | ready | error
+    "filename": None,
+    "error": None,
+    "started_at": None,
+    "ready_at": None,
+}
+_load_lock = asyncio.Lock()
 
 
 def init(server: Any, models_dir: Path, gpu_info: Any) -> None:
@@ -35,6 +47,17 @@ def init(server: Any, models_dir: Path, gpu_info: Any) -> None:
     _server = server
     _models_dir = models_dir
     _gpu_info = gpu_info
+    # Si un modèle a été autoloadé avec succès au boot, refléter l'état dans
+    # _load_status pour que le backend voie `ready` au lieu de `idle`.
+    current = getattr(server, "_current_model", None)
+    is_running = server.is_running() if hasattr(server, "is_running") else False
+    if current is not None and is_running:
+        _load_status.update(
+            state="ready",
+            filename=current.name,
+            error=None,
+            ready_at=time.time(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +117,11 @@ async def start_download(req: DownloadRequest) -> dict:
     if not _models_dir:
         raise HTTPException(500, "models_dir not configured")
     global _download_status
+    if _download_status.get("status") in ("starting", "downloading"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Un téléchargement est déjà en cours : {_download_status.get('filename')}",
+        )
     _download_status = {"status": "starting", "repo": req.hf_repo, "filename": req.filename}
     asyncio.create_task(_download_task(req.hf_repo, req.filename, req.hf_token))
     return {"status": "accepted"}
@@ -126,22 +154,51 @@ async def load_model(req: LoadRequest) -> dict:
     model_path = _models_dir / req.filename
     if not model_path.exists():
         raise HTTPException(404, f"Model {req.filename!r} not found in models dir")
+
+    # Concurrence : si un chargement est déjà en cours sur un autre modèle, on refuse.
+    # Si c'est le même modèle qui est déjà loading, on retourne l'état tel quel.
+    if _load_status["state"] == "loading":
+        if _load_status.get("filename") == req.filename:
+            return {"status": "loading", "filename": req.filename}
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Un chargement est déjà en cours pour {_load_status.get('filename')!r}",
+        )
+
     from spouet_agent.llama_config import compute_optimal_config
     config = compute_optimal_config(
         gpu_model=_gpu_info.model if _gpu_info else None,
         vram_total_mb=_gpu_info.vram_total_mb if _gpu_info else None,
         ram_total_mb=_gpu_info.ram_total_mb if _gpu_info else None,
     )
-    asyncio.create_task(_load_task(model_path, config))
+    _load_status.update(
+        state="loading",
+        filename=req.filename,
+        error=None,
+        started_at=time.time(),
+        ready_at=None,
+    )
+    asyncio.create_task(_load_task(model_path, config, req.filename))
     return {"status": "loading", "filename": req.filename}
 
 
-async def _load_task(model_path: Path, config: Any) -> None:
-    try:
-        await _server.start(model_path, config)
-    except Exception as e:
-        import typer
-        typer.echo(f"[agent-api] failed to load model: {e}", err=True)
+@app.get("/load/status")
+async def load_status() -> dict:
+    """État du dernier chargement llama-server (loading/ready/error/idle)."""
+    return dict(_load_status)
+
+
+async def _load_task(model_path: Path, config: Any, filename: str) -> None:
+    import typer
+    async with _load_lock:
+        try:
+            await _server.start(model_path, config)
+            _load_status.update(state="ready", error=None, ready_at=time.time())
+            typer.echo(f"[agent-api] model {filename!r} ready")
+        except Exception as e:
+            err = f"{e}\n{traceback.format_exc()}"
+            _load_status.update(state="error", error=str(e), ready_at=time.time())
+            typer.echo(f"[agent-api] failed to load model: {err}", err=True)
 
 
 @app.delete("/models/{filename}", status_code=status.HTTP_204_NO_CONTENT)
@@ -196,8 +253,21 @@ async def patch_config(patch: LlamaConfigPatch) -> dict:
 
 
 async def _restart_task(config: Any) -> None:
-    try:
-        await _server.restart(config=config)
-    except Exception as e:
-        import typer
-        typer.echo(f"[agent-api] failed to restart with new config: {e}", err=True)
+    import typer
+    async with _load_lock:
+        current_model = getattr(_server, "_current_model", None)
+        if current_model is not None:
+            _load_status.update(
+                state="loading",
+                filename=current_model.name,
+                error=None,
+                started_at=time.time(),
+                ready_at=None,
+            )
+        try:
+            await _server.restart(config=config)
+            _load_status.update(state="ready", error=None, ready_at=time.time())
+        except Exception as e:
+            err = f"{e}\n{traceback.format_exc()}"
+            _load_status.update(state="error", error=str(e), ready_at=time.time())
+            typer.echo(f"[agent-api] failed to restart with new config: {err}", err=True)

@@ -33,6 +33,10 @@ class NodeChoice:
     base_url: str
     model: str
     supports_tools: bool
+    host: str
+    port: int
+    agent_port: int | None
+    needs_load: bool
 
 
 async def pick_node(
@@ -42,6 +46,11 @@ async def pick_node(
     exclude_node_ids: set[UUID] | None = None,
 ) -> NodeChoice:
     """Choisit le meilleur node pour `model`.
+
+    Stratégie de tri (par ordre de priorité) :
+      1. Nodes où le modèle est déjà chargé (`llama_running` & `llama_model_loaded == model`)
+      2. VRAM utilisée croissante (least-loaded)
+      3. Nom alphabétique (stabilité)
 
     Lève NoSuitableNodeError si aucun candidat.
     `exclude_node_ids` : à utiliser pour le failover après crash.
@@ -95,11 +104,16 @@ async def pick_node(
             f"No online node has model '{model}'. {detail}"
         )
 
-    def sort_key(item: tuple[Node, Model]) -> tuple[int, str]:
-        node, _ = item
+    def is_loaded(node: Node, mdl: Model) -> bool:
+        return bool(node.llama_running) and node.llama_model_loaded == mdl.name
+
+    def sort_key(item: tuple[Node, Model]) -> tuple[int, int, str]:
+        node, mdl = item
+        # Priorité 1 (0=hot, 1=cold) : préfère un node où le modèle est déjà chargé
+        hot = 0 if is_loaded(node, mdl) else 1
         # VRAM "used" inconnue → on pénalise (1 GB virtuel)
         vram_used = node.vram_used_mb if node.vram_used_mb is not None else 1024
-        return (vram_used, node.name)
+        return (hot, vram_used, node.name)
 
     node, mdl = min(candidates, key=sort_key)
     return NodeChoice(
@@ -108,6 +122,10 @@ async def pick_node(
         base_url=f"http://{node.host}:{node.port}",
         model=mdl.name,
         supports_tools=mdl.supports_tools,
+        host=node.host,
+        port=node.port,
+        agent_port=node.agent_port,
+        needs_load=not is_loaded(node, mdl),
     )
 
 

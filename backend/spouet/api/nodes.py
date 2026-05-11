@@ -284,6 +284,16 @@ async def list_models(_: CurrentUser, db: DbSession) -> list[dict]:  # type: ign
     return await list_available_models(db)
 
 
+@router.get("/{node_id}", response_model=NodeOut)
+async def get_node(node_id: UUID, _: CurrentUser, db: DbSession) -> NodeOut:
+    """Détail d'un node (utilisé pour les rafraîchissements live)."""
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    models = await _models_for_node(db, node.id)
+    return _node_out(node, models)
+
+
 @router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_node(node_id: UUID, _: CurrentUser, db: DbSession) -> None:
     node = await db.get(Node, node_id)

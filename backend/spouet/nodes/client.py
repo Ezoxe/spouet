@@ -149,7 +149,11 @@ async def chat_stream(
     # Accumulation des tool_calls sur plusieurs chunks (OpenAI streaming incrémental)
     accumulated_tool_calls: dict[int, dict[str, Any]] = {}
 
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
+    # Timeout fin : connect court (fail-fast si llama-server down),
+    # read long (le streaming peut durer plusieurs minutes).
+    timeout = httpx.Timeout(connect=5.0, read=timeout_s, write=10.0, pool=5.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             async with client.stream(
                 "POST", f"{base_url}/v1/chat/completions", json=payload
@@ -174,8 +178,13 @@ async def chat_stream(
                     if normalized is not None:
                         yield normalized
 
+        except httpx.ConnectError as e:
+            raise LlamaError(
+                f"llama-server injoignable sur {base_url} — "
+                f"aucun modèle n'est chargé sur ce node ({e})"
+            ) from e
         except httpx.HTTPError as e:
-            raise LlamaError(f"http error: {e}") from e
+            raise LlamaError(f"http error talking to {base_url}: {e}") from e
 
 
 def _normalize_chunk(
@@ -212,9 +221,11 @@ def _normalize_chunk(
 
     tool_calls: list[dict[str, Any]] | None = None
     if finish_reason in ("tool_calls", "stop") and acc_tool_calls:
-        # Émet les tool_calls complets. Convertit arguments JSON string → dict.
+        # Émet les tool_calls complets dans l'ordre des index OpenAI.
+        # Convertit arguments JSON string → dict.
         tool_calls = []
-        for tc in sorted(acc_tool_calls.values(), key=lambda x: list(acc_tool_calls.values()).index(x)):
+        for idx in sorted(acc_tool_calls.keys()):
+            tc = acc_tool_calls[idx]
             args = tc["function"].get("arguments", "{}")
             try:
                 parsed_args = json.loads(args) if isinstance(args, str) else args

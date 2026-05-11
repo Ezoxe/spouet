@@ -9,9 +9,10 @@
     } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import {
-        RefreshCw, Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap
+        Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap, Activity
     } from 'lucide-svelte';
     import { goto } from '$app/navigation';
+    import Sparkline from '$lib/components/Sparkline.svelte';
 
     const nodeId = $derived($page.params.id);
 
@@ -35,6 +36,47 @@
     // Modèle à charger
     let loadingModel: string | null = $state(null);
 
+    // ---------- Buffers in-memory pour les graphiques temps réel ----------
+    const MAX_POINTS = 60;
+    type Sample = { ts: number; value: number };
+
+    let vramUsedHist = $state<Sample[]>([]);
+    let ramUsedHist = $state<Sample[]>([]);
+    let tpsHist = $state<Sample[]>([]);
+    let slotsHist = $state<Sample[]>([]);
+    let tokGenRate = $state<Sample[]>([]);
+    let vramPctHist = $state<Sample[]>([]);
+    let lastTokGen: { ts: number; value: number } = { ts: 0, value: 0 };
+
+    function pushSample(arr: Sample[], v: number | null | undefined): Sample[] {
+        if (v == null || !Number.isFinite(Number(v))) return arr;
+        const next = [...arr, { ts: Date.now(), value: Number(v) }];
+        return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
+    }
+
+    function refreshSeries(n: NodeOut): void {
+        vramUsedHist = pushSample(vramUsedHist, n.vram_used_mb);
+        ramUsedHist = pushSample(ramUsedHist, n.ram_used_mb);
+        tpsHist = pushSample(tpsHist, n.llama_tps);
+        slotsHist = pushSample(slotsHist, n.llama_slots_active);
+
+        if (n.vram_total_mb && n.vram_used_mb != null) {
+            vramPctHist = pushSample(vramPctHist, (n.vram_used_mb / n.vram_total_mb) * 100);
+        }
+
+        if (n.llama_tokens_generated != null) {
+            const now = Date.now();
+            if (lastTokGen.ts > 0) {
+                const dt = (now - lastTokGen.ts) / 1000;
+                const dv = n.llama_tokens_generated - lastTokGen.value;
+                if (dt > 0 && dv >= 0) {
+                    tokGenRate = pushSample(tokGenRate, dv / dt);
+                }
+            }
+            lastTokGen = { ts: now, value: n.llama_tokens_generated };
+        }
+    }
+
     function fmtSize(bytes: number): string {
         if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
         if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
@@ -43,13 +85,19 @@
 
     async function loadNode() {
         if (!nodeId) return;
-        loading = true;
         try {
-            const list = await nodesApi.list();
-            node = list.find((n) => n.id === nodeId) ?? null;
-            if (node && node.llama_n_ctx) {
-                configForm.n_ctx = node.llama_n_ctx;
-                configForm.n_gpu_layers = node.llama_n_gpu_layers ?? -1;
+            node = await nodesApi.get(nodeId);
+            if (node) {
+                if (node.llama_n_ctx) {
+                    configForm.n_ctx = node.llama_n_ctx;
+                    configForm.n_gpu_layers = node.llama_n_gpu_layers ?? -1;
+                }
+                refreshSeries(node);
+            }
+        } catch (e) {
+            // 404 si le node a été supprimé entre deux ticks
+            if (e instanceof ApiError && e.status === 404) {
+                node = null;
             }
         } finally {
             loading = false;
@@ -148,7 +196,8 @@
 
     onMount(() => {
         loadNode().then(() => loadLocalModels());
-        const i = setInterval(() => { loadNode(); }, 8000);
+        // Rafraîchissement à 3s pour des graphiques fluides
+        const i = setInterval(() => { loadNode(); }, 3000);
         return () => {
             clearInterval(i);
             if (polling) clearInterval(polling);
@@ -210,6 +259,74 @@
                         <dd>{node.disk_used_mb ? Math.round(node.disk_used_mb / 1024) : '—'} / {node.disk_total_mb ? Math.round(node.disk_total_mb / 1024) : '—'} GB</dd>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- Graphiques temps réel -->
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <div class="mb-3 flex items-center justify-between">
+                <h2 class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-neutral-400">
+                    <Activity size={12} />
+                    Activité temps réel
+                </h2>
+                <span class="flex items-center gap-1.5 text-[10px] text-neutral-500">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    live · {MAX_POINTS} pts
+                </span>
+            </div>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <Sparkline
+                    label="VRAM"
+                    points={vramUsedHist.map((p) => p.value)}
+                    max={node.vram_total_mb ?? undefined}
+                    min={0}
+                    unit="MB"
+                    stroke="rgb(34 211 238)"
+                    fill="rgb(34 211 238)"
+                />
+                <Sparkline
+                    label="VRAM %"
+                    points={vramPctHist.map((p) => p.value)}
+                    max={100}
+                    min={0}
+                    unit="%"
+                    stroke="rgb(96 165 250)"
+                    fill="rgb(96 165 250)"
+                />
+                <Sparkline
+                    label="RAM"
+                    points={ramUsedHist.map((p) => p.value)}
+                    max={node.ram_total_mb ?? undefined}
+                    min={0}
+                    unit="MB"
+                    stroke="rgb(168 85 247)"
+                    fill="rgb(168 85 247)"
+                />
+                <Sparkline
+                    label="TPS"
+                    points={tpsHist.map((p) => p.value)}
+                    min={0}
+                    unit="tok/s"
+                    precision={1}
+                    stroke="rgb(16 185 129)"
+                    fill="rgb(16 185 129)"
+                />
+                <Sparkline
+                    label="Slots actifs"
+                    points={slotsHist.map((p) => p.value)}
+                    min={0}
+                    stroke="rgb(251 191 36)"
+                    fill="rgb(251 191 36)"
+                />
+                <Sparkline
+                    label="Débit tokens"
+                    points={tokGenRate.map((p) => p.value)}
+                    min={0}
+                    unit="tok/s"
+                    precision={1}
+                    stroke="rgb(244 114 182)"
+                    fill="rgb(244 114 182)"
+                />
             </div>
         </section>
 

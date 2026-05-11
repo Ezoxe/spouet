@@ -72,3 +72,27 @@ async def test_unknown_vram_penalized() -> None:
     db = _mock_db([(n1, _model(n1.id)), (n2, _model(n2.id))])
     choice = await pick_node(db, "llama3.1:8b")
     assert choice.name == "beta"
+
+
+@pytest.mark.asyncio
+async def test_pick_prefers_hot_node() -> None:
+    """Un node où le modèle est déjà chargé doit être préféré, même s'il a plus de VRAM utilisée."""
+    n_cold = _node("alpha", vram_used=500)  # cold mais peu chargé
+    n_hot = _node("beta", vram_used=8000)   # hot mais plus chargé
+    n_hot.llama_running = True
+    n_hot.llama_model_loaded = "llama3.1:8b"
+    db = _mock_db([(n_cold, _model(n_cold.id)), (n_hot, _model(n_hot.id))])
+    choice = await pick_node(db, "llama3.1:8b")
+    assert choice.name == "beta"
+    assert choice.needs_load is False
+
+
+@pytest.mark.asyncio
+async def test_pick_cold_when_no_hot_available() -> None:
+    """Si aucun node n'a le modèle chargé, on prend le moins chargé en VRAM."""
+    n1 = _node("alpha", vram_used=8000)
+    n2 = _node("beta", vram_used=2000)
+    db = _mock_db([(n1, _model(n1.id)), (n2, _model(n2.id))])
+    choice = await pick_node(db, "llama3.1:8b")
+    assert choice.name == "beta"
+    assert choice.needs_load is True

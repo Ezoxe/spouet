@@ -17,7 +17,7 @@
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown } from 'lucide-svelte';
+    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2 } from 'lucide-svelte';
 
     const convId = $derived($page.params.id);
 
@@ -27,6 +27,7 @@
     let selectedModel = $state('');
     let streaming = $state(false);
     let nodeBadge: string | null = $state(null);
+    let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
     let approval: { request_id: string; tool: string } | null = $state(null);
     let scroller: HTMLElement | undefined = $state();
 
@@ -89,6 +90,7 @@
 
         streaming = true;
         nodeBadge = null;
+        loadingModel = null;
         let assistant: MessageOut = {
             id: uuid(),
             role: 'assistant',
@@ -107,6 +109,10 @@
                 if (ev.event === 'node') {
                     const d = ev.data as { name: string; model: string };
                     nodeBadge = `${d.name} · ${d.model}`;
+                    loadingModel = null;
+                } else if (ev.event === 'loading_model') {
+                    const d = ev.data as { node: string; model: string; phase: string; elapsed_s?: number };
+                    loadingModel = d;
                 } else if (ev.event === 'token') {
                     const d = ev.data as { text: string };
                     assistant.content += d.text;
@@ -137,6 +143,7 @@
         } finally {
             streaming = false;
             approval = null;
+            loadingModel = null;
         }
     }
 
@@ -163,7 +170,21 @@
 >
     <div class="min-w-0">
         <h1 class="truncate text-lg font-medium">{conv?.title ?? '…'}</h1>
-        {#if nodeBadge}
+        {#if loadingModel}
+            <p
+                in:fade={{ duration: 200 }}
+                class="flex items-center gap-1.5 text-xs text-amber-300"
+            >
+                <Loader2 size={10} class="animate-spin" />
+                {#if loadingModel.phase === 'start'}
+                    Chargement de {loadingModel.model} sur {loadingModel.node}…
+                {:else if loadingModel.phase === 'warming'}
+                    Chauffe llama-server… ({loadingModel.elapsed_s ?? 0}s)
+                {:else}
+                    Prêt ({loadingModel.elapsed_s ?? 0}s)
+                {/if}
+            </p>
+        {:else if nodeBadge}
             <p
                 in:fade={{ duration: 200 }}
                 class="flex items-center gap-1 text-xs text-cyan-400"

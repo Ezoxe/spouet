@@ -325,6 +325,7 @@ export interface NodeProbeOut {
 
 export const nodes = {
     list: () => api<NodeOut[]>('/nodes'),
+    get: (id: string) => api<NodeOut>(`/nodes/${id}`),
     models: () => api<ModelAgg[]>('/nodes/models'),
     create: (json: { name: string; host: string; port?: number; tags?: string[] }) =>
         api<NodeOut>('/nodes', { method: 'POST', json }),

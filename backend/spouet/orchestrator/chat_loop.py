@@ -13,7 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from spouet.core.logging import get_logger
-from spouet.db.models import Conversation, Message, Tool, ToolExecution
+from spouet.db.models import Conversation, Message, Node, Tool, ToolExecution
+from spouet.nodes.agent_client import (
+    AgentUnreachableError,
+    ModelLoadTimeoutError,
+    ModelNotAvailableError,
+    ensure_model_loaded,
+)
 from spouet.nodes.client import OllamaError, chat_stream
 from spouet.nodes.router import NoSuitableNodeError, pick_node
 from spouet.orchestrator.context import build_extra_system, build_messages
@@ -100,6 +106,28 @@ async def stream_assistant_reply(
             return
 
         active_tools = tools_payload if (tools_payload and choice.supports_tools) else None
+
+        # Cold-start : si le modèle n'est pas encore chargé sur le node retenu,
+        # demande à l'agent de le charger et attend la fin avant de stream.
+        if choice.needs_load:
+            node_row = await db.get(Node, choice.node_id)
+            if node_row is not None:
+                try:
+                    async for ev in ensure_model_loaded(node_row, choice.model):
+                        yield ev
+                        await publish(channel, ev["event"], ev["data"])
+                except ModelNotAvailableError as e:
+                    logger.warning("chat.model_missing", node=choice.name, error=str(e))
+                    excluded.add(choice.node_id)
+                    last_error = str(e)
+                    await publish(channel, "node_error", {"node": choice.name, "error": str(e)})
+                    continue
+                except (AgentUnreachableError, ModelLoadTimeoutError) as e:
+                    logger.warning("chat.load_failed", node=choice.name, error=str(e))
+                    excluded.add(choice.node_id)
+                    last_error = f"{choice.name}: {e}"
+                    await publish(channel, "node_error", {"node": choice.name, "error": str(e)})
+                    continue
 
         assistant_msg = Message(
             conversation_id=conversation.id,
