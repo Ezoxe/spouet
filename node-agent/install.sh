@@ -136,11 +136,17 @@ BIN_DIR="$SPOUET_INSTALL_DIR/bin"
 # ---------------------------------------------------------------------------
 log "Installation des dépendances système…"
 export DEBIAN_FRONTEND=noninteractive
+# libgomp1 + libopenblas0 + libcurl4 sont nécessaires au runtime de
+# llama.cpp ≥ b4000 : les plugins backend CPU (libggml-cpu-*.so) sont
+# linkés contre libgomp (OpenMP). Sans ces .so, dlopen échoue silencieusement
+# et llama.cpp lève « make_cpu_buft_list: no CPU backend found ».
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
-    apt-get install -y -qq git curl ca-certificates wget jq
+    apt-get install -y -qq git curl ca-certificates wget jq \
+        libgomp1 libopenblas0 libcurl4
 elif command -v dnf &>/dev/null; then
-    dnf install -y -q git curl ca-certificates wget jq
+    dnf install -y -q git curl ca-certificates wget jq \
+        libgomp libopenblas libcurl
 fi
 
 # ---------------------------------------------------------------------------
@@ -333,6 +339,36 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         # Vérifie le binaire avec LD_LIBRARY_PATH pour trouver les .so bundlés
         if ! LD_LIBRARY_PATH="$BIN_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$BIN_DIR/llama-server" --version 2>&1; then
             warn "llama-server --version a échoué. Vérifiez les libs : ldd $BIN_DIR/llama-server"
+        fi
+
+        # Vérifie qu'au moins un plugin backend CPU est présent et chargeable.
+        # llama.cpp ≥ b4000 utilise des `.so` plugins ; sans un libggml-cpu*.so
+        # qui dlopen avec succès, le serveur lève « no CPU backend found ».
+        CPU_PLUGINS=$(find "$BIN_DIR" -maxdepth 1 -name "libggml-cpu*.so*" 2>/dev/null)
+        if [[ -z "$CPU_PLUGINS" ]]; then
+            warn "Aucun plugin CPU (libggml-cpu*.so) trouvé dans $BIN_DIR."
+            warn "llama-server lèvera « no CPU backend found » au chargement de modèle."
+            warn "L'archive téléchargée ne contient pas de backend CPU séparé — variant inadaptée."
+        else
+            log "Plugins CPU bundlés : $(echo "$CPU_PLUGINS" | wc -l) variantes"
+            # Pour chaque variant, on vérifie que toutes ses deps dynamiques sont résolues.
+            MISSING_DEPS=0
+            for so in $CPU_PLUGINS; do
+                # `ldd` liste les libs partagées ; on cherche « not found »
+                MISSING=$(LD_LIBRARY_PATH="$BIN_DIR:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+                          ldd "$so" 2>/dev/null | grep -F "not found" || true)
+                if [[ -n "$MISSING" ]]; then
+                    warn "Dépendances manquantes pour $(basename "$so") :"
+                    echo "$MISSING" | sed 's/^/    /' >&2
+                    MISSING_DEPS=1
+                fi
+            done
+            if [[ "$MISSING_DEPS" == "1" ]]; then
+                warn "Au moins un plugin CPU a des deps manquantes — llama-server échouera."
+                warn "Installez les paquets correspondants (souvent : libgomp1, libopenblas0)."
+            else
+                log "✓ Tous les plugins CPU ont leurs dépendances résolues."
+            fi
         fi
     fi
 else
