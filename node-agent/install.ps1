@@ -16,8 +16,11 @@
 .PARAMETER Token
     Token agent (créé par 'spouet-admin create-token --email ...').
 
-.PARAMETER OllamaUrl
-    Endpoint Ollama local. Défaut: http://localhost:11434
+.PARAMETER LlamaPort
+    Port d'écoute de llama-server. Défaut: 8080
+
+.PARAMETER AgentPort
+    Port de l'API de contrôle du node-agent. Défaut: 8765
 
 .PARAMETER Interval
     Intervalle de heartbeat (s). Défaut: 10
@@ -45,7 +48,8 @@
 param(
     [string] $Backend,
     [string] $Token,
-    [string] $OllamaUrl   = "http://localhost:11434",
+    [int]    $LlamaPort   = 8080,
+    [int]    $AgentPort   = 8765,
     [int]    $Interval    = 10,
     [string] $InstallDir  = "C:\spouet",
     [string] $RepoUrl     = "https://github.com/ezoxe/spouet.git",
@@ -173,14 +177,25 @@ if ($existing) {
 }
 
 Write-Step "Création du service $ServiceName..."
+$ModelsDir = Join-Path $InstallDir "models"
+New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
 $svcArgs = @(
     "run", "--directory", $AgentDir, "spouet-agent", "run",
-    "--backend",  $Backend,
-    "--ollama",   $OllamaUrl,
-    "--interval", "$Interval"
+    "--backend",     $Backend,
+    "--interval",    "$Interval",
+    "--llama-port",  "$LlamaPort",
+    "--agent-port",  "$AgentPort",
+    "--install-dir", $InstallDir,
+    "--models-dir",  $ModelsDir
 )
 & $NssmExe install $ServiceName $UvPath @svcArgs | Out-Null
-& $NssmExe set $ServiceName AppEnvironmentExtra "SPOUET_AGENT_TOKEN=$Token" | Out-Null
+# Token + HF_HOME passent par l'environnement du service. NSSM accepte plusieurs
+# variables : on les pose toutes en un seul appel séparées par espaces (format
+# attendu par AppEnvironmentExtra côté NSSM CLI).
+& $NssmExe set $ServiceName AppEnvironmentExtra `
+    "SPOUET_AGENT_TOKEN=$Token" `
+    "HF_HOME=$InstallDir\.cache\huggingface" `
+    "LLAMA_MODELS_DIR=$ModelsDir" | Out-Null
 & $NssmExe set $ServiceName Start SERVICE_AUTO_START | Out-Null
 & $NssmExe set $ServiceName AppStdout (Join-Path $AgentDir "agent.log") | Out-Null
 & $NssmExe set $ServiceName AppStderr (Join-Path $AgentDir "agent.log") | Out-Null

@@ -9,6 +9,7 @@ Endpoints appelés par le backend Spouet pour piloter llama.cpp :
   GET  /load/status         → état explicite du chargement (idle/loading/ready/error)
   DELETE /models/{filename} → supprime un GGUF
   PATCH /config             → change les params llama.cpp (redémarre llama-server)
+  GET  /diag/llama          → dernières lignes du process llama-server (debug)
 """
 
 from __future__ import annotations
@@ -42,13 +43,20 @@ _load_status: dict[str, Any] = {
 _load_lock = asyncio.Lock()
 
 
-def init(server: Any, models_dir: Path, gpu_info: Any) -> None:
+def init(
+    server: Any,
+    models_dir: Path,
+    gpu_info: Any,
+    autoload_filename: str | None = None,
+    autoload_error: str | None = None,
+) -> None:
     global _server, _models_dir, _gpu_info
     _server = server
     _models_dir = models_dir
     _gpu_info = gpu_info
     # Si un modèle a été autoloadé avec succès au boot, refléter l'état dans
-    # _load_status pour que le backend voie `ready` au lieu de `idle`.
+    # _load_status pour que le backend voie `ready` au lieu de `idle`. Si
+    # l'autoload a échoué, exposer l'erreur explicitement.
     current = getattr(server, "_current_model", None)
     is_running = server.is_running() if hasattr(server, "is_running") else False
     if current is not None and is_running:
@@ -56,6 +64,13 @@ def init(server: Any, models_dir: Path, gpu_info: Any) -> None:
             state="ready",
             filename=current.name,
             error=None,
+            ready_at=time.time(),
+        )
+    elif autoload_error:
+        _load_status.update(
+            state="error",
+            filename=autoload_filename,
+            error=autoload_error,
             ready_at=time.time(),
         )
 
@@ -147,11 +162,29 @@ class LoadRequest(BaseModel):
     filename: str
 
 
+def _resolve_model_path(filename: str) -> Path:
+    """Résout `filename` dans _models_dir en bloquant tout path traversal.
+
+    Le contrat est un nom de fichier simple (`Meta-Llama-3.1-8B-...gguf`).
+    On refuse séparateurs, segments parents et chemins absolus.
+    """
+    if not _models_dir:
+        raise HTTPException(500, "models_dir not configured")
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, f"Invalid filename {filename!r}")
+    candidate = (_models_dir / filename).resolve()
+    try:
+        candidate.relative_to(_models_dir.resolve())
+    except ValueError as exc:
+        raise HTTPException(400, f"Filename escapes models dir: {filename!r}") from exc
+    return candidate
+
+
 @app.post("/models/load")
 async def load_model(req: LoadRequest) -> dict:
     if not _models_dir or not _server:
         raise HTTPException(500, "server not initialized")
-    model_path = _models_dir / req.filename
+    model_path = _resolve_model_path(req.filename)
     if not model_path.exists():
         raise HTTPException(404, f"Model {req.filename!r} not found in models dir")
 
@@ -165,11 +198,12 @@ async def load_model(req: LoadRequest) -> dict:
             f"Un chargement est déjà en cours pour {_load_status.get('filename')!r}",
         )
 
-    from spouet_agent.llama_config import compute_optimal_config
+    from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
     config = compute_optimal_config(
         gpu_model=_gpu_info.model if _gpu_info else None,
         vram_total_mb=_gpu_info.vram_total_mb if _gpu_info else None,
         ram_total_mb=_gpu_info.ram_total_mb if _gpu_info else None,
+        model_size_bytes=get_model_size_bytes(model_path),
     )
     _load_status.update(
         state="loading",
@@ -203,13 +237,33 @@ async def _load_task(model_path: Path, config: Any, filename: str) -> None:
 
 @app.delete("/models/{filename}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model_endpoint(filename: str) -> None:
-    if not _models_dir:
-        raise HTTPException(500, "models_dir not configured")
     from spouet_agent.model_manager import delete_model
-    model_path = _models_dir / filename
+    model_path = _resolve_model_path(filename)
     if not model_path.exists():
         raise HTTPException(404, f"Model {filename!r} not found")
     delete_model(model_path)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic : dernières lignes du process llama-server
+# ---------------------------------------------------------------------------
+
+@app.get("/diag/llama")
+async def diag_llama(n: int = 50) -> dict:
+    """Dernières lignes émises par llama-server + erreur de démarrage éventuelle.
+
+    Indispensable quand `/load/status` remonte `error`: permet au backend
+    (et au frontend) d'afficher la cause sans accès SSH au node.
+    """
+    if not _server:
+        raise HTTPException(500, "server not initialized")
+    return {
+        "running": _server.is_running(),
+        "lines": _server.get_recent_logs(n),
+        "last_startup_error": _server.get_last_startup_error(),
+        "load_state": _load_status.get("state"),
+        "load_error": _load_status.get("error"),
+    }
 
 
 # ---------------------------------------------------------------------------

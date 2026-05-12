@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -26,7 +25,7 @@ from spouet_agent import __version__
 from spouet_agent.agent_api import app as control_app
 from spouet_agent.agent_api import init as init_control
 from spouet_agent.gpu import probe_gpu
-from spouet_agent.llama_config import compute_optimal_config
+from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
 
@@ -99,32 +98,50 @@ async def _run(
     gpu = probe_gpu()
     typer.echo(f"[spouet-agent {__version__}] GPU={gpu.model} VRAM={gpu.vram_total_mb}MB RAM={gpu.ram_total_mb}MB")
 
+    autoload_filename: str | None = None
+    autoload_error: str | None = None
+
     # Charge le modèle autoload si présent
     if autoload and llama_bin:
-        model_path = models_dir / autoload
-        if model_path.exists():
-            config = compute_optimal_config(gpu.model, gpu.vram_total_mb, gpu.ram_total_mb)
-            typer.echo(f"[spouet-agent] autoloading {autoload}…")
-            try:
-                await server.start(model_path, config)
-            except Exception as e:
-                typer.echo(f"[spouet-agent] autoload failed: {e}", err=True)
+        # Bloque path-traversal sur la valeur d'autoload (peut venir de l'env).
+        if "/" in autoload or "\\" in autoload or ".." in autoload:
+            typer.echo(f"[spouet-agent] WARN: autoload value {autoload!r} contient un séparateur de chemin — ignoré", err=True)
         else:
-            typer.echo(f"[spouet-agent] WARN: autoload model {autoload!r} not found in {models_dir}", err=True)
+            model_path = models_dir / autoload
+            autoload_filename = autoload
+            if model_path.exists():
+                config = compute_optimal_config(
+                    gpu.model, gpu.vram_total_mb, gpu.ram_total_mb,
+                    model_size_bytes=get_model_size_bytes(model_path),
+                )
+                typer.echo(f"[spouet-agent] autoloading {autoload}…")
+                try:
+                    await server.start(model_path, config)
+                except Exception as e:
+                    autoload_error = str(e)
+                    typer.echo(f"[spouet-agent] autoload failed: {e}", err=True)
+            else:
+                autoload_error = f"model {autoload!r} not found in {models_dir}"
+                typer.echo(f"[spouet-agent] WARN: {autoload_error}", err=True)
     elif not autoload:
         # Charge le premier modèle trouvé si aucun n'est spécifié
         local_models = list_local_models(models_dir)
         if local_models and llama_bin:
             first = Path(local_models[0].path)
-            config = compute_optimal_config(gpu.model, gpu.vram_total_mb, gpu.ram_total_mb)
+            autoload_filename = first.name
+            config = compute_optimal_config(
+                gpu.model, gpu.vram_total_mb, gpu.ram_total_mb,
+                model_size_bytes=get_model_size_bytes(first),
+            )
             typer.echo(f"[spouet-agent] autoloading first model {first.name}…")
             try:
                 await server.start(first, config)
             except Exception as e:
+                autoload_error = str(e)
                 typer.echo(f"[spouet-agent] autoload failed: {e}", err=True)
 
     # Initialise l'API de contrôle
-    init_control(server, models_dir, gpu)
+    init_control(server, models_dir, gpu, autoload_filename=autoload_filename, autoload_error=autoload_error)
 
     # Lance l'API de contrôle, le heartbeat, et la mise à jour automatique en parallèle
     tasks: list = [

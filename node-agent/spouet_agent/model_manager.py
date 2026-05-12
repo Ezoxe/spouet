@@ -112,11 +112,14 @@ def _download_sync(hf_repo: str, filename: str, dest_dir: Path, hf_token: str | 
     hf_home.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("HF_HOME", str(hf_home))
 
+    # `local_dir_use_symlinks` est déprécié depuis huggingface_hub 0.23 et
+    # ignoré : le téléchargement direct vers local_dir n'utilise plus
+    # de symlinks. On le retire pour éviter le warning de deprecation
+    # à chaque appel.
     path = hf_hub_download(
         repo_id=hf_repo,
         filename=filename,
         local_dir=str(dest_dir),
-        local_dir_use_symlinks=False,
         token=hf_token,
     )
     return Path(path)

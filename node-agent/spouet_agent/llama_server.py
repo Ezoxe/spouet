@@ -11,6 +11,7 @@ import subprocess as _subprocess
 import tarfile as _tarfile
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,8 +23,13 @@ from spouet_agent.llama_config import LlamaConfig
 GITHUB_LLAMA_LATEST = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 
 LLAMA_SERVER_DEFAULT_PORT = 8080
-STARTUP_TIMEOUT_S = 180  # modèles lourds à charger
+# Plancher : suffit pour les petits modèles (< 8 GB) sur SSD.
+STARTUP_TIMEOUT_MIN_S = 180
+# Plafond absolu : ~17 minutes même pour les 70B sur HDD lent.
+STARTUP_TIMEOUT_MAX_S = 1000
 HEALTH_CHECK_INTERVAL_S = 1
+# Nombre de lignes de log llama-server conservées pour le diagnostic d'erreur.
+LOG_RING_SIZE = 200
 
 
 @dataclass
@@ -42,6 +48,20 @@ class LlamaServerError(RuntimeError):
     pass
 
 
+def _compute_startup_timeout(model_path: Path) -> int:
+    """Timeout adaptatif : ~25s par GB de modèle (HDD lent), borné.
+
+    Permet à un 70B Q4 (40 GB) de prendre jusqu'à 17 min sur HDD, tout en
+    restant rapide (180 s) pour un 7B Q4 (4 GB).
+    """
+    try:
+        size_gb = model_path.stat().st_size / (1024 ** 3)
+    except OSError:
+        return STARTUP_TIMEOUT_MIN_S
+    estimated = int(STARTUP_TIMEOUT_MIN_S + size_gb * 25)
+    return max(STARTUP_TIMEOUT_MIN_S, min(STARTUP_TIMEOUT_MAX_S, estimated))
+
+
 class LlamaServer:
     def __init__(self, bin_path: Path, models_dir: Path, port: int = LLAMA_SERVER_DEFAULT_PORT) -> None:
         self.bin_path = bin_path
@@ -52,30 +72,48 @@ class LlamaServer:
         self._current_config: LlamaConfig | None = None
         self._cumulative_prompt_tokens: int = 0
         self._cumulative_gen_tokens: int = 0
+        # Ring buffer des dernières lignes émises par llama-server, utile pour
+        # remonter une erreur de démarrage (manque de RAM, lib manquante…).
+        self._log_ring: deque[str] = deque(maxlen=LOG_RING_SIZE)
+        self._drain_task: asyncio.Task | None = None
+        self._last_startup_error: str | None = None
+
+    def _process_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        bin_dir = str(self.bin_path.parent)
+        # bin_dir en tête pour les .so bundlés + plugins backends.
+        extra_paths = [bin_dir, "/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
+        prev = env.get("LD_LIBRARY_PATH", "")
+        all_paths = ":".join(p for p in extra_paths if p not in prev)
+        env["LD_LIBRARY_PATH"] = f"{all_paths}:{prev}" if prev else all_paths
+        # Indique explicitement à llama.cpp où chercher les plugins backends.
+        env["GGML_BACKEND_DL_PATH"] = bin_dir
+        return env
 
     async def start(self, model_path: Path, config: LlamaConfig) -> None:
         await self.stop()
         cmd = self._build_cmd(model_path, config)
         typer.echo(f"[llama-server] starting: {' '.join(cmd)}")
-        env = os.environ.copy()
-        bin_dir = str(self.bin_path.parent)
-        # bin_dir en tête pour les .so bundlés + plugins backends (libggml-cpu.so, libggml-cuda.so…)
-        extra_paths = [bin_dir, "/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"]
-        prev = env.get("LD_LIBRARY_PATH", "")
-        all_paths = ":".join(p for p in extra_paths if p not in prev)
-        env["LD_LIBRARY_PATH"] = f"{all_paths}:{prev}" if prev else all_paths
-        # Indique explicitement à llama.cpp où chercher les plugins backends
-        env["GGML_BACKEND_DL_PATH"] = bin_dir
+        self._log_ring.clear()
+        self._last_startup_error = None
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
-            env=env,
+            env=self._process_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
         self._current_model = model_path
         self._current_config = config
-        asyncio.create_task(self._drain_output())
-        await self._wait_ready()
+        # Garde une référence forte sur la tâche : sans ça asyncio peut la GC.
+        self._drain_task = asyncio.create_task(self._drain_output())
+        timeout = _compute_startup_timeout(model_path)
+        try:
+            await self._wait_ready(timeout)
+        except LlamaServerError:
+            # Capture les dernières lignes avant que le process ne soit nettoyé
+            # par un éventuel restart, pour faire remonter une cause utile.
+            self._last_startup_error = self._format_recent_logs()
+            raise
         typer.echo(f"[llama-server] ready on port {self.port}, model={model_path.name}")
 
     async def stop(self) -> None:
@@ -87,6 +125,12 @@ class LlamaServer:
                 self._process.kill()
                 await self._process.wait()
         self._process = None
+        if self._drain_task is not None:
+            try:
+                await asyncio.wait_for(self._drain_task, timeout=2)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            self._drain_task = None
 
     async def restart(self, model_path: Path | None = None, config: LlamaConfig | None = None) -> None:
         m = model_path or self._current_model
@@ -97,6 +141,21 @@ class LlamaServer:
 
     def is_running(self) -> bool:
         return self._process is not None and self._process.returncode is None
+
+    def get_recent_logs(self, n: int = 50) -> list[str]:
+        """Dernières lignes émises par llama-server (utile pour /diag)."""
+        if n <= 0 or n >= len(self._log_ring):
+            return list(self._log_ring)
+        return list(self._log_ring)[-n:]
+
+    def get_last_startup_error(self) -> str | None:
+        return self._last_startup_error
+
+    def _format_recent_logs(self, n: int = 30) -> str:
+        lines = self.get_recent_logs(n)
+        if not lines:
+            return "(aucun log llama-server capturé)"
+        return "\n".join(lines)
 
     async def get_stats(self) -> LlamaStats:
         if not self.is_running():
@@ -176,12 +235,16 @@ class LlamaServer:
             cmd += ["--threads", str(config.n_threads)]
         return cmd
 
-    async def _wait_ready(self) -> None:
+    async def _wait_ready(self, timeout: int) -> None:
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=2) as client:
-            while time.monotonic() - start < STARTUP_TIMEOUT_S:
+            while time.monotonic() - start < timeout:
                 if not self.is_running():
-                    raise LlamaServerError("llama-server process exited during startup")
+                    rc = self._process.returncode if self._process else "?"
+                    tail = self._format_recent_logs()
+                    raise LlamaServerError(
+                        f"llama-server exited with code {rc} during startup\n--- recent output ---\n{tail}"
+                    )
                 try:
                     r = await client.get(f"http://localhost:{self.port}/health")
                     if r.status_code == 200:
@@ -189,7 +252,10 @@ class LlamaServer:
                 except Exception:
                     pass
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL_S)
-        raise LlamaServerError(f"llama-server did not start within {STARTUP_TIMEOUT_S}s")
+        tail = self._format_recent_logs()
+        raise LlamaServerError(
+            f"llama-server did not become healthy within {timeout}s\n--- recent output ---\n{tail}"
+        )
 
     async def _drain_output(self) -> None:
         if self._process is None or self._process.stdout is None:
@@ -197,6 +263,7 @@ class LlamaServer:
         try:
             async for line in self._process.stdout:
                 text = line.decode(errors="replace").rstrip()
+                self._log_ring.append(text)
                 typer.echo(f"[llama-server] {text}")
         except Exception:
             pass
@@ -210,6 +277,7 @@ class LlamaServer:
             r = _subprocess.run(
                 [str(self.bin_path), "--version"],
                 capture_output=True, text=True, timeout=10,
+                env=self._process_env(),
             )
             output = r.stdout + r.stderr
             m = re.search(r'\bb(\d+)\b', output)
@@ -385,20 +453,33 @@ def _pick_asset(assets: list[dict], gpu_type: str, arch_tag: str) -> str | None:
                 cuda_ver = m.group(1)
         except Exception:
             pass
-        return (
-            match(rf"bin-ubuntu-{arch_tag}-cuda-cu{cuda_ver}.*\.tar\.gz")
-            or match(rf"bin-ubuntu-{arch_tag}-cuda-cu12.*\.tar\.gz")
-            or match(rf"bin-ubuntu-{arch_tag}-cuda.*\.tar\.gz")
-        )
+        # Aligné avec install.sh : on cherche debian puis ubuntu, plusieurs variantes.
+        for distro in ("debian", "ubuntu"):
+            res = (
+                match(rf"bin-{distro}-cuda-cu{cuda_ver}-{arch_tag}.*\.tar\.gz")
+                or match(rf"bin-{distro}-cuda-cu12-{arch_tag}.*\.tar\.gz")
+                or match(rf"bin-{distro}-cuda-{arch_tag}.*\.tar\.gz")
+            )
+            if res:
+                return res
+        return None
     if gpu_type == "rocm":
-        return match(rf"bin-ubuntu-{arch_tag}.*rocm.*\.tar\.gz")
+        for distro in ("debian", "ubuntu"):
+            res = match(rf"bin-{distro}-rocm[^-]+-{arch_tag}.*\.tar\.gz")
+            if res:
+                return res
+        return None
     # cpu
-    return (
-        match(rf"bin-ubuntu-{arch_tag}-avx2\.tar\.gz")
-        or match(rf"bin-ubuntu-{arch_tag}-avx\.tar\.gz")
-        or match(rf"bin-ubuntu-{arch_tag}-cpu\.tar\.gz")
-        or match(rf"bin-ubuntu-{arch_tag}.*\.tar\.gz")
-    )
+    for distro in ("debian", "ubuntu"):
+        res = (
+            match(rf"bin-{distro}-{arch_tag}\.tar\.gz")
+            or match(rf"bin-{distro}-{arch_tag}-avx2\.tar\.gz")
+            or match(rf"bin-{distro}-{arch_tag}-avx\.tar\.gz")
+            or match(rf"bin-{distro}-{arch_tag}-cpu\.tar\.gz")
+        )
+        if res:
+            return res
+    return None
 
 
 def find_llama_server(install_dir: Path) -> Path | None:
