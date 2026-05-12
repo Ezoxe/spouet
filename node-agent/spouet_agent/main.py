@@ -7,16 +7,6 @@ import socket
 from pathlib import Path
 from typing import Annotated
 
-
-def _lan_ip() -> str:
-    """Retourne l'IP LAN routable (celle de l'interface par défaut)."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        return socket.gethostname()
-
 import httpx
 import typer
 import uvicorn
@@ -28,6 +18,16 @@ from spouet_agent.gpu import probe_gpu
 from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
+
+
+def _lan_ip() -> str:
+    """Retourne l'IP LAN routable (celle de l'interface par défaut)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return socket.gethostname()
 
 AGENT_API_PORT = 8765
 LLAMA_SERVER_PORT = 8080
