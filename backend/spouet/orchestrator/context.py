@@ -67,13 +67,28 @@ async def build_messages(
       1. system prompt de la conversation (si défini) + injections RAG/memory
       2. historique tronqué (les plus récents en priorité)
     """
-    rows = (
-        await db.execute(
-            select(Message)
-            .where(Message.conversation_id == conversation.id)
-            .order_by(Message.created_at.asc())
-        )
-    ).scalars().all()
+    rows = list(
+        (
+            await db.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation.id)
+                .order_by(Message.created_at.asc())
+            )
+        ).scalars().all()
+    )
+
+    # Retire le placeholder assistant vide créé par chat_loop avant le stream.
+    # Tel quel, llama.cpp /v1/chat/completions interprète un dernier message
+    # assistant comme un prefill et refuse la combinaison avec un template
+    # « thinking » (Gemma 4, Qwen3, DeepSeek-R1…) :
+    #   400 « Assistant response prefill is incompatible with enable_thinking ».
+    while (
+        rows
+        and rows[-1].role == "assistant"
+        and not (rows[-1].content or "").strip()
+        and not rows[-1].content_json
+    ):
+        rows.pop()
 
     # Construit le system prompt combiné
     system_parts: list[str] = []
