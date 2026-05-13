@@ -436,7 +436,7 @@ Environment=HF_HOME=$SPOUET_INSTALL_DIR/.cache/huggingface
 Environment=HOME=$SPOUET_INSTALL_DIR
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
-ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent \\
+ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent run \\
     --backend    \${SPOUET_BACKEND} \\
     --token      \${SPOUET_AGENT_TOKEN} \\
     --host       $LAN_IP \\
