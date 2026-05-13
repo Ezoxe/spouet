@@ -306,7 +306,7 @@
     {/if}
 </header>
 
-<div class="space-y-4 px-6 pb-6 sm:px-8">
+<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 sm:px-8">
 
     <!-- Stats hardware -->
     {#if node}
