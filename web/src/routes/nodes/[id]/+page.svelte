@@ -121,13 +121,10 @@
     const MAX_POINTS = 60;
     type Sample = { ts: number; value: number };
 
-    let vramUsedHist = $state<Sample[]>([]);
     let ramUsedHist = $state<Sample[]>([]);
     let tpsHist = $state<Sample[]>([]);
     let slotsHist = $state<Sample[]>([]);
-    let tokGenRate = $state<Sample[]>([]);
     let vramPctHist = $state<Sample[]>([]);
-    let lastTokGen: { ts: number; value: number } = { ts: 0, value: 0 };
 
     function pushSample(arr: Sample[], v: number | null | undefined): Sample[] {
         if (v == null || !Number.isFinite(Number(v))) return arr;
@@ -136,25 +133,12 @@
     }
 
     function refreshSeries(n: NodeOut): void {
-        vramUsedHist = pushSample(vramUsedHist, n.vram_used_mb);
         ramUsedHist = pushSample(ramUsedHist, n.ram_used_mb);
         tpsHist = pushSample(tpsHist, n.llama_tps);
         slotsHist = pushSample(slotsHist, n.llama_slots_active);
 
         if (n.vram_total_mb && n.vram_used_mb != null) {
             vramPctHist = pushSample(vramPctHist, (n.vram_used_mb / n.vram_total_mb) * 100);
-        }
-
-        if (n.llama_tokens_generated != null) {
-            const now = Date.now();
-            if (lastTokGen.ts > 0) {
-                const dt = (now - lastTokGen.ts) / 1000;
-                const dv = n.llama_tokens_generated - lastTokGen.value;
-                if (dt > 0 && dv >= 0) {
-                    tokGenRate = pushSample(tokGenRate, dv / dt);
-                }
-            }
-            lastTokGen = { ts: now, value: n.llama_tokens_generated };
         }
     }
 
@@ -287,59 +271,73 @@
     });
 </script>
 
-<header class="flex items-center gap-3 px-6 py-5 sm:px-8">
+<header class="flex items-center gap-3 px-6 py-3 sm:px-8">
     <button type="button" onclick={() => goto('/nodes')} class="rounded p-1 hover:bg-neutral-800">
         <ChevronLeft size={18} />
     </button>
-    <div class="min-w-0">
-        <h1 class="text-xl font-semibold tracking-tight truncate">
+    <div class="min-w-0 flex items-center gap-2">
+        {#if node}
+            <span
+                class="h-2 w-2 rounded-full flex-shrink-0"
+                class:bg-emerald-400={node.status === 'online'}
+                class:bg-neutral-600={node.status !== 'online'}
+                title={node.status}
+            ></span>
+        {/if}
+        <h1 class="text-lg font-semibold tracking-tight truncate">
             {node?.name ?? '…'}
         </h1>
-        <p class="text-xs text-neutral-500">{node?.host}:{node?.port}</p>
+        <span class="text-xs text-neutral-500">{node?.host}:{node?.port}</span>
     </div>
     {#if node}
-        <span
-            class="ml-auto h-2 w-2 rounded-full flex-shrink-0"
-            class:bg-emerald-400={node.status === 'online'}
-            class:bg-neutral-600={node.status !== 'online'}
-        ></span>
+        <div class="ml-auto flex items-center gap-1.5">
+            {#if node.agent_port}
+                <button
+                    type="button"
+                    onclick={() => (showConfig = !showConfig)}
+                    class="flex items-center gap-1.5 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-800"
+                >
+                    <Settings size={12} /> Paramètres
+                </button>
+            {/if}
+            <button
+                type="button"
+                onclick={copyDiag}
+                disabled={copyingDiag}
+                class="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-50"
+                title="Copier un diagnostic complet pour bug report"
+            >
+                {copyingDiag ? 'Copie…' : 'Diag'}
+            </button>
+        </div>
     {/if}
 </header>
 
-<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 sm:px-8">
+<div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 pb-6 sm:px-8">
 
-    <!-- Stats hardware -->
+    <!-- KPI strip : matériel condensé -->
     {#if node}
-        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-neutral-400">Matériel</h2>
-            <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div class="flex items-start gap-2">
-                    <Cpu size={14} class="mt-0.5 shrink-0 text-neutral-500" />
-                    <div>
-                        <dt class="text-xs text-neutral-500">GPU</dt>
-                        <dd class="truncate max-w-[14ch]" title={node.gpu_model ?? '—'}>{node.gpu_model ?? '—'}</dd>
-                    </div>
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-2.5">
+            <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                <div class="flex items-center gap-2 min-w-0">
+                    <Cpu size={13} class="shrink-0 text-neutral-500" />
+                    <span class="text-neutral-500">GPU</span>
+                    <span class="ml-auto truncate font-mono text-neutral-200" title={node.gpu_model ?? '—'}>{node.gpu_model ?? '—'}</span>
                 </div>
-                <div class="flex items-start gap-2">
-                    <Zap size={14} class="mt-0.5 shrink-0 text-neutral-500" />
-                    <div>
-                        <dt class="text-xs text-neutral-500">VRAM</dt>
-                        <dd>{node.vram_used_mb ?? '—'} / {node.vram_total_mb ?? '—'} MB</dd>
-                    </div>
+                <div class="flex items-center gap-2">
+                    <Zap size={13} class="shrink-0 text-neutral-500" />
+                    <span class="text-neutral-500">VRAM</span>
+                    <span class="ml-auto font-mono tabular-nums text-neutral-200">{node.vram_used_mb ?? '—'} / {node.vram_total_mb ?? '—'} MB</span>
                 </div>
-                <div class="flex items-start gap-2">
-                    <MemoryStick size={14} class="mt-0.5 shrink-0 text-neutral-500" />
-                    <div>
-                        <dt class="text-xs text-neutral-500">RAM</dt>
-                        <dd>{node.ram_used_mb ?? '—'} / {node.ram_total_mb ?? '—'} MB</dd>
-                    </div>
+                <div class="flex items-center gap-2">
+                    <MemoryStick size={13} class="shrink-0 text-neutral-500" />
+                    <span class="text-neutral-500">RAM</span>
+                    <span class="ml-auto font-mono tabular-nums text-neutral-200">{node.ram_used_mb ?? '—'} / {node.ram_total_mb ?? '—'} MB</span>
                 </div>
-                <div class="flex items-start gap-2">
-                    <HardDrive size={14} class="mt-0.5 shrink-0 text-neutral-500" />
-                    <div>
-                        <dt class="text-xs text-neutral-500">Disque</dt>
-                        <dd>{node.disk_used_mb ? Math.round(node.disk_used_mb / 1024) : '—'} / {node.disk_total_mb ? Math.round(node.disk_total_mb / 1024) : '—'} GB</dd>
-                    </div>
+                <div class="flex items-center gap-2">
+                    <HardDrive size={13} class="shrink-0 text-neutral-500" />
+                    <span class="text-neutral-500">Disque</span>
+                    <span class="ml-auto font-mono tabular-nums text-neutral-200">{node.disk_used_mb ? Math.round(node.disk_used_mb / 1024) : '—'} / {node.disk_total_mb ? Math.round(node.disk_total_mb / 1024) : '—'} GB</span>
                 </div>
             </div>
         </section>
@@ -347,40 +345,47 @@
         <!-- Capabilities (compute_class, gpu_kind, llama_variant, warnings) -->
         <CapabilitiesCard caps={node.capabilities} agentVersion={node.agent_version} />
 
-        <div class="flex justify-end">
-            <button
-                type="button"
-                onclick={copyDiag}
-                disabled={copyingDiag}
-                class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-50"
-                title="Copier un diagnostic complet pour bug report"
-            >
-                {copyingDiag ? 'Copie…' : 'Copier le diag'}
-            </button>
-        </div>
-
-        <!-- Graphiques temps réel -->
+        <!-- Historique : pièce centrale, interactif -->
         <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div class="mb-3 flex items-center justify-between">
+            <div class="mb-2 flex items-center justify-between">
                 <h2 class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-neutral-400">
+                    Historique
+                    {#if histData?.source === '1min'}
+                        <span class="rounded bg-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-500">1-min</span>
+                    {/if}
+                </h2>
+                <div class="flex gap-1">
+                    {#each (['1h','6h','24h','7d'] as MetricsRange[]) as r}
+                        <button
+                            type="button"
+                            onclick={() => loadHistory(r)}
+                            class="rounded border px-2 py-0.5 text-xs transition {histRange === r ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
+                        >{r}</button>
+                    {/each}
+                </div>
+            </div>
+            {#if histLoading}
+                <div class="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-8 text-center text-xs text-neutral-500">
+                    Chargement…
+                </div>
+            {:else}
+                <TimeSeriesChart series={histSeries} timeFormat={histRange === '7d' ? 'date' : 'hh:mm'} />
+            {/if}
+        </section>
+
+        <!-- Activité temps réel : 4 sparklines compacts -->
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
+            <div class="mb-2 flex items-center justify-between">
+                <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-neutral-400">
                     <Activity size={12} />
-                    Activité temps réel
+                    Temps réel
                 </h2>
                 <span class="flex items-center gap-1.5 text-[10px] text-neutral-500">
                     <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     live · {MAX_POINTS} pts
                 </span>
             </div>
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <Sparkline
-                    label="VRAM"
-                    points={vramUsedHist.map((p) => p.value)}
-                    max={node.vram_total_mb ?? undefined}
-                    min={0}
-                    unit="MB"
-                    stroke="rgb(34 211 238)"
-                    fill="rgb(34 211 238)"
-                />
+            <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Sparkline
                     label="VRAM %"
                     points={vramPctHist.map((p) => p.value)}
@@ -409,104 +414,53 @@
                     fill="rgb(16 185 129)"
                 />
                 <Sparkline
-                    label="Slots actifs"
+                    label="Slots"
                     points={slotsHist.map((p) => p.value)}
                     min={0}
                     stroke="rgb(251 191 36)"
                     fill="rgb(251 191 36)"
                 />
-                <Sparkline
-                    label="Débit tokens"
-                    points={tokGenRate.map((p) => p.value)}
-                    min={0}
-                    unit="tok/s"
-                    precision={1}
-                    stroke="rgb(244 114 182)"
-                    fill="rgb(244 114 182)"
-                />
             </div>
         </section>
 
-        <!-- Historique (24h / 7j depuis node_metrics_*) -->
-        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div class="mb-3 flex items-center justify-between">
-                <h2 class="text-xs font-medium uppercase tracking-wider text-neutral-400">
-                    Historique
-                    {#if histData?.source === '1min'}
-                        <span class="ml-2 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-500">1-min</span>
-                    {/if}
-                </h2>
-                <div class="flex gap-1">
-                    {#each (['1h','6h','24h','7d'] as MetricsRange[]) as r}
-                        <button
-                            type="button"
-                            onclick={() => loadHistory(r)}
-                            class="rounded border px-2 py-0.5 text-xs transition {histRange === r ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
-                        >{r}</button>
-                    {/each}
-                </div>
-            </div>
-            {#if histLoading}
-                <div class="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-6 text-center text-xs text-neutral-500">
-                    Chargement…
-                </div>
-            {:else}
-                <TimeSeriesChart series={histSeries} timeFormat={histRange === '7d' ? 'date' : 'hh:mm'} />
-            {/if}
-        </section>
-
-        <!-- Stats llama.cpp -->
-        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div class="flex items-center justify-between mb-3">
+        <!-- Stats llama.cpp : bandeau dense -->
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
+            <div class="mb-2 flex items-center justify-between">
                 <h2 class="text-xs font-medium uppercase tracking-wider text-neutral-400">llama.cpp</h2>
-                {#if node.agent_port}
-                    <button
-                        type="button"
-                        onclick={() => (showConfig = !showConfig)}
-                        class="flex items-center gap-1.5 rounded border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800"
-                    >
-                        <Settings size={12} /> Paramètres
-                    </button>
-                {/if}
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="h-1.5 w-1.5 rounded-full {node.llama_running ? 'bg-emerald-400' : 'bg-neutral-600'}"></span>
+                    <span class="text-neutral-400">{node.llama_running ? 'actif' : 'arrêté'}</span>
+                    {#if node.llama_model_loaded}
+                        <span class="mx-1 text-neutral-700">·</span>
+                        <span class="truncate font-mono text-[11px] text-neutral-300" title={node.llama_model_loaded}>{node.llama_model_loaded}</span>
+                    {/if}
+                </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                    <dt class="text-xs text-neutral-500">Statut</dt>
-                    <dd class="flex items-center gap-1.5">
-                        <span class="h-1.5 w-1.5 rounded-full {node.llama_running ? 'bg-emerald-400' : 'bg-neutral-600'}"></span>
-                        {node.llama_running ? 'actif' : 'arrêté'}
-                    </dd>
+            <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-xs sm:grid-cols-6">
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">TPS</span>
+                    <span class="font-mono tabular-nums">{node.llama_tps != null ? node.llama_tps.toFixed(1) : '—'}</span>
                 </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Modèle chargé</dt>
-                    <dd class="truncate max-w-[16ch] text-xs" title={node.llama_model_loaded ?? '—'}>
-                        {node.llama_model_loaded ?? '—'}
-                    </dd>
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">n_ctx</span>
+                    <span class="font-mono tabular-nums">{node.llama_n_ctx ?? '—'}</span>
                 </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Tokens/s</dt>
-                    <dd>{node.llama_tps != null ? node.llama_tps.toFixed(1) : '—'}</dd>
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">GPU lyr</span>
+                    <span class="font-mono tabular-nums">{node.llama_n_gpu_layers ?? '—'}</span>
                 </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Contexte (n_ctx)</dt>
-                    <dd>{node.llama_n_ctx ?? '—'}</dd>
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">Slots</span>
+                    <span class="font-mono tabular-nums">{node.llama_slots_active ?? '—'}</span>
                 </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Couches GPU</dt>
-                    <dd>{node.llama_n_gpu_layers ?? '—'}</dd>
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">Tok gen</span>
+                    <span class="font-mono tabular-nums">{node.llama_tokens_generated?.toLocaleString() ?? '—'}</span>
                 </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Slots actifs</dt>
-                    <dd>{node.llama_slots_active ?? '—'}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Tokens générés</dt>
-                    <dd>{node.llama_tokens_generated?.toLocaleString() ?? '—'}</dd>
-                </div>
-                <div>
-                    <dt class="text-xs text-neutral-500">Tokens prompt</dt>
-                    <dd>{node.llama_prompt_tokens_processed?.toLocaleString() ?? '—'}</dd>
+                <div class="flex justify-between gap-2">
+                    <span class="text-neutral-500">Tok prompt</span>
+                    <span class="font-mono tabular-nums">{node.llama_prompt_tokens_processed?.toLocaleString() ?? '—'}</span>
                 </div>
             </div>
 
