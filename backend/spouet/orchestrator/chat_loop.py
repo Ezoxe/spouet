@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -34,6 +35,9 @@ logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 8
 DELEGATE_TOOL_SLUG = "delegate_to_node"
+# Temps max d'attente d'une décision admin pour un tool requires_approval.
+# Au-delà, on marque l'exécution comme `expired` et on continue.
+TOOL_APPROVAL_TIMEOUT_S = 300
 
 _DELEGATE_TOOL_DEF: dict[str, Any] = {
     "type": "function",
@@ -193,7 +197,11 @@ async def stream_assistant_reply(
 
                 if chunk.get("done"):
                     assistant_msg.tokens_in = chunk.get("prompt_eval_count")
-                    assistant_msg.tokens_out = chunk.get("eval_count") or tokens_out
+                    # `eval_count` peut être 0 (rare bug llama-server) — distinguer
+                    # explicitement 0/None pour éviter l'effet `0 or tokens_out`
+                    # qui écraserait un comptage côté serveur à 0 par notre local.
+                    eval_count = chunk.get("eval_count")
+                    assistant_msg.tokens_out = eval_count if eval_count is not None else tokens_out
                     assistant_msg.finish_reason = chunk.get("done_reason") or "stop"
                     break
             assistant_msg.latency_ms = int((time.monotonic() - started) * 1000)
@@ -335,7 +343,22 @@ async def _execute_tool_call(
             "approval_required",
             {"request_id": rid, "tool": tool.slug, "args": raw_args},
         )
-        decision = await wait_for_decision(rid)
+        try:
+            decision = await asyncio.wait_for(
+                wait_for_decision(rid), timeout=TOOL_APPROVAL_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            await publish(
+                channel,
+                "approval_expired",
+                {"request_id": rid, "tool": tool.slug},
+            )
+            return await _persist_tool_message(
+                db,
+                conversation,
+                tool.slug,
+                {"error": f"approval timeout après {TOOL_APPROVAL_TIMEOUT_S}s"},
+            )
         if decision != "approved":
             result = {"error": f"approval {decision}"}
             return await _persist_tool_message(db, conversation, tool.slug, result)

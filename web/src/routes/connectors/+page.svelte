@@ -8,6 +8,7 @@
     import EmptyState from '$lib/components/EmptyState.svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import StatusDot from '$lib/components/StatusDot.svelte';
+    import QuickInstallDiscordModal from '$lib/components/QuickInstallDiscordModal.svelte';
     import { toast } from '$lib/toast.svelte';
     import {
         Plug,
@@ -17,13 +18,15 @@
         RefreshCw,
         Trash2,
         Settings,
-        AlertCircle
+        AlertCircle,
+        Zap
     } from 'lucide-svelte';
 
     let items: ConnectorOut[] = $state([]);
     let loading = $state(true);
     let installPath = $state('');
     let installing = $state(false);
+    let discordModalOpen = $state(false);
 
     async function load() {
         loading = true;
@@ -162,6 +165,33 @@
                 </li>
             </ul>
         </HelpPanel>
+
+        <section
+            class="rounded-2xl border border-cyan-900/50 bg-cyan-950/10 p-5"
+            in:fly={{ y: 6, duration: 180 }}
+        >
+            <div class="flex items-start gap-3">
+                <Zap size={20} class="mt-0.5 shrink-0 text-cyan-400" />
+                <div class="min-w-0 flex-1">
+                    <h2 class="text-sm font-medium text-neutral-100">
+                        Installer Discord en 1 clic
+                    </h2>
+                    <p class="mt-1 text-xs text-neutral-400">
+                        Colle ton token bot Discord, on s'occupe du reste : secret chiffré,
+                        manifest, démarrage du container, URL d'invitation OAuth, et activation
+                        automatique des 5 tools <code class="rounded bg-neutral-800 px-1 font-mono">spouet-*</code>
+                        pour que l'IA puisse répondre avec des stats nodes / embeds depuis Discord.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    onclick={() => (discordModalOpen = true)}
+                    class="shrink-0 rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-cyan-500"
+                >
+                    + Discord
+                </button>
+            </div>
+        </section>
 
         <section
             class="glass rounded-2xl border border-[var(--color-border)] p-5"
@@ -315,3 +345,5 @@
         {/if}
     </div>
 </div>
+
+<QuickInstallDiscordModal bind:open={discordModalOpen} onInstalled={() => load()} />

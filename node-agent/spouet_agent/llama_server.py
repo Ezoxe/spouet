@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 import typer
 
+from spouet_agent.capabilities import NodeCapabilities
 from spouet_agent.llama_config import LlamaConfig
 
 GITHUB_LLAMA_LATEST = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
@@ -63,10 +64,17 @@ def _compute_startup_timeout(model_path: Path) -> int:
 
 
 class LlamaServer:
-    def __init__(self, bin_path: Path, models_dir: Path, port: int = LLAMA_SERVER_DEFAULT_PORT) -> None:
+    def __init__(
+        self,
+        bin_path: Path,
+        models_dir: Path,
+        port: int = LLAMA_SERVER_DEFAULT_PORT,
+        capabilities: NodeCapabilities | None = None,
+    ) -> None:
         self.bin_path = bin_path
         self.models_dir = models_dir
         self.port = port
+        self._capabilities = capabilities
         self._process: asyncio.subprocess.Process | None = None
         self._current_model: Path | None = None
         self._current_config: LlamaConfig | None = None
@@ -216,6 +224,21 @@ class LlamaServer:
         )
 
     def _build_cmd(self, model_path: Path, config: LlamaConfig) -> list[str]:
+        # Garde-fou : refuse de demander des couches GPU sur un node CPU-only.
+        # Sans ce check, un iGPU mal classé pouvait déclencher --n-gpu-layers != 0
+        # sur un binaire CPU → crash silencieux ou erreur "no GPU backend".
+        if (
+            self._capabilities is not None
+            and self._capabilities.compute_class == "cpu"
+            and config.n_gpu_layers != 0
+        ):
+            raise LlamaServerError(
+                f"Refus de démarrer llama-server : config demande "
+                f"n_gpu_layers={config.n_gpu_layers} mais le node est CPU-only "
+                f"(gpu_kind={self._capabilities.gpu_kind}). "
+                f"Recompute config ou fixe SPOUET_FORCE_CPU=1."
+            )
+
         cmd = [
             str(self.bin_path),
             "--model", str(model_path),

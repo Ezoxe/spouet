@@ -176,6 +176,20 @@ function parseSseBlock(block: string): SseEvent | null {
 // Types & endpoints
 // ----------------------------------------------------------------------------
 
+export interface NodeCapabilities {
+    compute_class: 'cpu' | 'cuda' | 'rocm';
+    gpu_kind: 'none' | 'igpu' | 'dgpu';
+    gpu_model: string | null;
+    vram_total_mb: number | null;
+    cpu_model: string | null;
+    cpu_physical_cores: number;
+    cpu_features: string[];
+    llama_variant: string;
+    force_cpu: boolean;
+    warnings: string[];
+    detection_notes: string[];
+}
+
 export interface NodeOut {
     id: string;
     name: string;
@@ -203,6 +217,7 @@ export interface NodeOut {
     llama_slots_active: number | null;
     llama_prompt_tokens_processed: number | null;
     llama_tokens_generated: number | null;
+    capabilities: NodeCapabilities | null;
 }
 
 export interface LocalModelOut {
@@ -323,6 +338,38 @@ export interface NodeProbeOut {
     models: string[];
 }
 
+export type MetricsRange = '1h' | '6h' | '24h' | '7d';
+
+export interface MetricsPoint {
+    time: string;
+    cpu_pct: number | null;
+    ram_used_mb: number | null;
+    vram_used_mb: number | null;
+    disk_used_mb: number | null;
+    net_rx_kbps: number | null;
+    net_tx_kbps: number | null;
+    llama_tps: number | null;
+    llama_slots_active: number | null;
+    llama_running: boolean | null;
+    llama_model_loaded: string | null;
+    llama_queue_pending: number | null;
+}
+
+export interface NodeMetricsOut {
+    node_id: string;
+    range: MetricsRange;
+    source: 'raw' | '1min';
+    series: MetricsPoint[];
+}
+
+export interface ClusterAggregate {
+    range: MetricsRange;
+    nodes_online: number;
+    nodes_total: number;
+    total_tps_current: number;
+    total_tokens_generated_window: number;
+}
+
 export const nodes = {
     list: () => api<NodeOut[]>('/nodes'),
     get: (id: string) => api<NodeOut>(`/nodes/${id}`),
@@ -343,7 +390,12 @@ export const nodes = {
     loadModel: (id: string, json: { filename: string }) =>
         api<Record<string, unknown>>(`/nodes/${id}/local-models/load`, { method: 'POST', json }),
     deleteLocalModel: (id: string, filename: string) =>
-        api<void>(`/nodes/${id}/local-models/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+        api<void>(`/nodes/${id}/local-models/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
+    metrics: (id: string, range: MetricsRange = '1h') =>
+        api<NodeMetricsOut>(`/nodes/${id}/metrics?range=${range}`),
+    clusterAggregate: (range: MetricsRange = '24h') =>
+        api<ClusterAggregate>(`/nodes/metrics/aggregate?range=${range}`),
+    diag: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/diag`)
 };
 
 export const conversations = {
@@ -445,6 +497,8 @@ export interface ConnectorOut {
     secrets_required: Record<string, string>;
     config_schema: Record<string, unknown>;
     config: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    invite_url?: string | null;
 }
 
 export interface ConnectorRouteOut {
@@ -462,10 +516,21 @@ export interface ConnectorStartOut {
     error: string | null;
 }
 
+export interface DiscordQuickInstallIn {
+    token: string;
+    bot_persona?: string;
+    default_model?: string;
+    allowed_channels?: string[];
+    respond_dm?: boolean;
+    trigger_prefix?: string;
+}
+
 export const connectors = {
     list: () => api<ConnectorOut[]>('/connectors'),
     install: (path: string) =>
         api<ConnectorOut>('/connectors/install', { method: 'POST', json: { path } }),
+    quickInstallDiscord: (json: DiscordQuickInstallIn) =>
+        api<ConnectorOut>('/connectors/quick-install/discord', { method: 'POST', json }),
     patch: (id: string, json: { enabled?: boolean; config?: Record<string, unknown> }) =>
         api<ConnectorOut>(`/connectors/${id}`, { method: 'PATCH', json }),
     delete: (id: string) => api<void>(`/connectors/${id}`, { method: 'DELETE' }),

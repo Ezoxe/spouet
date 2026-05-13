@@ -13,6 +13,9 @@
     } from 'lucide-svelte';
     import { goto } from '$app/navigation';
     import Sparkline from '$lib/components/Sparkline.svelte';
+    import CapabilitiesCard from '$lib/components/CapabilitiesCard.svelte';
+    import TimeSeriesChart, { type Series } from '$lib/components/TimeSeriesChart.svelte';
+    import type { MetricsRange, NodeMetricsOut } from '$lib/api';
 
     const nodeId = $derived($page.params.id);
 
@@ -35,6 +38,84 @@
 
     // Modèle à charger
     let loadingModel: string | null = $state(null);
+
+    // Historique
+    let histRange: MetricsRange = $state('1h');
+    let histData: NodeMetricsOut | null = $state(null);
+    let histLoading = $state(false);
+
+    // Copie de diag
+    let copyingDiag = $state(false);
+    async function copyDiag(): Promise<void> {
+        if (!nodeId) return;
+        copyingDiag = true;
+        try {
+            const diag = await nodesApi.diag(nodeId);
+            await navigator.clipboard.writeText(JSON.stringify(diag, null, 2));
+            toast.success('Diag copié dans le presse-papier.');
+        } catch (e) {
+            toast.error('Échec de la copie du diag.');
+        } finally {
+            copyingDiag = false;
+        }
+    }
+
+    async function loadHistory(range: MetricsRange): Promise<void> {
+        if (!nodeId) return;
+        histLoading = true;
+        histRange = range;
+        try {
+            histData = await nodesApi.metrics(nodeId, range);
+        } catch {
+            histData = null;
+        } finally {
+            histLoading = false;
+        }
+    }
+
+    const histSeries = $derived.by<Series[]>(() => {
+        if (!histData) return [];
+        const pts = histData.series.map((p) => ({ time: Date.parse(p.time), p }));
+        return [
+            {
+                label: 'CPU',
+                color: 'rgb(96 165 250)',
+                unit: ' %',
+                points: pts.map(({ time, p }) => ({ time, value: p.cpu_pct }))
+            },
+            {
+                label: 'RAM',
+                color: 'rgb(168 85 247)',
+                unit: ' MB',
+                precision: 0,
+                points: pts.map(({ time, p }) => ({ time, value: p.ram_used_mb }))
+            },
+            {
+                label: 'VRAM',
+                color: 'rgb(34 211 238)',
+                unit: ' MB',
+                precision: 0,
+                points: pts.map(({ time, p }) => ({ time, value: p.vram_used_mb }))
+            },
+            {
+                label: 'TPS',
+                color: 'rgb(16 185 129)',
+                unit: ' tok/s',
+                points: pts.map(({ time, p }) => ({ time, value: p.llama_tps }))
+            },
+            {
+                label: 'Slots',
+                color: 'rgb(251 191 36)',
+                points: pts.map(({ time, p }) => ({ time, value: p.llama_slots_active }))
+            },
+            {
+                label: 'Net ↓',
+                color: 'rgb(244 114 182)',
+                unit: ' kbps',
+                points: pts.map(({ time, p }) => ({ time, value: p.net_rx_kbps }))
+            }
+        ];
+    });
 
     // ---------- Buffers in-memory pour les graphiques temps réel ----------
     const MAX_POINTS = 60;
@@ -196,6 +277,7 @@
 
     onMount(() => {
         loadNode().then(() => loadLocalModels());
+        loadHistory('1h');
         // Rafraîchissement à 3s pour des graphiques fluides
         const i = setInterval(() => { loadNode(); }, 3000);
         return () => {
@@ -261,6 +343,21 @@
                 </div>
             </div>
         </section>
+
+        <!-- Capabilities (compute_class, gpu_kind, llama_variant, warnings) -->
+        <CapabilitiesCard caps={node.capabilities} agentVersion={node.agent_version} />
+
+        <div class="flex justify-end">
+            <button
+                type="button"
+                onclick={copyDiag}
+                disabled={copyingDiag}
+                class="rounded border border-neutral-700 px-2.5 py-1 text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-50"
+                title="Copier un diagnostic complet pour bug report"
+            >
+                {copyingDiag ? 'Copie…' : 'Copier le diag'}
+            </button>
+        </div>
 
         <!-- Graphiques temps réel -->
         <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
@@ -328,6 +425,34 @@
                     fill="rgb(244 114 182)"
                 />
             </div>
+        </section>
+
+        <!-- Historique (24h / 7j depuis node_metrics_*) -->
+        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+            <div class="mb-3 flex items-center justify-between">
+                <h2 class="text-xs font-medium uppercase tracking-wider text-neutral-400">
+                    Historique
+                    {#if histData?.source === '1min'}
+                        <span class="ml-2 rounded bg-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-500">1-min</span>
+                    {/if}
+                </h2>
+                <div class="flex gap-1">
+                    {#each (['1h','6h','24h','7d'] as MetricsRange[]) as r}
+                        <button
+                            type="button"
+                            onclick={() => loadHistory(r)}
+                            class="rounded border px-2 py-0.5 text-xs transition {histRange === r ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-neutral-700 text-neutral-400 hover:bg-neutral-800'}"
+                        >{r}</button>
+                    {/each}
+                </div>
+            </div>
+            {#if histLoading}
+                <div class="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-6 text-center text-xs text-neutral-500">
+                    Chargement…
+                </div>
+            {:else}
+                <TimeSeriesChart series={histSeries} timeFormat={histRange === '7d' ? 'date' : 'hh:mm'} />
+            {/if}
         </section>
 
         <!-- Stats llama.cpp -->

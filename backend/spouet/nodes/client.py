@@ -160,7 +160,10 @@ async def chat_stream(
             ) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
-                    raise LlamaError(f"llama-server {resp.status_code}: {body.decode(errors='replace')}")
+                    # Borne la longueur du body : llama-server peut renvoyer
+                    # plusieurs MB d'erreur, on n'a pas besoin de tout logger.
+                    body_text = body.decode(errors="replace")[:2000]
+                    raise LlamaError(f"llama-server {resp.status_code}: {body_text}")
 
                 async for line in resp.aiter_lines():
                     line = line.strip()

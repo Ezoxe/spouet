@@ -84,6 +84,30 @@ async def _resolve_channel(external_id: str) -> Any:
     return None
 
 
+def _embed_from_dict(d: dict[str, Any]) -> discord.Embed:
+    """Convertit le content_json d'un tool `spouet-discord-embed` en discord.Embed."""
+    embed = discord.Embed(
+        title=str(d.get("title") or "")[:256] or None,
+        description=str(d.get("description") or "")[:4000] or None,
+        color=int(d["color"]) if d.get("color") is not None else None,
+    )
+    if d.get("url"):
+        embed.url = str(d["url"])
+    if d.get("image_url"):
+        embed.set_image(url=str(d["image_url"]))
+    if d.get("thumbnail_url"):
+        embed.set_thumbnail(url=str(d["thumbnail_url"]))
+    if d.get("footer"):
+        embed.set_footer(text=str(d["footer"])[:2048])
+    for f in (d.get("fields") or [])[:25]:
+        name = str(f.get("name") or "")[:256]
+        value = str(f.get("value") or "")[:1024]
+        inline = bool(f.get("inline", False))
+        if name and value:
+            embed.add_field(name=name, value=value, inline=inline)
+    return embed
+
+
 async def _handle_outbound(data: dict[str, Any]) -> None:
     kind = data.get("kind")
     external_id = str(data.get("external_id") or "")
@@ -104,6 +128,16 @@ async def _handle_outbound(data: dict[str, Any]) -> None:
             chunks = _split_message(content) if content else ["(vide)"]
             for i, chunk in enumerate(chunks):
                 await channel.send(chunk, reference=reference if i == 0 else None)
+        elif kind == "send_embed":
+            channel = await _resolve_channel(external_id)
+            if channel is None:
+                print(f"[warn] channel not found for embed: {external_id}", flush=True)
+                return
+            content_json = data.get("content_json") or {}
+            if not isinstance(content_json, dict):
+                print("[warn] send_embed content_json must be a dict", flush=True)
+                return
+            await channel.send(embed=_embed_from_dict(content_json))
         elif kind == "typing":
             channel = await _resolve_channel(external_id)
             if channel is not None:
@@ -129,6 +163,22 @@ async def _handle_outbound(data: dict[str, Any]) -> None:
 @client.event
 async def on_ready() -> None:
     print(f"[ok] discord ready as {client.user}", flush=True)
+    # Annonce au backend : le bot est connecté, voici son client_id (utile pour
+    # construire l'URL OAuth d'invitation côté admin web).
+    if _ws is not None and client.user is not None:
+        try:
+            await _ws.send(
+                json.dumps(
+                    {
+                        "kind": "bot_info",
+                        "external_id": "self",
+                        "client_id": str(client.user.id),
+                        "username": str(client.user.name),
+                    }
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] bot_info send failed: {e}", flush=True)
 
 
 @client.event

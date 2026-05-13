@@ -196,27 +196,41 @@ install -d -o spouet -g spouet -m 0755 "$SPOUET_INSTALL_DIR/.cache/huggingface"
 chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
 
 # ---------------------------------------------------------------------------
+# uv sync (node-agent) — nécessaire AVANT la détection GPU car on utilise
+# `spouet-agent detect` comme source de vérité unique pour le choix de la
+# variante de binaire llama-server. Plus de double détection bash/python.
+# ---------------------------------------------------------------------------
+UV_CACHE="$SPOUET_INSTALL_DIR/.cache/uv"
+install -d -o spouet -g spouet -m 0755 "$UV_CACHE"
+
+log "uv sync (node-agent)…"
+sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync --directory "$SPOUET_INSTALL_DIR/node-agent"
+
+# ---------------------------------------------------------------------------
 # llama.cpp-server (binaire précompilé depuis les releases GitHub)
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_LLAMA" == "0" ]]; then
-    log "Détection GPU…"
-    GPU_TYPE="cpu"
-    if command -v nvidia-smi &>/dev/null && nvidia-smi -L 2>/dev/null | grep -q "GPU"; then
-        # Vérifie que libcuda.so est accessible (drivers + runtime fonctionnels)
-        if ldconfig -p 2>/dev/null | grep -q "libcuda.so" \
-           || find /usr/local/cuda/lib64 /usr/lib/x86_64-linux-gnu /usr/lib64 \
-                   -name "libcuda.so*" 2>/dev/null | grep -q .; then
-            GPU_TYPE="cuda"
-            log "  → GPU NVIDIA + libs CUDA détectés — build CUDA"
-        else
-            warn "  → GPU NVIDIA détecté mais libcuda.so introuvable — build CPU (installez cuda-toolkit si CUDA est souhaité)"
-        fi
-    elif command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null 2>&1; then
-        GPU_TYPE="rocm"
-        log "  → GPU AMD détecté — build ROCm"
-    else
-        log "  → Pas de GPU — build CPU AVX2"
-    fi
+    log "Détection hardware (via spouet-agent detect)…"
+    CAPS_JSON=$(sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" \
+        "$UV_BIN" run --directory "$SPOUET_INSTALL_DIR/node-agent" \
+        spouet-agent detect --json 2>/dev/null) || die "spouet-agent detect a échoué"
+    COMPUTE_CLASS=$(echo "$CAPS_JSON" | jq -r .compute_class)
+    LLAMA_VARIANT=$(echo "$CAPS_JSON" | jq -r .llama_variant)
+    GPU_KIND=$(echo "$CAPS_JSON" | jq -r .gpu_kind)
+    GPU_MODEL=$(echo "$CAPS_JSON" | jq -r '.gpu_model // "—"')
+
+    # Mapping vers GPU_TYPE pour la suite (cuda/rocm/cpu)
+    case "$COMPUTE_CLASS" in
+        cuda) GPU_TYPE="cuda" ;;
+        rocm) GPU_TYPE="rocm" ;;
+        *)    GPU_TYPE="cpu" ;;
+    esac
+    log "  → compute_class=$COMPUTE_CLASS gpu_kind=$GPU_KIND gpu=$GPU_MODEL variant=$LLAMA_VARIANT"
+
+    # Affiche les warnings éventuels (ex: iGPU AMD détecté → forcé en CPU)
+    echo "$CAPS_JSON" | jq -r '.warnings[]?' | while read -r w; do
+        [[ -n "$w" ]] && warn "  → $w"
+    done
 
     ARCH=$(uname -m)
     case "$ARCH" in
@@ -296,8 +310,19 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         esac
 
         if [[ "$GPU_TYPE" == "cpu" && -z "$ASSET" ]]; then
+            # Suffixe préféré dérivé du llama_variant retourné par detect :
+            #   cpu-avx512 → tente "${ARCH_TAG}-avx512" en premier
+            #   cpu-avx2   → tente "${ARCH_TAG}-avx2" en premier
+            #   cpu-avx    → tente "${ARCH_TAG}-avx" en premier
+            #   cpu        → fallback générique
+            case "$LLAMA_VARIANT" in
+                cpu-avx512) _preferred="${ARCH_TAG}-avx512" ;;
+                cpu-avx2)   _preferred="${ARCH_TAG}-avx2"   ;;
+                cpu-avx)    _preferred="${ARCH_TAG}-avx"    ;;
+                *)          _preferred="$ARCH_TAG"          ;;
+            esac
             for _distro in debian ubuntu; do
-                for _v in "$ARCH_TAG" "${ARCH_TAG}-avx2" "${ARCH_TAG}-avx" "${ARCH_TAG}-cpu"; do
+                for _v in "$_preferred" "${ARCH_TAG}-avx2" "${ARCH_TAG}-avx" "${ARCH_TAG}" "${ARCH_TAG}-cpu"; do
                     _find_asset "bin-${_distro}-${_v}.tar.gz" && {
                         log "  → Release : $LLAMA_RELEASE | Variant CPU : ${_distro}/${_v}"
                         break 2
@@ -374,15 +399,6 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
 else
     log "SKIP_LLAMA=1 — llama.cpp non (ré)installé."
 fi
-
-# ---------------------------------------------------------------------------
-# uv sync node-agent
-# ---------------------------------------------------------------------------
-UV_CACHE="$SPOUET_INSTALL_DIR/.cache/uv"
-install -d -o spouet -g spouet -m 0755 "$UV_CACHE"
-
-log "uv sync (node-agent)…"
-sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync --directory "$SPOUET_INSTALL_DIR/node-agent"
 
 # ---------------------------------------------------------------------------
 # Config /etc/spouet/agent.env

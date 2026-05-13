@@ -1,0 +1,65 @@
+slug: spouet-discord-embed
+name: Spouet — Discord Embed
+version: 0.1.0
+description: |
+  Envoie un message Discord riche (embed avec titre, description, champs,
+  couleur, image_url) dans le channel/DM courant. À utiliser quand l'IA
+  veut afficher un tableau de bord lisible (stats nodes, liste modèles…)
+  plutôt qu'un mur de texte.
+image: spouet/tool-spouet-discord-embed:0.1.0
+
+network: bridge
+timeout_s: 10
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  required: [external_id, title]
+  additionalProperties: false
+  properties:
+    external_id:
+      type: string
+      description: |
+        ID Discord du channel ou DM cible (ex `channel:123456789`). Disponible
+        dans le system prompt de la conversation créée par le connector.
+    title:
+      type: string
+      maxLength: 256
+    description:
+      type: string
+      maxLength: 4000
+    color:
+      type: integer
+      description: Couleur RGB en décimal (ex 0x00FF00 = 65280)
+    url:
+      type: string
+    image_url:
+      type: string
+    thumbnail_url:
+      type: string
+    footer:
+      type: string
+      maxLength: 2048
+    fields:
+      type: array
+      maxItems: 25
+      items:
+        type: object
+        required: [name, value]
+        properties:
+          name: { type: string, maxLength: 256 }
+          value: { type: string, maxLength: 1024 }
+          inline: { type: boolean, default: false }
+
+output_schema:
+  type: object
+  properties:
+    queued: { type: boolean }
+    error: { type: string }

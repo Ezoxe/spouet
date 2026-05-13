@@ -28,7 +28,8 @@ app = FastAPI(title="spouet-agent control API", docs_url=None, redoc_url=None)
 # Références injectées depuis main.py au démarrage
 _server: Any = None  # LlamaServer instance
 _models_dir: Path | None = None
-_gpu_info: Any = None  # GpuInfo
+_gpu_info: Any = None  # GpuInfo (legacy : VRAM/RAM/disk pour le heartbeat)
+_capabilities: Any = None  # NodeCapabilities (source de vérité hardware)
 _download_status: dict = {"status": "idle"}
 
 # État explicite du chargement llama-server (utilisé par le backend pour
@@ -47,13 +48,15 @@ def init(
     server: Any,
     models_dir: Path,
     gpu_info: Any,
+    capabilities: Any = None,
     autoload_filename: str | None = None,
     autoload_error: str | None = None,
 ) -> None:
-    global _server, _models_dir, _gpu_info
+    global _server, _models_dir, _gpu_info, _capabilities
     _server = server
     _models_dir = models_dir
     _gpu_info = gpu_info
+    _capabilities = capabilities
     # Si un modèle a été autoloadé avec succès au boot, refléter l'état dans
     # _load_status pour que le backend voie `ready` au lieu de `idle`. Si
     # l'autoload a échoué, exposer l'erreur explicitement.
@@ -198,10 +201,13 @@ async def load_model(req: LoadRequest) -> dict:
             f"Un chargement est déjà en cours pour {_load_status.get('filename')!r}",
         )
 
+    from spouet_agent.capabilities import probe_capabilities
     from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
+    # Si capabilities n'a pas été injecté (anciens chemins), on les recalcule
+    # à la volée pour rester compatible.
+    caps = _capabilities or probe_capabilities()
     config = compute_optimal_config(
-        gpu_model=_gpu_info.model if _gpu_info else None,
-        vram_total_mb=_gpu_info.vram_total_mb if _gpu_info else None,
+        caps=caps,
         ram_total_mb=_gpu_info.ram_total_mb if _gpu_info else None,
         model_size_bytes=get_model_size_bytes(model_path),
     )
@@ -257,13 +263,23 @@ async def diag_llama(n: int = 50) -> dict:
     """
     if not _server:
         raise HTTPException(500, "server not initialized")
+    caps_payload = _capabilities.to_dict() if _capabilities is not None else None
     return {
         "running": _server.is_running(),
         "lines": _server.get_recent_logs(n),
         "last_startup_error": _server.get_last_startup_error(),
         "load_state": _load_status.get("state"),
         "load_error": _load_status.get("error"),
+        "capabilities": caps_payload,
     }
+
+
+@app.get("/capabilities")
+async def get_capabilities() -> dict:
+    """Capacités matérielles détectées (compute_class, gpu_kind, warnings…)."""
+    if _capabilities is None:
+        raise HTTPException(500, "capabilities not initialized")
+    return _capabilities.to_dict()
 
 
 # ---------------------------------------------------------------------------

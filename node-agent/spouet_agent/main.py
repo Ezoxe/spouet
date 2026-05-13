@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from pathlib import Path
 from typing import Annotated
@@ -14,7 +15,8 @@ import uvicorn
 from spouet_agent import __version__
 from spouet_agent.agent_api import app as control_app
 from spouet_agent.agent_api import init as init_control
-from spouet_agent.gpu import probe_gpu
+from spouet_agent.capabilities import probe_capabilities
+from spouet_agent.gpu import gpu_info_from_capabilities, probe_gpu
 from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
@@ -33,6 +35,39 @@ AGENT_API_PORT = 8765
 LLAMA_SERVER_PORT = 8080
 
 app = typer.Typer(help="Spouet node agent — llama.cpp lifecycle + heartbeat.")
+
+
+@app.command()
+def detect(
+    json_out: Annotated[bool, typer.Option("--json", help="Sortie machine-readable")] = False,
+) -> None:
+    """Affiche les capabilities détectées (compute_class, gpu_kind, llama_variant…).
+
+    Utilisé par les installeurs (install.sh) pour choisir la bonne variante de
+    binaire llama-server à télécharger. Une seule source de vérité — finie la
+    double détection bash/python qui divergeait.
+    """
+    caps = probe_capabilities()
+    if json_out:
+        typer.echo(json.dumps(caps.to_dict(), indent=2))
+        return
+    typer.echo(f"compute_class : {caps.compute_class}")
+    typer.echo(f"gpu_kind      : {caps.gpu_kind}")
+    typer.echo(f"gpu_model     : {caps.gpu_model or '—'}")
+    typer.echo(f"vram_total_mb : {caps.vram_total_mb or '—'}")
+    typer.echo(f"cpu_model     : {caps.cpu_model or '—'}")
+    typer.echo(f"cpu_cores     : {caps.cpu_physical_cores}")
+    typer.echo(f"cpu_features  : {', '.join(caps.cpu_features) or '—'}")
+    typer.echo(f"llama_variant : {caps.llama_variant}")
+    typer.echo(f"force_cpu     : {caps.force_cpu}")
+    if caps.warnings:
+        typer.echo("warnings :")
+        for w in caps.warnings:
+            typer.echo(f"  • {w}")
+    if caps.detection_notes:
+        typer.echo("notes :")
+        for n in caps.detection_notes:
+            typer.echo(f"  • {n}")
 
 
 @app.command()
@@ -88,15 +123,28 @@ async def _run(
     if llama_bin is None:
         typer.echo("[spouet-agent] WARN: llama-server not found — serving in heartbeat-only mode.", err=True)
 
+    # Détection hardware (source de vérité unique). Le calcul de caps est
+    # fait UNE fois ici puis injecté partout — plus de double détection.
+    caps = probe_capabilities()
+    gpu = gpu_info_from_capabilities(caps)
+
     server = LlamaServer(
         bin_path=llama_bin or Path("llama-server"),
         models_dir=models_dir,
         port=llama_port,
+        capabilities=caps,
     )
 
-    # Détection hardware initiale
-    gpu = probe_gpu()
-    typer.echo(f"[spouet-agent {__version__}] GPU={gpu.model} VRAM={gpu.vram_total_mb}MB RAM={gpu.ram_total_mb}MB")
+    typer.echo(
+        f"[spouet-agent {__version__}] "
+        f"compute_class={caps.compute_class} gpu_kind={caps.gpu_kind} "
+        f"llama_variant={caps.llama_variant} "
+        f"GPU={caps.gpu_model or '—'} VRAM={caps.vram_total_mb or '—'}MB "
+        f"CPU={caps.cpu_model or '—'} cores={caps.cpu_physical_cores} "
+        f"RAM={gpu.ram_total_mb}MB"
+    )
+    for w in caps.warnings:
+        typer.echo(f"[spouet-agent] WARN: {w}", err=True)
 
     autoload_filename: str | None = None
     autoload_error: str | None = None
@@ -111,7 +159,8 @@ async def _run(
             autoload_filename = autoload
             if model_path.exists():
                 config = compute_optimal_config(
-                    gpu.model, gpu.vram_total_mb, gpu.ram_total_mb,
+                    caps=caps,
+                    ram_total_mb=gpu.ram_total_mb,
                     model_size_bytes=get_model_size_bytes(model_path),
                 )
                 typer.echo(f"[spouet-agent] autoloading {autoload}…")
@@ -130,7 +179,8 @@ async def _run(
             first = Path(local_models[0].path)
             autoload_filename = first.name
             config = compute_optimal_config(
-                gpu.model, gpu.vram_total_mb, gpu.ram_total_mb,
+                caps=caps,
+                ram_total_mb=gpu.ram_total_mb,
                 model_size_bytes=get_model_size_bytes(first),
             )
             typer.echo(f"[spouet-agent] autoloading first model {first.name}…")
@@ -140,8 +190,15 @@ async def _run(
                 autoload_error = str(e)
                 typer.echo(f"[spouet-agent] autoload failed: {e}", err=True)
 
-    # Initialise l'API de contrôle
-    init_control(server, models_dir, gpu, autoload_filename=autoload_filename, autoload_error=autoload_error)
+    # Initialise l'API de contrôle (capabilities injectées pour /capabilities et reload)
+    init_control(
+        server,
+        models_dir,
+        gpu,
+        capabilities=caps,
+        autoload_filename=autoload_filename,
+        autoload_error=autoload_error,
+    )
 
     # Lance l'API de contrôle, le heartbeat, et la mise à jour automatique en parallèle
     tasks: list = [
@@ -182,6 +239,35 @@ async def _serve_control_api(port: int) -> None:
     await server.serve()
 
 
+def _read_net_counters() -> tuple[int, int] | None:
+    """Lit la somme bytes_rx, bytes_tx sur toutes les interfaces non-loopback.
+
+    Source /proc/net/dev (Linux). Retourne None ailleurs.
+    """
+    try:
+        with open("/proc/net/dev") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    rx = tx = 0
+    for line in lines:
+        if ":" not in line:
+            continue
+        iface, rest = line.split(":", 1)
+        iface = iface.strip()
+        if iface == "lo" or iface.startswith("docker") or iface.startswith("br-"):
+            continue
+        fields = rest.split()
+        if len(fields) < 9:
+            continue
+        try:
+            rx += int(fields[0])
+            tx += int(fields[8])
+        except ValueError:
+            continue
+    return rx, tx
+
+
 async def _heartbeat_loop(
     *,
     backend: str,
@@ -199,12 +285,50 @@ async def _heartbeat_loop(
     headers = {"Authorization": f"Bearer {token}"}
     typer.echo(f"[spouet-agent] heartbeat → {backend}/api/nodes/heartbeat as '{name}'")
 
+    # Capabilities calculées une fois au boot ; on les renvoie à chaque
+    # heartbeat (le backend persiste en JSONB pour l'admin).
+    caps_payload = server._capabilities.to_dict() if server._capabilities is not None else None
+
+    # État pour calculer les deltas réseau et CPU entre 2 heartbeats.
+    last_net = _read_net_counters()
+    last_net_ts = asyncio.get_event_loop().time()
+    try:
+        import psutil  # type: ignore[import-untyped]
+
+        psutil.cpu_percent(interval=None)  # initialise le compteur cumulatif
+        _psutil = psutil
+    except ImportError:
+        _psutil = None
+
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                # Refresh hardware stats
+                # Refresh hardware stats (RAM/VRAM utilisées — les caps sont stables)
                 gpu = probe_gpu()
                 gpu_info_ref[0] = gpu
+
+                # CPU%
+                cpu_pct: float | None = None
+                if _psutil is not None:
+                    try:
+                        cpu_pct = float(_psutil.cpu_percent(interval=None))
+                    except Exception:
+                        cpu_pct = None
+
+                # Net throughput depuis le dernier heartbeat
+                net_rx_kbps: float | None = None
+                net_tx_kbps: float | None = None
+                net_now = _read_net_counters()
+                ts_now = asyncio.get_event_loop().time()
+                if net_now is not None and last_net is not None:
+                    dt = max(0.001, ts_now - last_net_ts)
+                    drx = max(0, net_now[0] - last_net[0])
+                    dtx = max(0, net_now[1] - last_net[1])
+                    # bytes/s → kbps : *8/1000
+                    net_rx_kbps = (drx * 8) / (dt * 1000)
+                    net_tx_kbps = (dtx * 8) / (dt * 1000)
+                last_net = net_now
+                last_net_ts = ts_now
 
                 # Stats llama.cpp
                 stats = await server.get_stats()
@@ -246,6 +370,10 @@ async def _heartbeat_loop(
                     "llama_tokens_generated": stats.tokens_generated,
                     "tags": tags,
                     "models": models_payload,
+                    "capabilities": caps_payload,
+                    "cpu_pct": cpu_pct,
+                    "net_rx_kbps": net_rx_kbps,
+                    "net_tx_kbps": net_tx_kbps,
                 }
                 r = await client.post(
                     f"{backend}/api/nodes/heartbeat",

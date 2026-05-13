@@ -1,11 +1,15 @@
-"""Paramètres llama.cpp-server optimaux selon le matériel détecté."""
+"""Paramètres llama.cpp-server optimaux selon le matériel détecté.
+
+`compute_optimal_config` consomme un `NodeCapabilities` (source unique de
+vérité hardware) et retourne une `LlamaConfig` prête à passer à llama-server.
+"""
 
 from __future__ import annotations
 
-import os
-import platform
 from dataclasses import dataclass
 from pathlib import Path
+
+from spouet_agent.capabilities import NodeCapabilities
 
 
 @dataclass
@@ -21,47 +25,6 @@ class LlamaConfig:
 # Au-delà de 16 threads, llama.cpp sature en synchro inter-threads sur CPU
 # desktop/serveur courant — pas de gain, parfois perte.
 _MAX_CPU_THREADS = 16
-
-
-def _physical_cpu_cores() -> int:
-    """Retourne le nombre de cœurs physiques (pas hyperthreads/SMT).
-
-    On veut éviter l'HT pour llama.cpp : deux threads sur un cœur SMT se
-    battent pour les mêmes unités vectorielles → throughput inférieur à 1
-    thread par cœur physique.
-    """
-    # Linux : /proc/cpuinfo expose "cpu cores" par socket.
-    if platform.system() == "Linux":
-        try:
-            with open("/proc/cpuinfo") as f:
-                text = f.read()
-            cores_per_socket: int | None = None
-            sockets: set[str] = set()
-            for line in text.splitlines():
-                if line.startswith("physical id"):
-                    sockets.add(line.split(":", 1)[1].strip())
-                elif line.startswith("cpu cores") and cores_per_socket is None:
-                    cores_per_socket = int(line.split(":", 1)[1].strip())
-            if cores_per_socket and sockets:
-                return cores_per_socket * len(sockets)
-            if cores_per_socket:
-                return cores_per_socket
-        except Exception:
-            pass
-
-    # Fallback portable via psutil (Windows / fallback Linux).
-    try:
-        import psutil  # type: ignore[import-untyped]
-
-        physical = psutil.cpu_count(logical=False)
-        if physical and physical > 0:
-            return int(physical)
-    except Exception:
-        pass
-
-    # Dernier recours : logique - on suppose HT (÷2) si > 1.
-    logical = os.cpu_count() or 1
-    return max(1, logical // 2) if logical > 1 else logical
 
 
 def _estimate_kv_cache_mb(n_ctx: int, model_size_bytes: int | None) -> int:
@@ -83,25 +46,22 @@ def _estimate_kv_cache_mb(n_ctx: int, model_size_bytes: int | None) -> int:
 
 
 def compute_optimal_config(
-    gpu_model: str | None,
-    vram_total_mb: int | None,
+    caps: NodeCapabilities,
     ram_total_mb: int | None,
     model_size_bytes: int | None = None,
 ) -> LlamaConfig:
     """Calcule les paramètres llama.cpp optimaux selon le hardware disponible.
 
+    La décision GPU vs CPU est entièrement déléguée à `caps.compute_class` —
+    plus de seuil VRAM ad-hoc. Cela évite qu'un iGPU détecté avec > 512 MB
+    de mémoire partagée déclenche par erreur un n_gpu_layers != 0 sur un
+    binaire CPU.
+
     `model_size_bytes` (optionnel) : taille du GGUF à charger, utilisée pour
     ajuster n_ctx en CPU et garantir que le KV cache + modèle tient en RAM.
     """
-    has_gpu = (
-        gpu_model is not None
-        and gpu_model not in ("CPU", "")
-        and vram_total_mb is not None
-        and vram_total_mb > 512
-    )
-
-    if not has_gpu:
-        physical = _physical_cpu_cores()
+    if caps.compute_class == "cpu":
+        physical = caps.cpu_physical_cores
         # Laisse au moins 1 cœur à l'OS, et plafonne au seuil utile pour llama.cpp.
         n_threads = max(1, min(_MAX_CPU_THREADS, physical - 1 if physical > 2 else physical))
 
@@ -147,7 +107,7 @@ def compute_optimal_config(
             n_parallel=1,
         )
 
-    vram = vram_total_mb or 0
+    vram = caps.vram_total_mb or 0
 
     if vram >= 80000:  # H100 80GB, A100 80GB
         return LlamaConfig(n_ctx=131072, n_gpu_layers=-1, n_batch=4096, n_ubatch=4096, n_parallel=8)
@@ -163,37 +123,6 @@ def compute_optimal_config(
         return LlamaConfig(n_ctx=8192, n_gpu_layers=-1, n_batch=256, n_ubatch=256, n_parallel=1)
     else:
         return LlamaConfig(n_ctx=4096, n_gpu_layers=-1, n_batch=128, n_ubatch=128, n_parallel=1)
-
-
-def check_model_fits_ram(
-    model_size_bytes: int,
-    ram_total_mb: int | None,
-    vram_total_mb: int | None,
-    has_gpu: bool,
-) -> str | None:
-    """Retourne un message d'avertissement si le modèle risque de ne pas tenir.
-
-    None = OK (silent). Sinon, une chaîne explicative à logguer/remonter.
-    Conservateur : ne bloque pas, signale uniquement.
-    """
-    model_mb = model_size_bytes // (1024 * 1024)
-    if has_gpu and vram_total_mb is not None:
-        if model_mb > vram_total_mb * 1.05:
-            return (
-                f"modèle ({model_mb} MB) > VRAM disponible ({vram_total_mb} MB) — "
-                "des couches seront offload sur CPU, perfs dégradées"
-            )
-        return None
-    # CPU : on a besoin que le modèle tienne dans la RAM (mmap fonctionne mais
-    # devient catastrophique si > RAM).
-    if ram_total_mb is None:
-        return None
-    if model_mb > ram_total_mb - 2048:
-        return (
-            f"modèle ({model_mb} MB) presque au-delà de la RAM dispo ({ram_total_mb} MB) — "
-            "risque de swap massif, perfs dégradées 10×+"
-        )
-    return None
 
 
 def get_model_size_bytes(model_path: Path) -> int | None:

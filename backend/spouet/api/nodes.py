@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta as _timedelta
+from typing import Any
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import selectinload
 
 from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.logging import get_logger
-from spouet.db.models import Model, Node
+from spouet.db.models import Model, Node, NodeMetric1Min, NodeMetricRaw
 from spouet.nodes.client import DIRECT_AGENT_MARKER
 from spouet.nodes.client import probe as probe_ollama
 from spouet.nodes.router import list_available_models
+from spouet.realtime.hub import node_metrics_channel, publish
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -58,6 +61,13 @@ class HeartbeatRequest(BaseModel):
     llama_tokens_generated: int | None = None
     tags: list[str] = Field(default_factory=list)
     models: list[HeartbeatModel] = Field(default_factory=list)
+    # Capabilities calculées par node-agent.capabilities.probe_capabilities()
+    capabilities: dict | None = None
+    # Métriques système supplémentaires (agents ≥ 0.3.0)
+    cpu_pct: float | None = Field(default=None, ge=0, le=100)
+    net_rx_kbps: float | None = Field(default=None, ge=0)
+    net_tx_kbps: float | None = Field(default=None, ge=0)
+    llama_queue_pending: int | None = Field(default=None, ge=0)
 
 
 class HeartbeatResponse(BaseModel):
@@ -100,6 +110,8 @@ class NodeOut(BaseModel):
     llama_slots_active: int | None
     llama_prompt_tokens_processed: int | None
     llama_tokens_generated: int | None
+    # Capabilities matérielles (issues du heartbeat de spouet-agent ≥ 0.3.0)
+    capabilities: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +152,38 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     node.llama_slots_active = payload.llama_slots_active
     node.llama_prompt_tokens_processed = payload.llama_prompt_tokens_processed
     node.llama_tokens_generated = payload.llama_tokens_generated
+    # Capabilities : envoyées par les agents ≥ 0.3.0. Anciennes versions → None
+    # (rétro-compat : on ne touche pas la valeur précédente si payload absent).
+    if payload.capabilities is not None:
+        node.capabilities = payload.capabilities
 
-    await db.flush()  # garantit node.id
+    await db.flush()  # garantit node.id avant l'insert métrique
+
+    # Persiste une ligne dans la timeseries node_metrics_raw — alimentation
+    # du dashboard historique. La table est partitionnée par jour ; en cas
+    # d'absence de partition pour `now`, le worker create_metrics_partitions
+    # crée les partitions à venir ; en attendant, la partition DEFAULT catche.
+    db.add(
+        NodeMetricRaw(
+            time=now,
+            node_id=node.id,
+            cpu_pct=payload.cpu_pct,
+            ram_used_mb=payload.ram_used_mb,
+            ram_total_mb=payload.ram_total_mb,
+            vram_used_mb=payload.vram_used_mb,
+            vram_total_mb=payload.vram_total_mb,
+            disk_used_mb=payload.disk_used_mb,
+            net_rx_kbps=payload.net_rx_kbps,
+            net_tx_kbps=payload.net_tx_kbps,
+            llama_running=payload.llama_running,
+            llama_model_loaded=payload.llama_model_loaded,
+            llama_tps=payload.llama_tps,
+            llama_slots_active=payload.llama_slots_active,
+            llama_prompt_tokens_total=payload.llama_prompt_tokens_processed,
+            llama_gen_tokens_total=payload.llama_tokens_generated,
+            llama_queue_pending=payload.llama_queue_pending,
+        )
+    )
 
     # Upsert des models : marque ceux présents, supprime ceux absents
     existing = {m.name: m for m in await _models_for_node(db, node.id)}
@@ -179,6 +221,26 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
         node=payload.name,
         models=len(payload.models),
         vram_used=payload.vram_used_mb,
+    )
+    # Push live au dashboard via SSE (best-effort, ne bloque pas l'agent)
+    await publish(
+        node_metrics_channel(node.id),
+        "heartbeat",
+        {
+            "time": now.isoformat(),
+            "cpu_pct": payload.cpu_pct,
+            "ram_used_mb": payload.ram_used_mb,
+            "vram_used_mb": payload.vram_used_mb,
+            "net_rx_kbps": payload.net_rx_kbps,
+            "net_tx_kbps": payload.net_tx_kbps,
+            "llama_running": payload.llama_running,
+            "llama_model_loaded": payload.llama_model_loaded,
+            "llama_tps": payload.llama_tps,
+            "llama_slots_active": payload.llama_slots_active,
+            "llama_prompt_tokens_total": payload.llama_prompt_tokens_processed,
+            "llama_gen_tokens_total": payload.llama_tokens_generated,
+            "llama_queue_pending": payload.llama_queue_pending,
+        },
     )
     return HeartbeatResponse(
         node_id=str(node.id), next_heartbeat_in_s=settings.node_heartbeat_interval_s
@@ -270,12 +332,12 @@ async def create_node(payload: NodeCreate, _: CurrentUser, db: DbSession) -> Nod
 
 @router.get("", response_model=list[NodeOut])
 async def list_nodes(_: CurrentUser, db: DbSession) -> list[NodeOut]:
-    rows = (await db.execute(select(Node))).scalars().all()
-    out: list[NodeOut] = []
-    for n in rows:
-        models = await _models_for_node(db, n.id)
-        out.append(_node_out(n, models))
-    return out
+    # selectinload évite le N+1 : 1 SELECT nodes + 1 SELECT models groupé
+    # au lieu de 1 + N (un SELECT par node pour récupérer ses modèles).
+    rows = (
+        await db.execute(select(Node).options(selectinload(Node.models)))
+    ).scalars().all()
+    return [_node_out(n, list(n.models)) for n in rows]
 
 
 @router.get("/models", response_model=list[dict])  # type: ignore[type-arg]
@@ -440,6 +502,61 @@ async def load_model(
         _raise_agent_unreachable(base, exc)
 
 
+@router.get("/{node_id}/diag")
+async def get_node_diag(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
+    """Agrège capabilities + 200 dernières lignes de log llama-server +
+    last_startup_error + 3 derniers heartbeats. Format copier-coller pour
+    un bug report.
+    """
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+
+    agent_diag: dict[str, Any] = {}
+    if node.agent_port:
+        base = f"http://{node.host}:{node.agent_port}"
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{base}/diag/llama", params={"n": 200})
+                if r.status_code == 200:
+                    agent_diag = r.json()
+        except httpx.HTTPError as e:
+            agent_diag = {"error": f"agent unreachable: {e}"}
+
+    recent_metrics = (
+        await db.execute(
+            select(NodeMetricRaw)
+            .where(NodeMetricRaw.node_id == node_id)
+            .order_by(NodeMetricRaw.time.desc())
+            .limit(3)
+        )
+    ).scalars().all()
+
+    return {
+        "node": {
+            "name": node.name,
+            "host": node.host,
+            "agent_version": node.agent_version,
+            "status": "online" if node.is_online() else "offline",
+            "last_seen": node.last_seen.isoformat() if node.last_seen else None,
+        },
+        "capabilities": node.capabilities,
+        "agent_diag": agent_diag,
+        "recent_heartbeats": [
+            {
+                "time": m.time.isoformat(),
+                "cpu_pct": m.cpu_pct,
+                "ram_used_mb": m.ram_used_mb,
+                "vram_used_mb": m.vram_used_mb,
+                "llama_running": m.llama_running,
+                "llama_model_loaded": m.llama_model_loaded,
+                "llama_tps": m.llama_tps,
+            }
+            for m in recent_metrics
+        ],
+    }
+
+
 @router.delete("/{node_id}/local-models/{filename}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_local_model(
     node_id: UUID, filename: str, _: CurrentUser, db: DbSession
@@ -452,6 +569,110 @@ async def delete_local_model(
                 raise HTTPException(r.status_code, r.text)
     except httpx.ConnectError as exc:
         _raise_agent_unreachable(base, exc)
+
+
+# ---------------------------------------------------------------------------
+# Timeseries — endpoints lecture
+# ---------------------------------------------------------------------------
+
+
+_RANGE_TO_SECONDS = {
+    "1h": 3600,
+    "6h": 6 * 3600,
+    "24h": 24 * 3600,
+    "7d": 7 * 24 * 3600,
+}
+
+
+@router.get("/{node_id}/metrics")
+async def get_node_metrics(
+    node_id: UUID,
+    _: CurrentUser,
+    db: DbSession,
+    range: str = "1h",
+    limit: int = 1000,
+) -> dict:  # type: ignore[type-arg]
+    """Retourne la série temporelle d'un node sur la plage demandée.
+
+    `range` : 1h, 6h, 24h, 7d. Au-delà de 24h, on lit dans node_metrics_1min
+    (déjà downsamplée). Limité à 1000 points par défaut.
+    """
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    seconds = _RANGE_TO_SECONDS.get(range)
+    if seconds is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown range {range!r}")
+
+    cutoff = datetime.now(UTC) - _timedelta(seconds)
+    # raw pour les courtes fenêtres (<= 24h), 1min pour les plus longues
+    model_cls = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
+
+    rows = (
+        await db.execute(
+            select(model_cls)
+            .where(model_cls.node_id == node_id, model_cls.time >= cutoff)
+            .order_by(model_cls.time.asc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return {
+        "node_id": str(node_id),
+        "range": range,
+        "source": "raw" if model_cls is NodeMetricRaw else "1min",
+        "series": [
+            {
+                "time": r.time.isoformat(),
+                "cpu_pct": r.cpu_pct,
+                "ram_used_mb": r.ram_used_mb,
+                "vram_used_mb": r.vram_used_mb,
+                "disk_used_mb": r.disk_used_mb,
+                "net_rx_kbps": r.net_rx_kbps,
+                "net_tx_kbps": r.net_tx_kbps,
+                "llama_tps": r.llama_tps,
+                "llama_slots_active": r.llama_slots_active,
+                "llama_running": r.llama_running,
+                "llama_model_loaded": r.llama_model_loaded,
+                "llama_queue_pending": r.llama_queue_pending,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/metrics/aggregate")
+async def get_cluster_aggregate(
+    _: CurrentUser, db: DbSession, range: str = "24h"
+) -> dict:  # type: ignore[type-arg]
+    """Vue cluster : nodes online/total, somme TPS, total tokens générés."""
+    seconds = _RANGE_TO_SECONDS.get(range)
+    if seconds is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown range {range!r}")
+    cutoff = datetime.now(UTC) - _timedelta(seconds)
+
+    nodes_rows = (await db.execute(select(Node))).scalars().all()
+    online = sum(1 for n in nodes_rows if n.is_online())
+    total_current_tps = sum((n.llama_tps or 0.0) for n in nodes_rows if n.is_online())
+
+    # Total tokens générés sur la fenêtre : max - min de la métrique cumulative.
+    src = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
+    tokens_row = (
+        await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(src.llama_gen_tokens_total) - func.min(src.llama_gen_tokens_total),
+                    0,
+                )
+            ).where(src.time >= cutoff)
+        )
+    ).scalar()
+    return {
+        "range": range,
+        "nodes_online": online,
+        "nodes_total": len(nodes_rows),
+        "total_tps_current": round(total_current_tps, 2),
+        "total_tokens_generated_window": int(tokens_row or 0),
+    }
 
 
 async def _models_for_node(db, node_id: UUID) -> list[Model]:  # type: ignore[no-untyped-def]
@@ -494,4 +715,5 @@ def _node_out(n: Node, models: list[Model]) -> NodeOut:
         llama_slots_active=n.llama_slots_active,
         llama_prompt_tokens_processed=n.llama_prompt_tokens_processed,
         llama_tokens_generated=n.llama_tokens_generated,
+        capabilities=n.capabilities,
     )

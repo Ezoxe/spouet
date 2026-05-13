@@ -55,18 +55,42 @@ def workspace_channel(workspace_id: UUID | str) -> str:
     return f"workspace:{workspace_id}"
 
 
+def node_metrics_channel(node_id: UUID | str) -> str:
+    """Canal heartbeat live d'un node — alimente le mode Live du dashboard."""
+    return f"node:{node_id}:metrics"
+
+
 # ---------------------------------------------------------------------------
 # Publish
 # ---------------------------------------------------------------------------
 
 
-async def publish(channel: str, event: str, data: Any) -> None:
-    """Publie un event sur un canal. `data` doit être JSON-sérialisable."""
+async def publish(channel: str, event: str, data: Any) -> bool:
+    """Publie un event sur un canal. `data` doit être JSON-sérialisable.
+
+    Retry × 3 avec backoff exponentiel (0.1s, 0.2s, 0.4s). Retourne `True`
+    en succès, `False` si Redis reste indisponible (loggué en `error` plutôt
+    qu'un simple `warning` — c'est un signal opérationnel sérieux).
+
+    Le caller peut tester la valeur de retour s'il veut prévenir l'utilisateur
+    (event SSE d'erreur, etc.).
+    """
     payload = json.dumps({"event": event, "data": data}, ensure_ascii=False, default=str)
-    try:
-        await _get_pub().publish(channel, payload)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("hub.publish_failed", channel=channel, error=str(e))
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            await _get_pub().publish(channel, payload)
+            return True
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            await asyncio.sleep(0.1 * (2**attempt))
+    logger.error(
+        "hub.publish_failed_after_retries",
+        channel=channel,
+        event=event,
+        error=str(last_exc),
+    )
+    return False
 
 
 async def publish_many(channels: list[str], event: str, data: Any) -> None:

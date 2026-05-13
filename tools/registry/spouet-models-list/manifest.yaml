@@ -1,0 +1,41 @@
+slug: spouet-models-list
+name: Spouet — Models List
+version: 0.1.0
+description: |
+  Liste les modèles disponibles dans le cluster, avec les nodes qui les
+  exposent. Indique aussi quel modèle est actuellement chargé.
+image: spouet/tool-spouet-models-list:0.1.0
+
+network: bridge
+timeout_s: 15
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  additionalProperties: false
+  properties: {}
+
+output_schema:
+  type: object
+  properties:
+    models:
+      type: array
+      items:
+        type: object
+        properties:
+          name: { type: string }
+          supports_tools: { type: boolean }
+          nodes:
+            type: array
+            items:
+              type: object
+              properties:
+                name: { type: string }
+                loaded: { type: boolean }

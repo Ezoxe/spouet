@@ -1,0 +1,47 @@
+slug: spouet-node-metrics
+name: Spouet — Node Metrics History
+version: 0.1.0
+description: |
+  Récupère l'historique de métriques d'un node sur une plage donnée (1h, 6h,
+  24h, 7j). Retourne aussi des stats agrégées (p50/p95 TPS, max VRAM, etc.).
+image: spouet/tool-spouet-node-metrics:0.1.0
+
+network: bridge
+timeout_s: 15
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  required: [node_name]
+  additionalProperties: false
+  properties:
+    node_name:
+      type: string
+      description: Nom du node (champ `name` retourné par spouet-nodes-status).
+    range:
+      type: string
+      enum: ["1h", "6h", "24h", "7d"]
+      default: "24h"
+
+output_schema:
+  type: object
+  properties:
+    node_name: { type: string }
+    range: { type: string }
+    point_count: { type: integer }
+    stats:
+      type: object
+      properties:
+        tps_avg: { type: ["number", "null"] }
+        tps_max: { type: ["number", "null"] }
+        cpu_pct_avg: { type: ["number", "null"] }
+        ram_used_mb_max: { type: ["integer", "null"] }
+        vram_used_mb_max: { type: ["integer", "null"] }
+    error: { type: string }

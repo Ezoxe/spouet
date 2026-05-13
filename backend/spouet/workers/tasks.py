@@ -199,6 +199,158 @@ async def _run_scheduled_job_async(job_id: str) -> str:
         return run.status
 
 
+# ---------------------------------------------------------------------------
+# Timeseries node_metrics : partition lifecycle + rollup 1-min
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="spouet.workers.tasks.create_metrics_partitions")
+def create_metrics_partitions() -> int:
+    """Crée les partitions journalières de J et J+1 pour les 2 tables timeseries.
+
+    Idempotent (CREATE TABLE IF NOT EXISTS). Tourne toutes les heures pour
+    couvrir le rollover de minuit sans risquer une perte d'écritures.
+    """
+    return asyncio.run(_create_metrics_partitions_async())
+
+
+async def _create_metrics_partitions_async() -> int:
+    from sqlalchemy import text
+
+    today = datetime.now(timezone.utc).date()
+    days = [today, today + timedelta(days=1)]
+    created = 0
+    async with _task_db() as db:
+        for d in days:
+            start = d.isoformat()
+            end = (d + timedelta(days=1)).isoformat()
+            suffix = d.strftime("%Y%m%d")
+            for parent in ("node_metrics_raw", "node_metrics_1min"):
+                pname = f"{parent}_p{suffix}"
+                # CREATE TABLE IF NOT EXISTS pour les partitions n'existe pas en
+                # standard ; on passe par pg_class pour tester avant CREATE.
+                exists = await db.scalar(
+                    text("SELECT to_regclass(:pname)").bindparams(pname=pname)
+                )
+                if exists:
+                    continue
+                await db.execute(
+                    text(
+                        f"CREATE TABLE {pname} PARTITION OF {parent} "
+                        f"FOR VALUES FROM ('{start}') TO ('{end}')"
+                    )
+                )
+                created += 1
+                logger.info("metrics.partition_created", table=pname)
+        await db.commit()
+    return created
+
+
+@celery_app.task(name="spouet.workers.tasks.rollup_metrics_1min")
+def rollup_metrics_1min() -> int:
+    """Agrège la dernière minute de node_metrics_raw vers node_metrics_1min.
+
+    Fenêtre tumbling : [now - 2min, now - 1min). Latence d'1 min pour s'assurer
+    que tous les heartbeats de la minute cible sont arrivés.
+    """
+    return asyncio.run(_rollup_metrics_1min_async())
+
+
+async def _rollup_metrics_1min_async() -> int:
+    from sqlalchemy import text
+
+    # Tronque now à la minute supérieure puis recule de 2 min pour la borne basse.
+    async with _task_db() as db:
+        result = await db.execute(
+            text(
+                """
+                INSERT INTO node_metrics_1min (
+                    time, node_id,
+                    cpu_pct, ram_used_mb, ram_total_mb,
+                    vram_used_mb, vram_total_mb, disk_used_mb,
+                    net_rx_kbps, net_tx_kbps,
+                    llama_running, llama_model_loaded, llama_tps,
+                    llama_slots_active, llama_prompt_tokens_total,
+                    llama_gen_tokens_total, llama_queue_pending
+                )
+                SELECT
+                    date_trunc('minute', time) AS time,
+                    node_id,
+                    AVG(cpu_pct)::real,
+                    MAX(ram_used_mb)::int,
+                    MAX(ram_total_mb)::int,
+                    MAX(vram_used_mb)::int,
+                    MAX(vram_total_mb)::int,
+                    MAX(disk_used_mb)::int,
+                    AVG(net_rx_kbps)::real,
+                    AVG(net_tx_kbps)::real,
+                    bool_or(llama_running),
+                    (array_agg(llama_model_loaded ORDER BY time DESC))[1],
+                    AVG(llama_tps)::real,
+                    MAX(llama_slots_active)::int,
+                    MAX(llama_prompt_tokens_total),
+                    MAX(llama_gen_tokens_total),
+                    MAX(llama_queue_pending)::int
+                FROM node_metrics_raw
+                WHERE time >= date_trunc('minute', now()) - interval '2 minutes'
+                  AND time <  date_trunc('minute', now()) - interval '1 minute'
+                GROUP BY date_trunc('minute', time), node_id
+                ON CONFLICT (node_id, time) DO NOTHING
+                """
+            )
+        )
+        await db.commit()
+    return result.rowcount or 0
+
+
+@celery_app.task(name="spouet.workers.tasks.purge_metrics_partitions")
+def purge_metrics_partitions() -> int:
+    """Drop les partitions de raw plus vieilles que 24h et 1min plus vieilles
+    que SPOUET_METRICS_RETENTION_DAYS jours (default 7)."""
+    return asyncio.run(_purge_metrics_partitions_async())
+
+
+async def _purge_metrics_partitions_async() -> int:
+    from sqlalchemy import text
+
+    retention_days = getattr(settings, "metrics_retention_days", 7)
+    today = datetime.now(timezone.utc).date()
+    raw_keep_from = today - timedelta(days=1)
+    agg_keep_from = today - timedelta(days=retention_days)
+
+    dropped = 0
+    async with _task_db() as db:
+        rows = (
+            await db.execute(
+                text(
+                    """
+                    SELECT inhrelid::regclass::text AS pname,
+                           parent.relname AS parent_name
+                    FROM pg_inherits
+                    JOIN pg_class parent ON parent.oid = inhparent
+                    WHERE parent.relname IN ('node_metrics_raw', 'node_metrics_1min')
+                    """
+                )
+            )
+        ).all()
+        for r in rows:
+            pname = r.pname
+            parent = r.parent_name
+            # Format attendu : <parent>_p20260513
+            try:
+                suffix = pname.rsplit("_p", 1)[1]
+                pdate = datetime.strptime(suffix, "%Y%m%d").date()
+            except (IndexError, ValueError):
+                continue  # _default ou format inattendu — on garde
+            cutoff = raw_keep_from if parent == "node_metrics_raw" else agg_keep_from
+            if pdate < cutoff:
+                await db.execute(text(f"DROP TABLE IF EXISTS {pname}"))
+                dropped += 1
+                logger.info("metrics.partition_dropped", table=pname)
+        await db.commit()
+    return dropped
+
+
 @celery_app.task(name="spouet.workers.tasks.monitor_connectors")
 def monitor_connectors() -> int:
     """Refresh statut + redémarre les connectors `enabled` qui ont crashé."""

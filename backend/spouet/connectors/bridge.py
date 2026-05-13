@@ -17,6 +17,7 @@ import asyncio
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from spouet.core.logging import get_logger
@@ -29,6 +30,35 @@ logger = get_logger(__name__)
 
 DEFAULT_BOT_PERSONA = "Tu es l'assistant Spouet relayé via un connector externe."
 
+# Garde des références fortes sur les tâches détachées pour éviter le GC
+# (`asyncio.create_task` ne suffit pas : sans réf, l'event loop peut nettoyer
+# la tâche avant sa fin et perdre l'exception).
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _spawn_supervised(coro, *, label: str) -> asyncio.Task[Any]:
+    """Lance `coro` en tâche détachée + log toute exception en done_callback.
+
+    Remplace `asyncio.create_task(coro)` qui silenciait les erreurs.
+    """
+    task = asyncio.create_task(coro, name=label)
+    _background_tasks.add(task)
+
+    def _on_done(t: asyncio.Task[Any]) -> None:
+        _background_tasks.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            logger.exception(
+                "bridge.background_task_failed",
+                task=label,
+                error=str(exc),
+            )
+
+    task.add_done_callback(_on_done)
+    return task
+
 
 async def _get_or_create_route(
     db: AsyncSession,
@@ -38,6 +68,12 @@ async def _get_or_create_route(
     external_label: str,
     metadata: dict[str, Any],
 ) -> ConnectorRoute:
+    """Trouve ou crée la route (connector_id, external_id) → conversation.
+
+    Utilise INSERT … ON CONFLICT DO NOTHING pour éviter la race SELECT+INSERT
+    classique : deux messages Discord arrivant simultanément sur le même
+    channel créaient potentiellement deux conversations.
+    """
     route = await db.scalar(
         select(ConnectorRoute).where(
             ConnectorRoute.connector_id == connector.id,
@@ -51,24 +87,56 @@ async def _get_or_create_route(
     persona = (config.get("bot_persona") or DEFAULT_BOT_PERSONA).strip()
     model_pref = config.get("default_model")
 
+    # Connector Discord : on active automatiquement les 5 tools `spouet-*`
+    # pour que l'IA puisse répondre avec des stats nodes, envoyer des embeds, etc.
+    allowed_tools: list[str] = []
+    if connector.slug == "discord-bot":
+        allowed_tools = list(SPOUET_DISCORD_TOOLS)
+
     conv = Conversation(
         user_id=connector.user_id,
         title=f"[{connector.slug}] {external_label}"[:255],
         system_prompt=persona,
         model_pref=model_pref,
+        allowed_tool_slugs=allowed_tools,
     )
     db.add(conv)
     await db.flush()
 
-    route = ConnectorRoute(
-        connector_id=connector.id,
-        external_id=external_id,
-        conversation_id=conv.id,
-        metadata_json=metadata,
+    # INSERT … ON CONFLICT DO NOTHING : si une autre coroutine a déjà créé
+    # la route entre notre SELECT et ce moment, on ne lève pas IntegrityError.
+    stmt = (
+        pg_insert(ConnectorRoute)
+        .values(
+            connector_id=connector.id,
+            external_id=external_id,
+            conversation_id=conv.id,
+            metadata_json=metadata,
+        )
+        .on_conflict_do_nothing(constraint="uq_route_connector_external")
+        .returning(ConnectorRoute.id)
     )
-    db.add(route)
+    result = await db.execute(stmt)
+    inserted_id = result.scalar_one_or_none()
+
+    if inserted_id is None:
+        # Une concurrente a gagné : on lit sa route et on rollback la conv orpheline.
+        await db.delete(conv)
+        await db.commit()
+        existing = await db.scalar(
+            select(ConnectorRoute).where(
+                ConnectorRoute.connector_id == connector.id,
+                ConnectorRoute.external_id == external_id,
+            )
+        )
+        assert existing is not None  # unique constraint nous garantit qu'elle existe
+        return existing
+
     await db.commit()
-    await db.refresh(route)
+    route = await db.scalar(
+        select(ConnectorRoute).where(ConnectorRoute.id == inserted_id)
+    )
+    assert route is not None
     logger.info(
         "connector.route_created",
         connector=connector.slug,
@@ -139,6 +207,15 @@ async def _run_orchestrator(
         )
 
 
+SPOUET_DISCORD_TOOLS = [
+    "spouet-nodes-status",
+    "spouet-node-metrics",
+    "spouet-models-list",
+    "spouet-discord-embed",
+    "spouet-discord-react",
+]
+
+
 async def handle_inbound_event(
     db: AsyncSession,
     connector: Connector,
@@ -148,6 +225,19 @@ async def handle_inbound_event(
 ) -> None:
     """Point d'entrée invoqué par la WS connector pour chaque event reçu."""
     if kind == "ping":
+        return
+
+    if kind == "bot_info":
+        # Le connector se présente : on stocke client_id pour générer l'URL OAuth
+        # d'invitation côté admin.
+        meta = dict(connector.metadata_json or {})
+        if "client_id" in payload:
+            meta["bot_user_id"] = str(payload["client_id"])
+        if "username" in payload:
+            meta["bot_username"] = str(payload["username"])
+        connector.metadata_json = meta
+        await db.commit()
+        logger.info("connector.bot_info", slug=connector.slug, meta=meta)
         return
 
     if kind != "message":
@@ -173,11 +263,12 @@ async def handle_inbound_event(
         metadata=metadata,
     )
 
-    asyncio.create_task(
+    _spawn_supervised(
         _run_orchestrator(
             connector_id=str(connector.id),
             external_id=external_id,
             text=text,
             reply_to=str(reply_to) if reply_to else None,
-        )
+        ),
+        label=f"bridge:{connector.slug}:{external_id}",
     )

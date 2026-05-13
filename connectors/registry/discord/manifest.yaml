@@ -44,5 +44,5 @@ config_schema:
         à tous les messages dans les channels autorisés.
       default: ""
 
-inbound_kinds: [message]
-outbound_kinds: [send_message, typing, react]
+inbound_kinds: [message, bot_info]
+outbound_kinds: [send_message, typing, react, send_embed]

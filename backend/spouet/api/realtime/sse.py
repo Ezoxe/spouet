@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from spouet.api.deps import CurrentUser, DbSession
-from spouet.db.models import Conversation
-from spouet.realtime.hub import conv_channel, subscribe, user_channel
+from spouet.db.models import Conversation, Node
+from spouet.realtime.hub import conv_channel, node_metrics_channel, subscribe, user_channel
 
 router = APIRouter()
 
@@ -40,6 +40,21 @@ async def conv_events(conv_id: UUID, user: CurrentUser, db: DbSession) -> Stream
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
     return StreamingResponse(
         _stream(conv_channel(conv_id)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/nodes/{node_id}/metrics")
+async def node_metrics_stream(
+    node_id: UUID, _: CurrentUser, db: DbSession
+) -> StreamingResponse:
+    """Stream live des heartbeats d'un node (remplace le polling à 3s)."""
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    return StreamingResponse(
+        _stream(node_metrics_channel(node_id)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

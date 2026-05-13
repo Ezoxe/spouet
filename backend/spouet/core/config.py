@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from functools import lru_cache
 
-from pydantic import Field, PostgresDsn, RedisDsn
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Patterns évidents qu'on refuse même s'ils font ≥ 32 chars — éviter qu'un
+# admin mette `changeme___changeme___changeme___` en prod.
+_FORBIDDEN_SECRET_PATTERNS = (
+    "changeme",
+    "secret",
+    "password",
+    "spouet" * 6,  # spouetspouet…
+    "aaaa",
+)
+
+
+def _shannon_entropy(s: str) -> float:
+    """Entropie de Shannon en bits/char. Un mot de passe aléatoire base64 est
+    autour de 5.5–6.0. < 3.5 = chaîne très répétitive."""
+    if not s:
+        return 0.0
+    counts = Counter(s)
+    length = len(s)
+    return -sum((c / length) * math.log2(c / length) for c in counts.values())
 
 
 class Settings(BaseSettings):
@@ -21,6 +44,23 @@ class Settings(BaseSettings):
     secret_key: str = Field(min_length=32)
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("secret_key")
+    @classmethod
+    def _validate_secret_key(cls, v: str) -> str:
+        low = v.lower()
+        for pat in _FORBIDDEN_SECRET_PATTERNS:
+            if pat in low:
+                raise ValueError(
+                    f"SPOUET_SECRET_KEY contient un pattern interdit ({pat!r}). "
+                    "Génère une clé aléatoire : `openssl rand -base64 48`."
+                )
+        if _shannon_entropy(v) < 3.5:
+            raise ValueError(
+                "SPOUET_SECRET_KEY est trop peu aléatoire (entropie faible). "
+                "Génère une clé via `openssl rand -base64 48`."
+            )
+        return v
 
     # Datastores
     database_url: PostgresDsn
@@ -42,6 +82,13 @@ class Settings(BaseSettings):
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10
+
+    # Timeseries : rétention de la table 1-min agrégée (jours). La table raw
+    # est toujours purgée à 24h. Plafond hard à 30j même si configuré plus.
+    metrics_retention_days: int = 7
+
+    # Chemins serveur (utilisés par les wizards de connectors)
+    connectors_registry_dir: str = "/opt/spouet/connectors/registry"
 
     # API
     api_token_bytes: int = 32

@@ -138,3 +138,13 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 - Async-first : SQLAlchemy async, httpx async, FastAPI dependencies async
 - Pas de `print` : utiliser `core.logging.get_logger(__name__)`
 - Token API : header `Authorization: Bearer ...`, hash SHA-256 en DB (jamais en clair)
+
+## Variables d'environnement utiles
+
+- `SPOUET_FORCE_CPU=1` (node-agent) : court-circuite la détection GPU, force `compute_class=cpu`. Filet de sécurité si la détection se trompe sur un dGPU non utilisable.
+- `SPOUET_METRICS_RETENTION_DAYS` (backend, défaut 7) : durée de conservation de `node_metrics_1min`. La table `node_metrics_raw` est toujours purgée à 24h.
+- `SPOUET_CONNECTORS_REGISTRY_DIR` (backend, défaut `/opt/spouet/connectors/registry`) : chemin où le wizard Discord cherche le manifest canonique.
+
+## Capabilities : source unique de vérité hardware
+
+Depuis la v0.3.0 du node-agent, la classification CPU vs CUDA vs ROCm + dGPU vs iGPU est centralisée dans `node-agent/spouet_agent/capabilities.py::probe_capabilities()`. Le résultat est sérialisé dans le heartbeat, persisté en JSONB sur `nodes.capabilities`, et consommé par `compute_optimal_config()` + `LlamaServer._build_cmd` (garde-fou anti-GPU-sur-CPU). Pour debug : `sudo -u spouet uv run --directory /opt/spouet/node-agent spouet-agent detect --json`.

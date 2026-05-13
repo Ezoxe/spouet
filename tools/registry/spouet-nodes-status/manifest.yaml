@@ -1,0 +1,49 @@
+slug: spouet-nodes-status
+name: Spouet — Nodes Status
+version: 0.1.0
+description: |
+  Liste les nodes Spouet (online/offline) avec leurs métriques courantes :
+  modèle CPU/GPU, VRAM/RAM, modèle chargé, tokens/sec instantanés.
+  Source : `GET /api/nodes` sur le backend Spouet.
+image: spouet/tool-spouet-nodes-status:0.1.0
+
+network: bridge
+timeout_s: 15
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    only_online:
+      type: boolean
+      default: false
+      description: Si true, n'inclut que les nodes online.
+
+output_schema:
+  type: object
+  properties:
+    nodes:
+      type: array
+      items:
+        type: object
+        properties:
+          name: { type: string }
+          status: { type: string, enum: [online, offline] }
+          gpu_model: { type: ["string", "null"] }
+          vram_used_mb: { type: ["integer", "null"] }
+          vram_total_mb: { type: ["integer", "null"] }
+          ram_used_mb: { type: ["integer", "null"] }
+          ram_total_mb: { type: ["integer", "null"] }
+          llama_tps: { type: ["number", "null"] }
+          llama_model_loaded: { type: ["string", "null"] }
+          compute_class: { type: ["string", "null"] }
+    online_count: { type: integer }
+    total_count: { type: integer }

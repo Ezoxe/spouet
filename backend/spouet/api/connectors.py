@@ -22,8 +22,11 @@ from spouet.connectors.manifest import (
     load_connector_manifest,
     validate_config,
 )
+from spouet.core.config import settings
 from spouet.core.security import generate_token, hash_token
 from spouet.db.models import Connector, ConnectorRoute
+from spouet.realtime.hub import connector_outbound_channel, publish
+from spouet.secrets import store as secrets_store
 from spouet.tools.manifest import ManifestError
 
 router = APIRouter()
@@ -45,6 +48,9 @@ class ConnectorOut(BaseModel):
     secrets_required: dict[str, str]
     config_schema: dict[str, Any]
     config: dict[str, Any]
+    metadata: dict[str, Any] = {}
+    # URL OAuth d'invitation calculée à la volée si bot_user_id présent.
+    invite_url: str | None = None
 
 
 class ConnectorInstallIn(BaseModel):
@@ -264,6 +270,15 @@ def _load_manifest_from_row(row: Connector) -> ConnectorManifest:
 
 def _to_out(row: Connector) -> ConnectorOut:
     raw = row.manifest_json or {}
+    meta = dict(row.metadata_json or {})
+    invite_url: str | None = None
+    if row.slug == "discord-bot" and meta.get("bot_user_id"):
+        # permissions=274877942848 : View, Send Messages, Read Message History,
+        # Add Reactions, Attach Files, Use External Emojis
+        invite_url = (
+            f"https://discord.com/oauth2/authorize?client_id={meta['bot_user_id']}"
+            "&scope=bot+applications.commands&permissions=274877942848"
+        )
     return ConnectorOut(
         id=str(row.id),
         slug=row.slug,
@@ -280,4 +295,143 @@ def _to_out(row: Connector) -> ConnectorOut:
         secrets_required=dict(raw.get("secrets") or {}),
         config_schema=raw.get("config_schema") or {"type": "object"},
         config=row.config_json or {},
+        metadata=meta,
+        invite_url=invite_url,
     )
+
+
+# ---------------------------------------------------------------------------
+# Wizard Discord (1-clic) + outbound bridge pour les tools
+# ---------------------------------------------------------------------------
+
+
+class DiscordQuickInstall(BaseModel):
+    token: str = Field(min_length=20, description="Token bot Discord")
+    bot_persona: str | None = None
+    default_model: str | None = None
+    allowed_channels: list[str] = Field(default_factory=list)
+    respond_dm: bool = True
+    trigger_prefix: str = ""
+
+
+@router.post("/quick-install/discord", response_model=ConnectorOut)
+async def quick_install_discord(
+    payload: DiscordQuickInstall, user: CurrentUser, db: DbSession
+) -> ConnectorOut:
+    """Installation en 1 clic : crée le secret, charge le manifest serveur,
+    upsert le connector et le démarre.
+
+    Retourne le ConnectorOut avec invite_url qui se remplit dès que le bot
+    répond au `on_ready` (event WS `bot_info`).
+    """
+    manifest_path = Path(settings.connectors_registry_dir) / "discord"
+    try:
+        manifest = load_connector_manifest(manifest_path)
+    except ManifestError as e:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"manifest Discord introuvable côté serveur : {e}",
+        ) from e
+
+    # 1) Auto-création du secret connector:discord-bot/token
+    await secrets_store.upsert(
+        db,
+        scope="connector:discord-bot",
+        key="token",
+        value=payload.token,
+        description="Discord bot token (quick-install wizard)",
+    )
+
+    # 2) Config validée contre le config_schema du manifest
+    config: dict[str, Any] = {
+        "bot_persona": payload.bot_persona
+        or "Tu es l'assistant Spouet. Tu réponds via Discord, en français, de manière concise.",
+        "respond_dm": payload.respond_dm,
+        "allowed_channels": payload.allowed_channels,
+        "trigger_prefix": payload.trigger_prefix,
+    }
+    if payload.default_model:
+        config["default_model"] = payload.default_model
+    errs = validate_config(manifest, config)
+    if errs:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, {"config_errors": errs}
+        )
+
+    # 3) Upsert connector row
+    raw_token = generate_token()
+    existing = await db.scalar(select(Connector).where(Connector.slug == manifest.slug))
+    if existing is None:
+        row = Connector(
+            user_id=user.id,
+            slug=manifest.slug,
+            name=manifest.name,
+            version=manifest.version,
+            description=manifest.description,
+            image=manifest.image,
+            manifest_json=manifest.raw,
+            config_json=config,
+            auth_token_hash=hash_token(raw_token),
+            enabled=True,
+        )
+        db.add(row)
+    else:
+        existing.name = manifest.name
+        existing.version = manifest.version
+        existing.description = manifest.description
+        existing.image = manifest.image
+        existing.manifest_json = manifest.raw
+        existing.config_json = config
+        existing.auth_token_hash = hash_token(raw_token)
+        existing.enabled = True
+        row = existing
+    await db.commit()
+    await db.refresh(row)
+
+    # 4) Démarre le container — le bot émettra `bot_info` après `on_ready`,
+    # ce qui peuplera metadata.bot_user_id et donc l'invite_url.
+    await manager.start(db, row, raw_token=raw_token)
+    await db.refresh(row)
+    return _to_out(row)
+
+
+class OutboundIn(BaseModel):
+    kind: str = Field(min_length=1, description="send_message, send_embed, react, typing…")
+    external_id: str = Field(min_length=1)
+    content: str | None = None
+    content_json: dict[str, Any] | None = None
+    reply_to: str | None = None
+    message_id: str | None = None
+    emoji: str | None = None
+
+
+@router.post("/{slug}/outbound", status_code=status.HTTP_202_ACCEPTED)
+async def push_outbound(
+    slug: str, payload: OutboundIn, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Publie un event outbound vers le container du connector.
+
+    Utilisé par les tools `spouet-discord-*` pour envoyer des messages/embeds
+    depuis une conversation Spouet vers Discord (ou tout autre connector).
+    """
+    row = await db.scalar(select(Connector).where(Connector.slug == slug))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"connector {slug!r} not found")
+    if row.status != "running":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"connector {slug!r} not running (status={row.status})",
+        )
+    body: dict[str, Any] = {"kind": payload.kind, "external_id": payload.external_id}
+    if payload.content is not None:
+        body["content"] = payload.content
+    if payload.content_json is not None:
+        body["content_json"] = payload.content_json
+    if payload.reply_to is not None:
+        body["reply_to"] = payload.reply_to
+    if payload.message_id is not None:
+        body["message_id"] = payload.message_id
+    if payload.emoji is not None:
+        body["emoji"] = payload.emoji
+    ok = await publish(connector_outbound_channel(row.id), payload.kind, body)
+    return {"queued": ok, "connector_id": str(row.id)}

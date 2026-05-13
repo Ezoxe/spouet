@@ -92,6 +92,8 @@ class Node(Base, TimestampMixin):
     llama_slots_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llama_prompt_tokens_processed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     llama_tokens_generated: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NodeCapabilities sérialisé (compute_class, gpu_kind, llama_variant, warnings…)
+    capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     models: Mapped[list[Model]] = relationship(
         back_populates="node", cascade="all, delete-orphan"
@@ -209,6 +211,10 @@ class Message(Base):
     tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Time-to-first-token : délai entre l'envoi du prompt et le premier chunk
+    # de contenu reçu. Mesure la latence "perçue" par l'utilisateur, distinct
+    # de `latency_ms` qui mesure la durée totale du stream.
+    ttft_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finish_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False, index=True
@@ -419,6 +425,9 @@ class Connector(Base, TimestampMixin):
     auth_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Metadata calculées dynamiquement (bot_user_id Discord, invite_url, etc.).
+    # Différent de config_json qui contient la config user (persona, channels…).
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     routes: Mapped[list[ConnectorRoute]] = relationship(
         back_populates="connector", cascade="all, delete-orphan"
@@ -467,3 +476,70 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False, index=True
     )
+
+
+# ---------------------------------------------------------------------------
+# Timeseries de métriques nodes (tables partitionnées par jour, BRIN sur time)
+# ---------------------------------------------------------------------------
+
+
+class NodeMetricRaw(Base):
+    """Snapshot brute par heartbeat (~10s). Rétention 24h (purge worker)."""
+
+    __tablename__ = "node_metrics_raw"
+
+    time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("nodes.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    cpu_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    net_rx_kbps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_tx_kbps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llama_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    llama_model_loaded: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llama_tps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llama_slots_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_prompt_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    llama_gen_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    llama_queue_pending: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class NodeMetric1Min(Base):
+    """Agrégat tumbling 1-minute. Rétention 7j (configurable)."""
+
+    __tablename__ = "node_metrics_1min"
+
+    time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    node_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("nodes.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    cpu_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vram_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vram_total_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disk_used_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    net_rx_kbps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_tx_kbps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llama_running: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    llama_model_loaded: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llama_tps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llama_slots_active: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llama_prompt_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    llama_gen_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    llama_queue_pending: Mapped[int | None] = mapped_column(Integer, nullable=True)

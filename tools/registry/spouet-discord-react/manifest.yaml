@@ -1,0 +1,32 @@
+slug: spouet-discord-react
+name: Spouet — Discord React
+version: 0.1.0
+description: |
+  Pose une réaction emoji sur un message Discord existant.
+image: spouet/tool-spouet-discord-react:0.1.0
+
+network: bridge
+timeout_s: 10
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  required: [external_id, message_id, emoji]
+  additionalProperties: false
+  properties:
+    external_id: { type: string, description: "channel:<id> ou dm:<id>" }
+    message_id: { type: string }
+    emoji: { type: string, description: "Emoji unicode ou :name:" }
+
+output_schema:
+  type: object
+  properties:
+    queued: { type: boolean }
+    error: { type: string }
