@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -88,6 +89,9 @@ class MessageOut(BaseModel):
     tokens_in: int | None
     tokens_out: int | None
     latency_ms: int | None
+    ttft_ms: int | None = None
+    finish_reason: str | None = None
+    content_json: dict[str, Any] | None = None
     created_at: datetime
 
 
@@ -117,6 +121,9 @@ async def list_messages(conv_id: UUID, user: CurrentUser, db: DbSession) -> list
             tokens_in=m.tokens_in,
             tokens_out=m.tokens_out,
             latency_ms=m.latency_ms,
+            ttft_ms=m.ttft_ms,
+            finish_reason=m.finish_reason,
+            content_json=m.content_json,
             created_at=m.created_at,
         )
         for m in rows

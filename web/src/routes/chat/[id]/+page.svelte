@@ -116,7 +116,9 @@
                 } else if (ev.event === 'token') {
                     const d = ev.data as { text: string };
                     assistant.content += d.text;
-                    voiceBus.token(d.text);
+                    // TTS uniquement quand le mode vocal est ouvert — sinon
+                    // l'assistant ne doit JAMAIS parler de lui-même.
+                    if (voiceOpen) voiceBus.token(d.text);
                     messages = [...messages.slice(0, -1), { ...assistant }];
                     scrollBottom();
                 } else if (ev.event === 'approval_required') {
@@ -130,7 +132,14 @@
                     assistant.tokens_out = d.tokens_out;
                     assistant.latency_ms = d.latency_ms;
                     messages = [...messages.slice(0, -1), { ...assistant }];
-                    voiceBus.done();
+                    if (voiceOpen) voiceBus.done();
+                    // Recharge depuis le serveur pour récupérer ttft/finish_reason
+                    if (convId) {
+                        const fresh = await conversations.messages(convId);
+                        if (fresh.length > 0) {
+                            messages = fresh;
+                        }
+                    }
                 } else if (ev.event === 'error') {
                     const d = ev.data as { message: string };
                     assistant.content += `\n\n⚠️ ${d.message}`;

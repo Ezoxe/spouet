@@ -1,8 +1,9 @@
 <script lang="ts">
     import { fly } from 'svelte/transition';
     import { quintOut } from 'svelte/easing';
-    import { User, Bot, Wrench, Cog } from 'lucide-svelte';
+    import { User, Bot, Wrench, Cog, Info } from 'lucide-svelte';
     import type { MessageOut } from '$lib/api';
+    import MessageDetails from './MessageDetails.svelte';
 
     interface Props {
         message:
@@ -18,6 +19,22 @@
         streaming?: boolean;
     }
     let { message, streaming = false }: Props = $props();
+
+    let detailsOpen = $state(false);
+
+    // L'icône Info n'a de sens que si on a au moins quelques métriques
+    // serveur (id + au moins un compteur de tokens ou un timing).
+    const canShowDetails = $derived.by(() => {
+        if (!('id' in message) || !message.id) return false;
+        const m = message as MessageOut;
+        return (
+            m.tokens_in != null ||
+            m.tokens_out != null ||
+            m.latency_ms != null ||
+            m.ttft_ms != null ||
+            m.finish_reason != null
+        );
+    });
 
     const meta = $derived.by(() => {
         switch (message.role) {
@@ -72,6 +89,17 @@
         {#if 'tokens_out' in message && message.tokens_out != null}
             <span class="text-neutral-600">· {message.tokens_out} tok</span>
         {/if}
+        {#if canShowDetails}
+            <button
+                type="button"
+                onclick={() => (detailsOpen = true)}
+                class="ml-0.5 rounded p-0.5 text-neutral-600 transition hover:bg-neutral-800 hover:text-neutral-300"
+                title="Détails complets"
+                aria-label="Afficher les détails du message"
+            >
+                <Info size={11} />
+            </button>
+        {/if}
     </div>
     <div
         class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
@@ -81,3 +109,11 @@
         {message.content || (streaming ? '' : '…')}
     </div>
 </div>
+
+{#if canShowDetails}
+    <MessageDetails
+        message={message as MessageOut}
+        bind:open={detailsOpen}
+        onclose={() => (detailsOpen = false)}
+    />
+{/if}

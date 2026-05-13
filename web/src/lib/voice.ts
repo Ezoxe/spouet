@@ -91,14 +91,75 @@ export function startStt(opts: SttOptions = {}): SpeechRecognitionLike | null {
 
 let currentVoice: SpeechSynthesisVoice | null = null;
 
+/**
+ * Sélectionne la meilleure voix disponible pour la langue demandée.
+ *
+ * Score : prefère les voix natural/neural/online, pénalise les voix
+ * système Windows "Hortense/Paul" qui sonnent robotiques. À langue
+ * équivalente, on retient la mieux notée.
+ */
 function pickVoice(lang: string): SpeechSynthesisVoice | null {
     if (!isTtsSupported()) return null;
     const all = window.speechSynthesis.getVoices();
     if (!all.length) return null;
-    const exact = all.find((v) => v.lang === lang);
-    if (exact) return exact;
-    const family = all.find((v) => v.lang.startsWith(lang.split('-')[0]));
-    return family ?? all[0] ?? null;
+
+    const baseLang = lang.split('-')[0].toLowerCase();
+
+    // Voix manuellement préférée par l'utilisateur (localStorage)
+    if (typeof localStorage !== 'undefined') {
+        const wanted = localStorage.getItem('spouet:tts_voice');
+        if (wanted) {
+            const v = all.find((v) => v.voiceURI === wanted || v.name === wanted);
+            if (v) return v;
+        }
+    }
+
+    function score(v: SpeechSynthesisVoice): number {
+        const name = v.name.toLowerCase();
+        const langOk =
+            v.lang.toLowerCase() === lang.toLowerCase()
+                ? 100
+                : v.lang.toLowerCase().startsWith(baseLang)
+                  ? 50
+                  : 0;
+        if (langOk === 0) return -1;
+
+        let bonus = 0;
+        // Préférer les voix neuronales modernes
+        if (/natural|neural|premium|enhanced|online|wavenet/.test(name)) bonus += 40;
+        // Google online voices (Chrome) — très naturelles
+        if (name.startsWith('google')) bonus += 35;
+        // Microsoft "Online (Natural)" voices
+        if (/microsoft .* online/.test(name)) bonus += 30;
+        // Microsoft Denise (FR-FR) est plus fluide que Hortense/Paul
+        if (name.includes('denise')) bonus += 15;
+        if (name.includes('eloise')) bonus += 15;
+        // Pénalise voix système basiques
+        if (/hortense|paul desktop|microsoft (paul|julie|hortense)$/.test(name)) bonus -= 20;
+        // Préférer les voix non-locales (online = synthèse cloud, meilleure qualité)
+        if (!v.localService) bonus += 10;
+        // Match exact langue + région
+        if (v.lang.toLowerCase() === lang.toLowerCase()) bonus += 5;
+        return langOk + bonus;
+    }
+
+    return [...all].sort((a, b) => score(b) - score(a))[0] ?? null;
+}
+
+/** Retourne la liste des voix disponibles classées par qualité estimée. */
+export function listVoices(lang = 'fr-FR'): SpeechSynthesisVoice[] {
+    if (!isTtsSupported()) return [];
+    const all = window.speechSynthesis.getVoices();
+    const baseLang = lang.split('-')[0].toLowerCase();
+    return all.filter((v) => v.lang.toLowerCase().startsWith(baseLang));
+}
+
+/** Mémorise la voix choisie par l'utilisateur. */
+export function setPreferredVoice(voiceURI: string | null): void {
+    if (typeof localStorage === 'undefined') return;
+    if (voiceURI) localStorage.setItem('spouet:tts_voice', voiceURI);
+    else localStorage.removeItem('spouet:tts_voice');
+    currentVoice = null;
 }
 
 /**
@@ -128,8 +189,10 @@ export function createTts(lang = 'fr-FR'): TtsHandle {
         const u = new SpeechSynthesisUtterance(text);
         u.lang = curLang;
         if (currentVoice) u.voice = currentVoice;
-        u.rate = 1.0;
+        // 1.05 = légèrement plus naturel, 0.95 sonne un peu monotone
+        u.rate = 1.05;
         u.pitch = 1.0;
+        u.volume = 1.0;
         window.speechSynthesis.speak(u);
     }
 

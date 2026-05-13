@@ -266,6 +266,9 @@ export interface MessageOut {
     tokens_in: number | null;
     tokens_out: number | null;
     latency_ms: number | null;
+    ttft_ms?: number | null;
+    finish_reason?: string | null;
+    content_json?: Record<string, unknown> | null;
     created_at: string;
 }
 

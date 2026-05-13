@@ -173,6 +173,7 @@ async def stream_assistant_reply(
         tokens_out = 0
         tool_calls_out: list[dict[str, Any]] = []
         started = time.monotonic()
+        first_token_at: float | None = None
         try:
             async for chunk in chat_stream(
                 choice.base_url,
@@ -183,6 +184,9 @@ async def stream_assistant_reply(
                 msg = chunk.get("message") or {}
                 token_text = msg.get("content") or ""
                 if token_text:
+                    if first_token_at is None:
+                        first_token_at = time.monotonic()
+                        assistant_msg.ttft_ms = int((first_token_at - started) * 1000)
                     accumulated += token_text
                     tokens_out += 1
                     assistant_msg.content = accumulated
