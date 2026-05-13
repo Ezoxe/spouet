@@ -14,8 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from spouet.api.deps import CurrentUser, DbSession
+from spouet.core.logging import get_logger
 from spouet.db.models import Conversation, Message
 from spouet.orchestrator.chat_loop import stream_assistant_reply
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -139,16 +142,39 @@ async def send_message(
     if conv is None or conv.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
 
+    def _format_event(event: str, data: Any) -> bytes:
+        payload = json.dumps(data, ensure_ascii=False, default=str)
+        lines = "\n".join(f"data: {ln}" for ln in payload.split("\n"))
+        return f"event: {event}\n{lines}\n\n".encode()
+
     async def gen() -> AsyncIterator[bytes]:
-        async for ev in stream_assistant_reply(
-            db,
-            conversation=conv,
-            user_text=payload.text,
-            model_override=payload.model,
-        ):
-            data = json.dumps(ev["data"], ensure_ascii=False, default=str)
-            lines = "\n".join(f"data: {ln}" for ln in data.split("\n"))
-            yield f"event: {ev['event']}\n{lines}\n\n".encode()
+        # On enveloppe la boucle complète dans un try/except :
+        #
+        # 1. Sans ça, toute exception levée par stream_assistant_reply (ou
+        #    par json.dumps sur un payload incompatible) fait avorter le
+        #    StreamingResponse en plein chunk, ce qui produit côté client
+        #    un `ERR_INCOMPLETE_CHUNKED_ENCODING` opaque sans message.
+        # 2. On émet un `event: error` propre avant de clore le flux, et
+        #    on log l'exception pour pouvoir l'investiguer.
+        try:
+            async for ev in stream_assistant_reply(
+                db,
+                conversation=conv,
+                user_text=payload.text,
+                model_override=payload.model,
+            ):
+                yield _format_event(ev["event"], ev["data"])
+        except Exception as e:  # noqa: BLE001
+            logger.exception(
+                "chat.stream_failed",
+                conv_id=str(conv_id),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            yield _format_event(
+                "error",
+                {"message": f"{type(e).__name__}: {e}"},
+            )
 
     return StreamingResponse(
         gen(),
