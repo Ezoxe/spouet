@@ -59,7 +59,7 @@ async def create_conversation(
         user_id=user.id,
         title=payload.title,
         system_prompt=payload.system_prompt,
-        model_pref=payload.model_pref,
+        model_pref=payload.model_pref or user.default_model,
     )
     db.add(conv)
     await db.commit()

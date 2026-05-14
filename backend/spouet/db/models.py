@@ -57,6 +57,7 @@ class User(Base, TimestampMixin):
     api_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     token_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    default_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 # ---------------------------------------------------------------------------

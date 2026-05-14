@@ -246,6 +246,7 @@ export interface ModelAgg {
 export interface MeOut {
     id: string;
     email: string;
+    default_model?: string | null;
 }
 
 export interface ConversationOut {
@@ -331,6 +332,8 @@ export interface MemoryOut {
 
 export const auth = {
     me: () => api<MeOut>('/auth/me'),
+    patchMe: (json: { default_model?: string | null }) =>
+        api<MeOut>('/auth/me', { method: 'PATCH', json }),
     tokenInfo: () => api<{ created_at: string | null; expires_at: string | null }>('/auth/token-info'),
     rotate: () => api<{ token: string }>('/auth/rotate', { method: 'POST' })
 };

@@ -332,6 +332,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 6b. Installation des tools custom (build images + insert en DB)
+# ---------------------------------------------------------------------------
+TOOLS_FLAG_FILE="$SPOUET_INSTALL_DIR/deploy/.tools-installed"
+if [[ ! -f "$TOOLS_FLAG_FILE" ]] && [[ -x "$SPOUET_INSTALL_DIR/tools/install-all.sh" ]]; then
+    log "Installation des tools custom (registry)…"
+    set +e
+    (cd "$SPOUET_INSTALL_DIR" && bash tools/install-all.sh) 2>&1 | tee /tmp/spouet-tools-install.log
+    rc=${PIPESTATUS[0]}
+    set -e
+    if [[ $rc -eq 0 ]]; then
+        touch "$TOOLS_FLAG_FILE"
+        log "Tools installés. (Re-run : bash $SPOUET_INSTALL_DIR/tools/install-all.sh)"
+    else
+        warn "Installation des tools incomplète — voir /tmp/spouet-tools-install.log"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 7. systemd
 # ---------------------------------------------------------------------------
 if [[ "$SPOUET_SKIP_SYSTEMD" != "1" ]]; then

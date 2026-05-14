@@ -17,6 +17,11 @@ router = APIRouter()
 class MeResponse(BaseModel):
     id: str
     email: str
+    default_model: str | None = None
+
+
+class MePatch(BaseModel):
+    default_model: str | None = None
 
 
 class RotateTokenResponse(BaseModel):
@@ -30,7 +35,16 @@ class TokenInfoResponse(BaseModel):
 
 @router.get("/me", response_model=MeResponse)
 async def me(user: CurrentUser) -> MeResponse:
-    return MeResponse(id=str(user.id), email=user.email)
+    return MeResponse(id=str(user.id), email=user.email, default_model=user.default_model)
+
+
+@router.patch("/me", response_model=MeResponse)
+async def patch_me(payload: MePatch, user: CurrentUser, db: DbSession) -> MeResponse:
+    if payload.default_model is not None:
+        # chaîne vide = reset
+        user.default_model = payload.default_model or None
+    await db.commit()
+    return MeResponse(id=str(user.id), email=user.email, default_model=user.default_model)
 
 
 @router.get("/token-info", response_model=TokenInfoResponse)

@@ -6,6 +6,7 @@
         conversations,
         nodes as nodesApi,
         tools as toolsApi,
+        auth,
         uuid,
         type ConversationOut,
         type MessageOut,
@@ -44,8 +45,13 @@
         messages = await conversations.messages(convId);
         models = await nodesApi.models().catch(() => []);
         let defaultModel = '';
-        if (typeof localStorage !== 'undefined') {
-            defaultModel = localStorage.getItem('spouet:default_model') || '';
+        try {
+            const me = await auth.me();
+            defaultModel = me.default_model ?? '';
+        } catch {
+            if (typeof localStorage !== 'undefined') {
+                defaultModel = localStorage.getItem('spouet:default_model') || '';
+            }
         }
         selectedModel = conv.model_pref ?? defaultModel ?? models[0]?.name ?? '';
         // If default model wasn't available in the nodes list, fallback to first available

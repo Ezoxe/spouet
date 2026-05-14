@@ -27,6 +27,7 @@
     async function refresh() {
         try {
             me = await auth.me();
+            defaultModel = me.default_model ?? '';
             const info = await auth.tokenInfo();
             tokenExpiresAt = info.expires_at;
         } catch (e) {
@@ -74,16 +75,21 @@
         } catch (e) {
             console.error('Failed to load models', e);
         }
-
-        if (typeof localStorage !== 'undefined') {
-            defaultModel = localStorage.getItem('spouet:default_model') || '';
-        }
     }
 
-    function saveDefaultModel() {
-        if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('spouet:default_model', defaultModel);
+    async function saveDefaultModel() {
+        try {
+            const updated = await auth.patchMe({ default_model: defaultModel || null });
+            me = updated;
+            // miroir localStorage pour le cas où le backend serait offline au prochain load
+            if (typeof localStorage !== 'undefined') {
+                if (defaultModel) localStorage.setItem('spouet:default_model', defaultModel);
+                else localStorage.removeItem('spouet:default_model');
+            }
             toast.success('Modèle par défaut enregistré');
+        } catch (e) {
+            console.error(e);
+            toast.error('Impossible d\'enregistrer le modèle par défaut');
         }
     }
 

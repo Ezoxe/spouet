@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
-    import { conversations, type ConversationOut } from '$lib/api';
+    import { conversations, auth, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import { Plus, MessageSquare, Trash2 } from 'lucide-svelte';
@@ -13,10 +13,15 @@
     }
 
     async function newConv() {
-        const defaultModel = typeof localStorage !== 'undefined' ? localStorage.getItem('spouet:default_model') : '';
+        // Le backend remplit model_pref = user.default_model si on n'envoie rien.
+        // localStorage sert juste de fallback offline / pré-migration.
         const payload: { title: string; model_pref?: string } = { title: 'Nouvelle conversation' };
-        if (defaultModel) {
-            payload.model_pref = defaultModel;
+        try {
+            const me = await auth.me();
+            if (me.default_model) payload.model_pref = me.default_model;
+        } catch {
+            const lm = typeof localStorage !== 'undefined' ? localStorage.getItem('spouet:default_model') : '';
+            if (lm) payload.model_pref = lm;
         }
         const c = await conversations.create(payload);
         goto(`/chat/${c.id}`);
