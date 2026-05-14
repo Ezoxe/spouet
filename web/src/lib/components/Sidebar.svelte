@@ -19,7 +19,8 @@
         Menu,
         LayoutPanelLeft,
         Search,
-        X
+        X,
+        BookOpen
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -36,6 +37,7 @@
         { href: '/workspaces', label: 'Workspaces', icon: LayoutPanelLeft },
         { href: '/nodes', label: 'Nodes', icon: Server },
         { href: '/tools', label: 'Tools', icon: Wrench },
+        { href: '/templates', label: 'Templates', icon: BookOpen },
         { href: '/connectors', label: 'Connectors', icon: Plug },
         { href: '/jobs', label: 'Tâches', icon: Clock },
         { href: '/docs', label: 'Documents', icon: FileText },

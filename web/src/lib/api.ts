@@ -614,6 +614,28 @@ export interface WorkspaceOut {
     updated_at: string;
 }
 
+// ----------------------------------------------------------------------------
+// Prompt templates
+// ----------------------------------------------------------------------------
+
+export interface PromptTemplateOut {
+    id: string;
+    name: string;
+    content: string;
+    shortcut: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export const promptTemplates = {
+    list: () => api<PromptTemplateOut[]>('/prompt-templates'),
+    create: (json: { name: string; content: string; shortcut?: string | null }) =>
+        api<PromptTemplateOut>('/prompt-templates', { method: 'POST', json }),
+    patch: (id: string, json: { name?: string; content?: string; shortcut?: string | null }) =>
+        api<PromptTemplateOut>(`/prompt-templates/${id}`, { method: 'PATCH', json }),
+    delete: (id: string) => api<void>(`/prompt-templates/${id}`, { method: 'DELETE' })
+};
+
 export const workspaces = {
     list: () => api<WorkspaceOut[]>('/workspaces'),
     get: (id: string) => api<WorkspaceOut>(`/workspaces/${id}`),

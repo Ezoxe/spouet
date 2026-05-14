@@ -274,6 +274,20 @@ class ToolExecution(Base):
 # ---------------------------------------------------------------------------
 
 
+class PromptTemplate(Base, TimestampMixin):
+    """Modèle de prompt réutilisable, scopé par user."""
+
+    __tablename__ = "prompt_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    shortcut: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 class ScheduledJob(Base, TimestampMixin):
     __tablename__ = "scheduled_jobs"
 

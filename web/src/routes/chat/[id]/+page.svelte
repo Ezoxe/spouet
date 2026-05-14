@@ -30,6 +30,7 @@
     let selectedModel = $state('');
     let selectedTools: string[] = $state([]);
     let streaming = $state(false);
+    let focusComposer: (() => void) | null = $state(null);
     let nodeBadge: string | null = $state(null);
     let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
     let approval: { request_id: string; tool: string } | null = $state(null);
@@ -232,6 +233,27 @@
 
     onMount(() => {
         load();
+        const handler = (e: KeyboardEvent) => {
+            // Ctrl+/ : focus composer
+            if (e.ctrlKey && e.key === '/') {
+                e.preventDefault();
+                focusComposer?.();
+                return;
+            }
+            // Ctrl+E : export markdown
+            if (e.ctrlKey && (e.key === 'e' || e.key === 'E')) {
+                e.preventDefault();
+                downloadExport();
+                return;
+            }
+            // Ctrl+Shift+R : régénérer la dernière réponse
+            if (e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
+                e.preventDefault();
+                regenerate();
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
     });
 
     $effect(() => {
@@ -239,6 +261,30 @@
         convId;
         untrack(() => load());
     });
+
+    // Stats agrégées pour le footer
+    const stats = $derived.by(() => {
+        let tokensOut = 0;
+        let tokensIn = 0;
+        let totalMs = 0;
+        let count = 0;
+        for (const m of messages) {
+            if (m.role === 'assistant') {
+                if (m.tokens_out) tokensOut += m.tokens_out;
+                if (m.tokens_in) tokensIn += m.tokens_in;
+                if (m.latency_ms) totalMs += m.latency_ms;
+            }
+            if (m.role === 'user' || m.role === 'assistant') count++;
+        }
+        return { count, tokensOut, tokensIn, totalMs };
+    });
+    function fmtSec(ms: number): string {
+        if (ms < 1000) return `${ms} ms`;
+        if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+        const m = Math.floor(ms / 60_000);
+        const s = Math.floor((ms % 60_000) / 1000);
+        return `${m}m${s.toString().padStart(2, '0')}`;
+    }
 </script>
 
 <header
@@ -412,7 +458,20 @@
     </div>
 {/if}
 
+{#if stats.count > 0}
+    <div class="border-t border-[var(--color-border-subtle)] bg-[color-mix(in_oklch,var(--color-bg-0)_85%,transparent)] px-4 py-1.5 text-[10px] text-neutral-500 sm:px-8">
+        <div class="mx-auto flex max-w-3xl items-center justify-between">
+            <span>{stats.count} message{stats.count > 1 ? 's' : ''}</span>
+            <span>
+                {#if stats.tokensIn}{stats.tokensIn} tok in · {/if}{stats.tokensOut} tok out
+                {#if stats.totalMs}· {fmtSec(stats.totalMs)} de génération{/if}
+            </span>
+        </div>
+    </div>
+{/if}
+
 <Composer
+    onready={(api) => (focusComposer = api.focus)}
     disabled={streaming || !selectedModel}
     placeholder={!selectedModel
         ? 'Aucun modèle disponible — voir bandeau ci-dessus.'
