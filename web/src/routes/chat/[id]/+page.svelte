@@ -16,9 +16,11 @@
     import Composer from '$lib/components/Composer.svelte';
     import EmptyState from '$lib/components/EmptyState.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
+    import ToolPicker from '$lib/components/ToolPicker.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2 } from 'lucide-svelte';
+    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw } from 'lucide-svelte';
+    import type { SseEvent } from '$lib/api';
 
     const convId = $derived($page.params.id);
 
@@ -26,6 +28,7 @@
     let messages: MessageOut[] = $state([]);
     let models: ModelAgg[] = $state([]);
     let selectedModel = $state('');
+    let selectedTools: string[] = $state([]);
     let streaming = $state(false);
     let nodeBadge: string | null = $state(null);
     let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
@@ -58,46 +61,45 @@
         if (selectedModel && models.length > 0 && !models.some(m => m.name === selectedModel)) {
              selectedModel = models[0].name;
         }
+        selectedTools = [...(conv.allowed_tool_slugs ?? [])];
         await tick();
         scrollBottom();
+    }
+
+    async function updateAllowedTools(slugs: string[]) {
+        if (!convId) return;
+        selectedTools = slugs;
+        try {
+            conv = await conversations.patch(convId, { allowed_tool_slugs: slugs });
+        } catch {
+            toast.error('Impossible de mettre à jour les tools');
+        }
+    }
+
+    async function downloadExport() {
+        if (!convId) return;
+        try {
+            const { blob, filename } = await conversations.export(convId);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error(e);
+            toast.error('Export impossible');
+        }
     }
 
     function scrollBottom() {
         scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
     }
 
-    async function send(text: string) {
-        if (!selectedModel) {
-            if (models.length === 0) {
-                toast.error(
-                    'Aucun modèle disponible. Vérifie que ton node est en ligne et qu\'au moins un modèle Ollama y est installé (ollama pull …).'
-                );
-            } else {
-                toast.error('Sélectionne un modèle dans la liste en haut à droite.');
-            }
-            return;
-        }
-        // Optimistic user message
-        messages = [
-            ...messages,
-            {
-                id: uuid(),
-                role: 'user',
-                content: text,
-                model_used: null,
-                tokens_in: null,
-                tokens_out: null,
-                latency_ms: null,
-                created_at: new Date().toISOString()
-            }
-        ];
-        await tick();
-        scrollBottom();
-
-        streaming = true;
-        nodeBadge = null;
-        loadingModel = null;
-        let assistant: MessageOut = {
+    function makePlaceholderAssistant(): MessageOut {
+        return {
             id: uuid(),
             role: 'assistant',
             content: '',
@@ -107,11 +109,17 @@
             latency_ms: null,
             created_at: new Date().toISOString()
         };
+    }
+
+    async function consumeStream(source: AsyncIterable<SseEvent>) {
+        streaming = true;
+        nodeBadge = null;
+        loadingModel = null;
+        let assistant = makePlaceholderAssistant();
         messages = [...messages, assistant];
 
         try {
-            if (!convId) return;
-            for await (const ev of conversations.send(convId, { text, model: selectedModel })) {
+            for await (const ev of source) {
                 if (ev.event === 'node') {
                     const d = ev.data as { name: string; model: string };
                     nodeBadge = `${d.name} · ${d.model}`;
@@ -122,8 +130,6 @@
                 } else if (ev.event === 'token') {
                     const d = ev.data as { text: string };
                     assistant.content += d.text;
-                    // TTS uniquement quand le mode vocal est ouvert — sinon
-                    // l'assistant ne doit JAMAIS parler de lui-même.
                     if (voiceOpen) voiceBus.token(d.text);
                     messages = [...messages.slice(0, -1), { ...assistant }];
                     scrollBottom();
@@ -131,20 +137,19 @@
                     const d = ev.data as { request_id: string; tool: string };
                     approval = { request_id: d.request_id, tool: d.tool };
                 } else if (ev.event === 'tool_result') {
-                    // Recharge l'historique : un message role=tool a été ajouté
                     if (convId) messages = await conversations.messages(convId);
+                    // après reload, on perd la ref locale assistant → on recrée un placeholder
+                    assistant = makePlaceholderAssistant();
+                    messages = [...messages, assistant];
                 } else if (ev.event === 'done') {
                     const d = ev.data as { tokens_out: number; latency_ms: number };
                     assistant.tokens_out = d.tokens_out;
                     assistant.latency_ms = d.latency_ms;
                     messages = [...messages.slice(0, -1), { ...assistant }];
                     if (voiceOpen) voiceBus.done();
-                    // Recharge depuis le serveur pour récupérer ttft/finish_reason
                     if (convId) {
                         const fresh = await conversations.messages(convId);
-                        if (fresh.length > 0) {
-                            messages = fresh;
-                        }
+                        if (fresh.length > 0) messages = fresh;
                     }
                 } else if (ev.event === 'error') {
                     const d = ev.data as { message: string };
@@ -160,6 +165,63 @@
             approval = null;
             loadingModel = null;
         }
+    }
+
+    async function send(text: string) {
+        if (!selectedModel) {
+            if (models.length === 0) {
+                toast.error(
+                    'Aucun modèle disponible. Vérifie que ton node est en ligne et qu\'au moins un modèle Ollama y est installé (ollama pull …).'
+                );
+            } else {
+                toast.error('Sélectionne un modèle dans la liste en haut à droite.');
+            }
+            return;
+        }
+        if (!convId) return;
+        messages = [
+            ...messages,
+            {
+                id: uuid(),
+                role: 'user',
+                content: text,
+                model_used: null,
+                tokens_in: null,
+                tokens_out: null,
+                latency_ms: null,
+                created_at: new Date().toISOString()
+            }
+        ];
+        await tick();
+        scrollBottom();
+        await consumeStream(conversations.send(convId, { text, model: selectedModel }));
+    }
+
+    async function regenerate() {
+        if (!convId || streaming) return;
+        // Retire le dernier assistant en local pour montrer l'effet
+        const lastAssistantIdx = [...messages].reverse().findIndex((m) => m.role === 'assistant');
+        if (lastAssistantIdx === -1) return;
+        const idx = messages.length - 1 - lastAssistantIdx;
+        messages = messages.slice(0, idx);
+        await tick();
+        scrollBottom();
+        await consumeStream(conversations.regenerate(convId, { model: selectedModel }));
+    }
+
+    async function editUserMessage(msgId: string, newText: string) {
+        if (!convId || streaming) return;
+        const idx = messages.findIndex((m) => m.id === msgId);
+        if (idx === -1) return;
+        // Met à jour localement + tronque
+        messages = messages
+            .slice(0, idx + 1)
+            .map((m, i) => (i === idx ? { ...m, content: newText } : m));
+        await tick();
+        scrollBottom();
+        await consumeStream(
+            conversations.editMessage(convId, msgId, { text: newText, model: selectedModel })
+        );
     }
 
     async function decide(approved: boolean) {
@@ -210,7 +272,18 @@
         {/if}
     </div>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2 sm:gap-3">
+        <button
+            type="button"
+            onclick={downloadExport}
+            title="Exporter la conversation au format Markdown"
+            aria-label="Exporter la conversation"
+            class="hidden h-8 w-8 place-items-center rounded-full border border-neutral-700
+                   text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-100 sm:grid"
+        >
+            <Download size={14} />
+        </button>
+        <ToolPicker selected={selectedTools} onchange={updateAllowedTools} disabled={streaming} />
         <button
             type="button"
             onclick={() => (voiceOpen = true)}
@@ -277,9 +350,18 @@
 <div bind:this={scroller} class="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
     <div class="mx-auto flex max-w-3xl flex-col gap-5">
         {#each messages as m, i (m.id)}
+            {@const isLastAssistant =
+                m.role === 'assistant' &&
+                i === messages.length - 1 &&
+                !streaming &&
+                !!m.content}
             <MessageBubble
                 message={m}
                 streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
+                canEdit={m.role === 'user' && !streaming}
+                canRegenerate={isLastAssistant}
+                onedit={editUserMessage}
+                onregenerate={regenerate}
             />
         {:else}
             <EmptyState

@@ -1,9 +1,10 @@
 <script lang="ts">
     import { fly } from 'svelte/transition';
     import { quintOut } from 'svelte/easing';
-    import { User, Bot, Wrench, Cog, Info } from 'lucide-svelte';
+    import { User, Bot, Wrench, Cog, Info, Copy, Pencil, RefreshCw, Check, X } from 'lucide-svelte';
     import type { MessageOut } from '$lib/api';
     import MessageDetails from './MessageDetails.svelte';
+    import { toast } from '$lib/toast.svelte';
 
     interface Props {
         message:
@@ -17,10 +18,46 @@
                   tokens_out?: number | null;
               };
         streaming?: boolean;
+        canEdit?: boolean;
+        canRegenerate?: boolean;
+        onedit?: (msgId: string, newText: string) => void;
+        onregenerate?: () => void;
     }
-    let { message, streaming = false }: Props = $props();
+    let {
+        message,
+        streaming = false,
+        canEdit = false,
+        canRegenerate = false,
+        onedit,
+        onregenerate
+    }: Props = $props();
 
     let detailsOpen = $state(false);
+    let editing = $state(false);
+    let editText = $state('');
+
+    function startEdit() {
+        editText = message.content;
+        editing = true;
+    }
+    function cancelEdit() {
+        editing = false;
+        editText = '';
+    }
+    function commitEdit() {
+        const t = editText.trim();
+        if (!t || !('id' in message) || !message.id || !onedit) return;
+        onedit(message.id, t);
+        editing = false;
+    }
+    async function copyContent() {
+        try {
+            await navigator.clipboard.writeText(message.content);
+            toast.success('Copié');
+        } catch {
+            toast.error('Copie impossible');
+        }
+    }
 
     // L'icône Info n'a de sens que si on a au moins quelques métriques
     // serveur (id + au moins un compteur de tokens ou un timing).
@@ -79,7 +116,7 @@
     });
 </script>
 
-<div class="flex flex-col gap-1 {meta.align}" in:fly={{ y: 8, duration: 220, easing: quintOut }}>
+<div class="group flex flex-col gap-1 {meta.align}" in:fly={{ y: 8, duration: 220, easing: quintOut }}>
     <div class="flex items-center gap-1.5 text-xs text-neutral-500">
         <meta.Icon size={12} />
         <span>{meta.label}</span>
@@ -101,13 +138,76 @@
             </button>
         {/if}
     </div>
-    <div
-        class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
-               whitespace-pre-wrap break-words {meta.bubble}"
-        class:cursor-blink={streaming}
-    >
-        {message.content || (streaming ? '' : '…')}
-    </div>
+    {#if editing}
+        <div class="w-full max-w-[85%]">
+            <textarea
+                bind:value={editText}
+                rows="3"
+                class="w-full rounded-xl border border-cyan-500/40 bg-[var(--color-bg-1)] px-3 py-2 text-sm
+                       focus:border-cyan-500 focus:outline-none"
+            ></textarea>
+            <div class="mt-1 flex gap-2">
+                <button
+                    type="button"
+                    onclick={commitEdit}
+                    class="flex items-center gap-1 rounded-md bg-cyan-600 px-2.5 py-1 text-xs text-white hover:bg-cyan-500"
+                >
+                    <Check size={12} /> Resoumettre
+                </button>
+                <button
+                    type="button"
+                    onclick={cancelEdit}
+                    class="flex items-center gap-1 rounded-md border border-neutral-700 px-2.5 py-1 text-xs hover:bg-neutral-800"
+                >
+                    <X size={12} /> Annuler
+                </button>
+            </div>
+        </div>
+    {:else}
+        <div
+            class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
+                   whitespace-pre-wrap break-words {meta.bubble}"
+            class:cursor-blink={streaming}
+        >
+            {message.content || (streaming ? '' : '…')}
+        </div>
+
+        {#if !streaming && message.content}
+            <div class="mt-0.5 flex gap-0.5 text-xs text-neutral-600 opacity-0 transition-opacity duration-200 hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+                <button
+                    type="button"
+                    onclick={copyContent}
+                    class="rounded p-1 hover:bg-neutral-800 hover:text-neutral-300"
+                    title="Copier"
+                    aria-label="Copier le contenu"
+                >
+                    <Copy size={11} />
+                </button>
+                {#if canEdit && onedit}
+                    <button
+                        type="button"
+                        onclick={startEdit}
+                        class="rounded p-1 hover:bg-neutral-800 hover:text-neutral-300"
+                        title="Éditer & resoumettre"
+                        aria-label="Éditer ce message"
+                    >
+                        <Pencil size={11} />
+                    </button>
+                {/if}
+                {#if canRegenerate && onregenerate}
+                    <button
+                        type="button"
+                        onclick={() => onregenerate?.()}
+                        class="rounded p-1 hover:bg-neutral-800 hover:text-neutral-300"
+                        title="Régénérer la réponse"
+                        aria-label="Régénérer"
+                    >
+                        <RefreshCw size={11} />
+                    </button>
+                {/if}
+            </div>
+        {/if}
+    {/if}
 </div>
 
 {#if canShowDetails}

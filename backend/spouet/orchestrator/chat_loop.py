@@ -72,21 +72,43 @@ async def stream_assistant_reply(
     user_text: str,
     model_override: str | None = None,
     enable_tools: bool = True,
+    skip_user_insert: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Pipeline complet : insère le message user, choisit un node, stream la réponse,
     gère les tool_calls jusqu'à terminaison.
+
+    `skip_user_insert=True` : ne crée pas de message user (utilisé par regenerate
+    et edit&resend où le message user est déjà en base).
     """
     model = model_override or conversation.model_pref
     if not model:
         yield {"event": "error", "data": {"message": "No model selected"}}
         return
 
-    user_msg = Message(conversation_id=conversation.id, role="user", content=user_text)
-    db.add(user_msg)
-    await db.commit()
-
     channel = conv_channel(conversation.id)
-    await publish(channel, "message", _msg_payload(user_msg))
+    if skip_user_insert:
+        # Récupère le dernier message user existant pour caler last_user_id
+        last_user_row = (
+            await db.execute(
+                select(Message)
+                .where(
+                    Message.conversation_id == conversation.id, Message.role == "user"
+                )
+                .order_by(Message.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if last_user_row is None:
+            yield {"event": "error", "data": {"message": "No user message to reply to"}}
+            return
+        user_msg = last_user_row
+    else:
+        user_msg = Message(
+            conversation_id=conversation.id, role="user", content=user_text
+        )
+        db.add(user_msg)
+        await db.commit()
+        await publish(channel, "message", _msg_payload(user_msg))
 
     tools_payload, tools_by_slug = (
         await _load_active_tools(db, conversation=conversation)
@@ -266,12 +288,10 @@ async def _load_active_tools(
 ) -> tuple[list[dict[str, Any]] | None, dict[str, Tool]]:
     rows = (await db.execute(select(Tool).where(Tool.enabled.is_(True)))).scalars().all()
 
-    # Workers avec restriction de tools → filtrer
-    if (
-        conversation is not None
-        and conversation.workspace_role == "worker"
-        and conversation.allowed_tool_slugs
-    ):
+    # Restriction per-conversation : allowed_tool_slugs non vide → whitelist.
+    # Sémantique uniforme : workers ET conversations classiques. Liste vide =
+    # tous les tools activés globalement (comportement par défaut).
+    if conversation is not None and conversation.allowed_tool_slugs:
         rows = [t for t in rows if t.slug in conversation.allowed_tool_slugs]
 
     payload: list[dict[str, Any]] = [

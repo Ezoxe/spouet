@@ -255,8 +255,17 @@ export interface ConversationOut {
     system_prompt: string | null;
     model_pref: string | null;
     archived: boolean;
+    allowed_tool_slugs: string[];
     created_at: string;
     updated_at: string;
+}
+
+export interface ConversationPatch {
+    title?: string;
+    system_prompt?: string | null;
+    model_pref?: string | null;
+    allowed_tool_slugs?: string[];
+    archived?: boolean;
 }
 
 export interface MessageOut {
@@ -405,14 +414,36 @@ export const nodes = {
 };
 
 export const conversations = {
-    list: () => api<ConversationOut[]>('/conversations'),
+    list: (q?: string) =>
+        api<ConversationOut[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ''}`),
     get: (id: string) => api<ConversationOut>(`/conversations/${id}`),
     create: (json: { title?: string; model_pref?: string; system_prompt?: string }) =>
         api<ConversationOut>('/conversations', { method: 'POST', json }),
+    patch: (id: string, json: ConversationPatch) =>
+        api<ConversationOut>(`/conversations/${id}`, { method: 'PATCH', json }),
     delete: (id: string) => api<void>(`/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => api<MessageOut[]>(`/conversations/${id}/messages`),
     send: (id: string, json: { text: string; model?: string }) =>
-        streamSse(`/conversations/${id}/messages`, { method: 'POST', json })
+        streamSse(`/conversations/${id}/messages`, { method: 'POST', json }),
+    regenerate: (id: string, json: { model?: string } = {}) =>
+        streamSse(`/conversations/${id}/regenerate`, { method: 'POST', json }),
+    editMessage: (
+        convId: string,
+        msgId: string,
+        json: { text: string; model?: string }
+    ) => streamSse(`/conversations/${convId}/messages/${msgId}/edit`, { method: 'POST', json }),
+    exportUrl: (id: string): string => `${BASE}/api/conversations/${id}/export`,
+    export: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+        const token = getToken();
+        const res = await fetch(`${BASE}/api/conversations/${id}/export`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (!res.ok) throw new ApiError(res.status, await res.text(), `${res.status}`);
+        const cd = res.headers.get('content-disposition') || '';
+        const m = /filename="([^"]+)"/.exec(cd);
+        const filename = m?.[1] ?? `conversation-${id}.md`;
+        return { blob: await res.blob(), filename };
+    }
 };
 
 export const tools = {

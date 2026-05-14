@@ -4,12 +4,22 @@
     import { conversations, auth, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
-    import { Plus, MessageSquare, Trash2 } from 'lucide-svelte';
+    import { Plus, MessageSquare, Trash2, Search, X } from 'lucide-svelte';
 
     let convs: ConversationOut[] = $state([]);
+    let searchQuery = $state('');
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function refresh() {
-        convs = await conversations.list();
+        convs = await conversations.list(searchQuery.trim() || undefined);
+    }
+    function onSearchInput() {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(refresh, 180);
+    }
+    function clearSearch() {
+        searchQuery = '';
+        refresh();
     }
 
     async function newConv() {
@@ -59,6 +69,30 @@
         <Plus size={14} /> Nouvelle
     </button>
 </header>
+
+<div class="px-6 pb-3 sm:px-8">
+    <div class="relative max-w-md">
+        <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+        <input
+            type="search"
+            placeholder="Rechercher dans titre + messages…"
+            bind:value={searchQuery}
+            oninput={onSearchInput}
+            class="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 py-2 pl-9 pr-9 text-sm
+                   placeholder:text-neutral-600 focus:border-cyan-500/40 focus:outline-none"
+        />
+        {#if searchQuery}
+            <button
+                type="button"
+                onclick={clearSearch}
+                class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
+                aria-label="Effacer la recherche"
+            >
+                <X size={12} />
+            </button>
+        {/if}
+    </div>
+</div>
 
 <div class="px-6 pb-6 sm:px-8">
     <HelpPanel title="Comment ça marche" storageKey="chat-list" defaultOpen={false}>

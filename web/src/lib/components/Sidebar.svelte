@@ -17,7 +17,9 @@
         KeyRound,
         Trash2,
         Menu,
-        LayoutPanelLeft
+        LayoutPanelLeft,
+        Search,
+        X
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -25,6 +27,8 @@
 
     let convs: ConversationOut[] = $state([]);
     let isOpen = $state(false);
+    let searchQuery = $state('');
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
     const items = [
         { href: '/', label: 'Tableau de bord', icon: Activity },
@@ -43,10 +47,19 @@
 
     async function refreshConvs() {
         try {
-            convs = await conversations.list();
+            convs = await conversations.list(searchQuery.trim() || undefined);
         } catch {
             convs = [];
         }
+    }
+
+    function onSearchInput() {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(refreshConvs, 180);
+    }
+    function clearSearch() {
+        searchQuery = '';
+        refreshConvs();
     }
 
     async function newConversation() {
@@ -169,6 +182,28 @@
                 >
                     <Plus size={14} />
                 </button>
+            </div>
+            <div class="relative mb-1.5">
+                <Search size={11} class="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <input
+                    type="search"
+                    placeholder="Rechercher…"
+                    bind:value={searchQuery}
+                    oninput={onSearchInput}
+                    class="w-full rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-1)]
+                           pl-6 pr-6 py-1 text-xs placeholder:text-neutral-600
+                           focus:border-cyan-500/40 focus:outline-none"
+                />
+                {#if searchQuery}
+                    <button
+                        type="button"
+                        onclick={clearSearch}
+                        class="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                        aria-label="Effacer"
+                    >
+                        <X size={10} />
+                    </button>
+                {/if}
             </div>
             <div class="space-y-0.5">
                 {#each convs.slice(0, 12) as c (c.id)}
