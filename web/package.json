@@ -32,5 +32,8 @@
   "dependencies": {
     "bits-ui": "^0.21.0",
     "lucide-svelte": "^0.454.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }
