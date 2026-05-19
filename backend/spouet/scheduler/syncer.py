@@ -28,14 +28,26 @@ logger = get_logger(__name__)
 
 
 def parse_cron(expr: str) -> crontab:
-    """Parse un cron 5-fields : 'min hour day month dow'."""
+    """Parse un cron 5-fields : 'min hour day month dow'.
+
+    Lève toujours ``ValueError`` sur entrée invalide — y compris pour les champs
+    individuels mal formés, où Celery lèverait sinon un ``ParseException`` (qui
+    n'hérite pas de ValueError). Normaliser ici garantit que les callers
+    (validation API, build_beat_entries) attrapent toutes les erreurs avec un
+    seul `except ValueError`.
+    """
     parts = expr.strip().split()
     if len(parts) != 5:
         raise ValueError(f"cron must have 5 fields, got {len(parts)}: {expr!r}")
     minute, hour, day, month, dow = parts
-    return crontab(
-        minute=minute, hour=hour, day_of_month=day, month_of_year=month, day_of_week=dow
-    )
+    try:
+        return crontab(
+            minute=minute, hour=hour, day_of_month=day, month_of_year=month, day_of_week=dow
+        )
+    except ValueError:
+        raise
+    except Exception as e:  # celery ParseException, etc.
+        raise ValueError(f"invalid cron field in {expr!r}: {e}") from e
 
 
 async def collect_jobs() -> list[ScheduledJob]:
