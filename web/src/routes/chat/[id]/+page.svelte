@@ -19,7 +19,8 @@
     import ToolPicker from '$lib/components/ToolPicker.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square } from 'lucide-svelte';
+    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square, Copy } from 'lucide-svelte';
+    import { goto } from '$app/navigation';
     import type { SseEvent } from '$lib/api';
 
     const convId = $derived($page.params.id);
@@ -75,6 +76,17 @@
             conv = await conversations.patch(convId, { allowed_tool_slugs: slugs });
         } catch {
             toast.error('Impossible de mettre à jour les tools');
+        }
+    }
+
+    async function cloneConversation() {
+        if (!convId) return;
+        try {
+            const dup = await conversations.clone(convId);
+            toast.success('Conversation dupliquée');
+            goto(`/chat/${dup.id}`);
+        } catch {
+            toast.error('Duplication impossible');
         }
     }
 
@@ -353,6 +365,16 @@
     </div>
 
     <div class="flex items-center gap-2 sm:gap-3">
+        <button
+            type="button"
+            onclick={cloneConversation}
+            title="Dupliquer la conversation (config sans les messages)"
+            aria-label="Dupliquer la conversation"
+            class="hidden h-8 w-8 place-items-center rounded-full border border-neutral-700
+                   text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-100 sm:grid"
+        >
+            <Copy size={14} />
+        </button>
         <button
             type="button"
             onclick={downloadExport}
