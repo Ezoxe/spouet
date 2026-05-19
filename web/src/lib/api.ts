@@ -141,17 +141,25 @@ export async function* streamSse(
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-            const block = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const ev = parseSseBlock(block);
-            if (ev) yield ev;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let idx: number;
+            while ((idx = buf.indexOf('\n\n')) !== -1) {
+                const block = buf.slice(0, idx);
+                buf = buf.slice(idx + 2);
+                const ev = parseSseBlock(block);
+                if (ev) yield ev;
+            }
         }
+    } catch (e) {
+        // Annulation volontaire (AbortController.abort()) : on termine le flux
+        // proprement sans propager d'erreur — le consommateur a déjà ce qu'il
+        // a reçu jusque-là.
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+        throw e;
     }
 }
 
@@ -448,15 +456,16 @@ export const conversations = {
         api<ConversationOut>(`/conversations/${id}/clone`, { method: 'POST' }),
     delete: (id: string) => api<void>(`/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => api<MessageOut[]>(`/conversations/${id}/messages`),
-    send: (id: string, json: { text: string; model?: string }) =>
-        streamSse(`/conversations/${id}/messages`, { method: 'POST', json }),
-    regenerate: (id: string, json: { model?: string } = {}) =>
-        streamSse(`/conversations/${id}/regenerate`, { method: 'POST', json }),
+    send: (id: string, json: { text: string; model?: string }, signal?: AbortSignal) =>
+        streamSse(`/conversations/${id}/messages`, { method: 'POST', json, signal }),
+    regenerate: (id: string, json: { model?: string } = {}, signal?: AbortSignal) =>
+        streamSse(`/conversations/${id}/regenerate`, { method: 'POST', json, signal }),
     editMessage: (
         convId: string,
         msgId: string,
-        json: { text: string; model?: string }
-    ) => streamSse(`/conversations/${convId}/messages/${msgId}/edit`, { method: 'POST', json }),
+        json: { text: string; model?: string },
+        signal?: AbortSignal
+    ) => streamSse(`/conversations/${convId}/messages/${msgId}/edit`, { method: 'POST', json, signal }),
     exportUrl: (id: string): string => `${BASE}/api/conversations/${id}/export`,
     export: async (id: string): Promise<{ blob: Blob; filename: string }> => {
         const token = getToken();

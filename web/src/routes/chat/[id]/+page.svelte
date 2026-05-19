@@ -19,7 +19,7 @@
     import ToolPicker from '$lib/components/ToolPicker.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw } from 'lucide-svelte';
+    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square } from 'lucide-svelte';
     import type { SseEvent } from '$lib/api';
 
     const convId = $derived($page.params.id);
@@ -30,6 +30,7 @@
     let selectedModel = $state('');
     let selectedTools: string[] = $state([]);
     let streaming = $state(false);
+    let abortController: AbortController | null = $state(null);
     let focusComposer: (() => void) | null = $state(null);
     let nodeBadge: string | null = $state(null);
     let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
@@ -112,6 +113,10 @@
         };
     }
 
+    function stopGeneration() {
+        abortController?.abort();
+    }
+
     async function consumeStream(source: AsyncIterable<SseEvent>) {
         streaming = true;
         nodeBadge = null;
@@ -163,8 +168,19 @@
             toast.error('Erreur de communication avec le backend');
         } finally {
             streaming = false;
+            abortController = null;
             approval = null;
             loadingModel = null;
+            // Recharge l'état persisté : si la génération a été stoppée, le
+            // backend a tout de même sauvegardé les tokens reçus jusque-là.
+            if (convId) {
+                try {
+                    const fresh = await conversations.messages(convId);
+                    if (fresh.length > 0) messages = fresh;
+                } catch {
+                    /* garde l'état local */
+                }
+            }
         }
     }
 
@@ -195,7 +211,10 @@
         ];
         await tick();
         scrollBottom();
-        await consumeStream(conversations.send(convId, { text, model: selectedModel }));
+        abortController = new AbortController();
+        await consumeStream(
+            conversations.send(convId, { text, model: selectedModel }, abortController.signal)
+        );
     }
 
     async function regenerate() {
@@ -207,7 +226,10 @@
         messages = messages.slice(0, idx);
         await tick();
         scrollBottom();
-        await consumeStream(conversations.regenerate(convId, { model: selectedModel }));
+        abortController = new AbortController();
+        await consumeStream(
+            conversations.regenerate(convId, { model: selectedModel }, abortController.signal)
+        );
     }
 
     async function editUserMessage(msgId: string, newText: string) {
@@ -220,8 +242,14 @@
             .map((m, i) => (i === idx ? { ...m, content: newText } : m));
         await tick();
         scrollBottom();
+        abortController = new AbortController();
         await consumeStream(
-            conversations.editMessage(convId, msgId, { text: newText, model: selectedModel })
+            conversations.editMessage(
+                convId,
+                msgId,
+                { text: newText, model: selectedModel },
+                abortController.signal
+            )
         );
     }
 
@@ -250,6 +278,12 @@
             if (e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
                 e.preventDefault();
                 regenerate();
+                return;
+            }
+            // Échap : arrêter la génération en cours
+            if (e.key === 'Escape' && streaming) {
+                e.preventDefault();
+                stopGeneration();
             }
         };
         window.addEventListener('keydown', handler);
@@ -455,6 +489,20 @@
             (le node doit être <em>online</em> et avoir au moins un modèle installé via
             <code class="rounded bg-amber-950/60 px-1">ollama pull …</code>).
         </div>
+    </div>
+{/if}
+
+{#if streaming}
+    <div class="flex justify-center px-4 pb-1 sm:px-8" in:fade={{ duration: 150 }}>
+        <button
+            type="button"
+            onclick={stopGeneration}
+            class="flex items-center gap-2 rounded-full border border-neutral-700 bg-[var(--color-bg-1)]
+                   px-4 py-1.5 text-xs text-neutral-300 shadow-lg transition hover:border-red-500/50 hover:text-red-300"
+        >
+            <Square size={11} class="fill-current" />
+            Arrêter la génération
+        </button>
     </div>
 {/if}
 

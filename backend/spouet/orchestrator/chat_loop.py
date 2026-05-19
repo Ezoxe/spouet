@@ -242,6 +242,22 @@ async def stream_assistant_reply(
             await publish(channel, "node_error", {"node": choice.name, "error": str(e)})
             continue  # failover
 
+        except asyncio.CancelledError:
+            # Client déconnecté (bouton « stop generation » côté UI). On persiste
+            # le contenu reçu jusque-là pour ne pas le perdre, puis on propage
+            # l'annulation. `asyncio.shield` garantit que le commit s'exécute
+            # même si la tâche est en cours d'annulation.
+            assistant_msg.content = accumulated
+            assistant_msg.latency_ms = int((time.monotonic() - started) * 1000)
+            assistant_msg.finish_reason = "cancelled"
+            if tool_calls_out:
+                assistant_msg.content_json = {"tool_calls": tool_calls_out}
+            try:
+                await asyncio.shield(db.commit())
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+
         # Pas de tool_calls → fin de la conversation
         if not tool_calls_out:
             done = {
