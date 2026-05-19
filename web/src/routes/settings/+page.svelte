@@ -1,9 +1,18 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
-    import { ApiError, auth, setToken, type MeOut, nodes as nodesApi, type ModelAgg } from '$lib/api';
+    import {
+        ApiError,
+        auth,
+        setToken,
+        type MeOut,
+        nodes as nodesApi,
+        type ModelAgg,
+        health,
+        type DiagnosticsOut
+    } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
-    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor, Sparkles, Clock } from 'lucide-svelte';
+    import { LogOut, RefreshCw, Copy, Sun, Moon, Monitor, Sparkles, Clock, Activity, CheckCircle2, XCircle } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import { theme, setTheme, type Theme } from '$lib/theme';
 
@@ -13,6 +22,8 @@
     let currentTheme: Theme = $state('light');
     let models: ModelAgg[] = $state([]);
     let defaultModel: string = $state('');
+    let diag: DiagnosticsOut | null = $state(null);
+    let diagLoading = $state(false);
 
     const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
         { value: 'light', label: 'Clair', icon: Sun },
@@ -77,6 +88,18 @@
         }
     }
 
+    async function checkHealth() {
+        diagLoading = true;
+        try {
+            diag = await health.diagnostics();
+        } catch (e) {
+            if (!isHandledAuthError(e)) toast.error('Diagnostic indisponible');
+            diag = null;
+        } finally {
+            diagLoading = false;
+        }
+    }
+
     async function saveDefaultModel() {
         try {
             const updated = await auth.patchMe({ default_model: defaultModel || null });
@@ -95,6 +118,7 @@
 
     onMount(() => {
         loadModels();
+        checkHealth();
     });
 </script>
 
@@ -215,6 +239,56 @@
         >
             <RefreshCw size={14} /> Régénérer le token
         </button>
+    </section>
+
+    <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
+        <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-medium uppercase tracking-wider text-neutral-400">
+                Santé système
+            </h2>
+            <button
+                type="button"
+                onclick={checkHealth}
+                disabled={diagLoading}
+                class="flex items-center gap-1.5 rounded-lg border border-neutral-700 px-2.5 py-1 text-xs
+                       hover:bg-neutral-800 disabled:opacity-50"
+            >
+                <RefreshCw size={12} class={diagLoading ? 'animate-spin' : ''} /> Tester
+            </button>
+        </div>
+        {#if diag}
+            <div class="mb-3 flex items-center gap-2">
+                {#if diag.status === 'ok'}
+                    <CheckCircle2 size={16} class="text-emerald-400" />
+                    <span class="text-sm text-emerald-300">Tous les composants répondent</span>
+                {:else}
+                    <Activity size={16} class="text-amber-400" />
+                    <span class="text-sm text-amber-300">Service dégradé</span>
+                {/if}
+            </div>
+            <div class="grid gap-2 sm:grid-cols-3">
+                {#each Object.entries(diag.components) as [name, c] (name)}
+                    <div class="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                        <div class="flex items-center gap-1.5">
+                            {#if c.ok}
+                                <CheckCircle2 size={13} class="text-emerald-400" />
+                            {:else}
+                                <XCircle size={13} class="text-red-400" />
+                            {/if}
+                            <span class="text-xs font-medium capitalize">{name}</span>
+                        </div>
+                        {#if c.version}
+                            <p class="mt-1 font-mono text-[10px] text-neutral-500">{c.version}</p>
+                        {/if}
+                        {#if c.error}
+                            <p class="mt-1 break-words text-[10px] text-red-400/80">{c.error}</p>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+        {:else if !diagLoading}
+            <p class="text-xs text-neutral-500">Diagnostic indisponible.</p>
+        {/if}
     </section>
 
     <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5">
