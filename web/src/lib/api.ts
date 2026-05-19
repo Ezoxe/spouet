@@ -255,6 +255,7 @@ export interface ConversationOut {
     system_prompt: string | null;
     model_pref: string | null;
     archived: boolean;
+    pinned: boolean;
     allowed_tool_slugs: string[];
     created_at: string;
     updated_at: string;
@@ -266,6 +267,7 @@ export interface ConversationPatch {
     model_pref?: string | null;
     allowed_tool_slugs?: string[];
     archived?: boolean;
+    pinned?: boolean;
 }
 
 export interface MessageOut {
@@ -442,6 +444,8 @@ export const conversations = {
         api<ConversationOut>('/conversations', { method: 'POST', json }),
     patch: (id: string, json: ConversationPatch) =>
         api<ConversationOut>(`/conversations/${id}`, { method: 'PATCH', json }),
+    clone: (id: string) =>
+        api<ConversationOut>(`/conversations/${id}/clone`, { method: 'POST' }),
     delete: (id: string) => api<void>(`/conversations/${id}`, { method: 'DELETE' }),
     messages: (id: string) => api<MessageOut[]>(`/conversations/${id}/messages`),
     send: (id: string, json: { text: string; model?: string }) =>

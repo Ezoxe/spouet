@@ -166,6 +166,7 @@ class Conversation(Base, TimestampMixin):
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_pref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("workspace_sessions.id", ondelete="CASCADE"),

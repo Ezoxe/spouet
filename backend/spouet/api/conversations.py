@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +35,7 @@ class ConversationPatch(BaseModel):
     model_pref: str | None = None
     allowed_tool_slugs: list[str] | None = None
     archived: bool | None = None
+    pinned: bool | None = None
 
 
 class ConversationOut(BaseModel):
@@ -43,6 +44,7 @@ class ConversationOut(BaseModel):
     system_prompt: str | None
     model_pref: str | None
     archived: bool
+    pinned: bool = False
     allowed_tool_slugs: list[str] = []
     created_at: datetime
     updated_at: datetime
@@ -57,7 +59,8 @@ async def list_conversations(
     query = (
         select(Conversation)
         .where(Conversation.user_id == user.id, Conversation.archived.is_(False))
-        .order_by(Conversation.updated_at.desc())
+        # Pinned d'abord (true=1 → DESC), puis par fraîcheur.
+        .order_by(Conversation.pinned.desc(), Conversation.updated_at.desc())
     )
     if q:
         # ILIKE sur title ou existence d'un message qui matche
@@ -114,9 +117,39 @@ async def patch_conversation(
         conv.allowed_tool_slugs = list(payload.allowed_tool_slugs)
     if payload.archived is not None:
         conv.archived = payload.archived
+    if payload.pinned is not None:
+        conv.pinned = payload.pinned
     await db.commit()
     await db.refresh(conv)
     return _to_out(conv)
+
+
+@router.post(
+    "/{conv_id}/clone", response_model=ConversationOut, status_code=status.HTTP_201_CREATED
+)
+async def clone_conversation(
+    conv_id: UUID, user: CurrentUser, db: DbSession
+) -> ConversationOut:
+    """Duplique une conversation (titre, system prompt, model_pref, tools).
+
+    Les messages ne sont pas copiés — on part d'une conv vide avec la même
+    configuration. Utile pour relancer un même contexte de travail sans
+    polluer l'historique de l'original.
+    """
+    src = await db.get(Conversation, conv_id)
+    if src is None or src.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    dup = Conversation(
+        user_id=user.id,
+        title=f"{src.title} (copie)",
+        system_prompt=src.system_prompt,
+        model_pref=src.model_pref,
+        allowed_tool_slugs=list(src.allowed_tool_slugs or []),
+    )
+    db.add(dup)
+    await db.commit()
+    await db.refresh(dup)
+    return _to_out(dup)
 
 
 @router.delete("/{conv_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -279,6 +312,7 @@ def _to_out(c: Conversation) -> ConversationOut:
         system_prompt=c.system_prompt,
         model_pref=c.model_pref,
         archived=c.archived,
+        pinned=c.pinned,
         allowed_tool_slugs=list(c.allowed_tool_slugs or []),
         created_at=c.created_at,
         updated_at=c.updated_at,
