@@ -17,6 +17,14 @@ class ManifestError(ValueError):
     pass
 
 
+# Modes réseau autorisés pour un tool :
+#   none     → isolation totale (--network none), aucun accès réseau
+#   bridge   → bridge Docker par défaut (sortie Internet, pas de DNS compose)
+#   internal → réseau docker-compose Spouet (résout `backend`, `postgres`…) pour
+#              les tools officiels qui interrogent l'API backend
+ALLOWED_NETWORKS = ("none", "bridge", "internal")
+
+
 @dataclass
 class ToolManifest:
     slug: str
@@ -24,7 +32,7 @@ class ToolManifest:
     version: str
     image: str
     description: str = ""
-    network: str = "none"  # 'none' | 'bridge'
+    network: str = "none"  # 'none' | 'bridge' | 'internal'
     timeout_s: int = 30
     mem_limit: str = "256m"
     cpu_limit: float = 1.0
@@ -36,6 +44,8 @@ class ToolManifest:
 
     @property
     def requires_approval(self) -> bool:
+        # Tout accès réseau (Internet ou réseau interne) requiert une validation
+        # HITL par défaut. L'admin peut la lever par tool de confiance via PATCH.
         return self.network != "none"
 
 
@@ -54,8 +64,10 @@ def load_manifest(path: Path) -> ToolManifest:
         raise ManifestError(f"missing required fields: {sorted(missing)}")
 
     network = raw.get("network", "none")
-    if network not in ("none", "bridge"):
-        raise ManifestError(f"network must be 'none' or 'bridge', got {network!r}")
+    if network not in ALLOWED_NETWORKS:
+        raise ManifestError(
+            f"network must be one of {ALLOWED_NETWORKS}, got {network!r}"
+        )
 
     # Valide que l'input_schema est un schéma JSON valide
     try:

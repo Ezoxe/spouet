@@ -6,7 +6,8 @@ description: |
   24h, 7j). Retourne aussi des stats agrégées (p50/p95 TPS, max VRAM, etc.).
 image: spouet/tool-spouet-node-metrics:0.1.0
 
-network: bridge
+# internal : attaché au réseau Spouet pour résoudre `backend` (cf. SPOUET_API_URL)
+network: internal
 timeout_s: 15
 mem_limit: 96m
 cpu_limit: 0.5

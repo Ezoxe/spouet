@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     tool_default_mem_limit: str = "256m"
     tool_default_cpu_limit: float = 1.0
     tool_default_timeout_s: int = 30
+    # Réseau Docker attaché aux tools déclarant `network: internal` (ceux qui
+    # appellent l'API backend, ex. spouet-nodes-status). Doit être le réseau
+    # docker-compose où le service `backend` est résolvable.
+    tool_docker_network: str = "spouet_default"
 
     # Connectors persistants
     connector_docker_network: str = "spouet_default"

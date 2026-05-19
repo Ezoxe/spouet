@@ -12,9 +12,22 @@ import docker
 from docker.errors import APIError, ContainerError, ImageNotFound
 from docker.models.containers import Container
 
+from spouet.core.config import settings
 from spouet.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _resolve_network(network: str) -> str:
+    """Traduit le mode réseau du manifest vers la valeur Docker `network_mode`.
+
+    `internal` est un alias logique vers le réseau docker-compose Spouet, pour
+    que le conteneur jetable résolve `backend`/`postgres`. Les autres valeurs
+    (`none`, `bridge`) sont passées telles quelles à Docker.
+    """
+    if network == "internal":
+        return settings.tool_docker_network
+    return network
 
 
 @dataclass
@@ -49,6 +62,7 @@ async def run_tool(
     """
     started = time.monotonic()
     payload = json.dumps(args, ensure_ascii=False).encode("utf-8")
+    network_mode = _resolve_network(network)
 
     def _run() -> ToolResult:
         client = _client()
@@ -77,7 +91,7 @@ async def run_tool(
         try:
             container = client.containers.create(
                 image=image,
-                network_mode=network,
+                network_mode=network_mode,
                 read_only=True,
                 cap_drop=["ALL"],
                 pids_limit=128,

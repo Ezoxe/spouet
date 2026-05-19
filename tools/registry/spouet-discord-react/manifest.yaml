@@ -5,7 +5,8 @@ description: |
   Pose une réaction emoji sur un message Discord existant.
 image: spouet/tool-spouet-discord-react:0.1.0
 
-network: bridge
+# internal : attaché au réseau Spouet pour résoudre `backend` (cf. SPOUET_API_URL)
+network: internal
 timeout_s: 10
 mem_limit: 96m
 cpu_limit: 0.5
