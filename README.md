@@ -63,7 +63,7 @@ Le script :
 - installe Docker + Compose v2 si absent (via `get.docker.com`)
 - clone le dépôt dans `/opt/spouet`
 - génère `deploy/.env` avec des secrets aléatoires (`openssl rand -hex`)
-- build et démarre la stack (`postgres`, `redis`, `backend`, `worker`, `beat`, `caddy`)
+- build et démarre la stack (`postgres`, `redis`, `backend`, `worker`, `beat`, `web`)
 - applique les migrations Alembic
 - crée le **premier token admin** (affiché UNE seule fois — copie-le)
 - installe et active le service systemd `spouet-stack` (auto-start au boot)
@@ -73,13 +73,16 @@ Variables/options utiles :
 ```bash
 # Non-interactif (pour Ansible/CI)
 curl -fsSL .../install.sh | sudo SPOUET_NON_INTERACTIVE=1 \
-    SPOUET_HOSTNAME=spouet.example.com \
     SPOUET_ADMIN_EMAIL=ops@example.com \
     bash
 
 # Avec drapeaux
-sudo bash install.sh --hostname=spouet.local --email=me@local --branch=master
+sudo bash install.sh --email=me@local --branch=master
 ```
+
+Drapeaux reconnus : `--email`, `--branch`, `--dir`, `--repo`, `--non-interactive`,
+`--skip-docker`, `--skip-systemd`. Les ports hôte (postgres/redis/backend/web)
+sont alloués automatiquement à partir de 10000.
 
 ### Node-agent Linux
 
