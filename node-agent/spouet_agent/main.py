@@ -15,7 +15,7 @@ import uvicorn
 from spouet_agent import __version__
 from spouet_agent.agent_api import app as control_app
 from spouet_agent.agent_api import init as init_control
-from spouet_agent.capabilities import probe_capabilities
+from spouet_agent.capabilities import NodeCapabilities, probe_capabilities
 from spouet_agent.gpu import gpu_info_from_capabilities, probe_gpu
 from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
@@ -215,6 +215,7 @@ async def _run(
             server=server,
             models_dir=models_dir,
             gpu_info_ref=[gpu],
+            capabilities=caps,
         ),
     ]
     if llama_bin is not None:
@@ -281,13 +282,14 @@ async def _heartbeat_loop(
     server: LlamaServer,
     models_dir: Path,
     gpu_info_ref: list,
+    capabilities: NodeCapabilities | None = None,
 ) -> None:
     headers = {"Authorization": f"Bearer {token}"}
     typer.echo(f"[spouet-agent] heartbeat → {backend}/api/nodes/heartbeat as '{name}'")
 
     # Capabilities calculées une fois au boot ; on les renvoie à chaque
     # heartbeat (le backend persiste en JSONB pour l'admin).
-    caps_payload = server._capabilities.to_dict() if server._capabilities is not None else None
+    caps_payload = capabilities.to_dict() if capabilities is not None else None
 
     # État pour calculer les deltas réseau et CPU entre 2 heartbeats.
     last_net = _read_net_counters()
