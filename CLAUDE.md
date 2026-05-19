@@ -21,7 +21,7 @@ Le backend tourne sur Debian (docker-compose). Les autres surfaces sont distribu
 ## Stack
 
 - **Backend** : FastAPI 0.11x + Pydantic v2 + SQLAlchemy 2 (async) + Celery + Celery Beat + Redis
-- **DB** : PostgreSQL 16 + extension PGVector (1024-dim, modèle `nomic-embed-text`)
+- **DB** : PostgreSQL 16 + extension PGVector (768-dim, modèle `nomic-embed-text`)
 - **Frontend web** : SvelteKit 2 + Tailwind 4 + shadcn-svelte (PWA mobile-first)
 - **Desktop** : Tauri 2.0 (Rust shell + frontend Svelte réutilisé)
 - **Sandbox tools** : Docker SDK Python (`docker-py`), conteneur jetable par appel
