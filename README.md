@@ -368,11 +368,13 @@ curl -H "Authorization: Bearer $TOKEN" https://spouet.local/api/auth/me
 SPOUET_AGENT_TOKEN=$TOKEN uv run spouet-agent run --backend https://spouet.local
 # → vérifier dans l'UI qu'il apparaît "online"
 
-# 4. Lancer un chat (M2+)
-curl -N -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"prompt":"hello","model":"llama3.1:8b"}' \
-     https://spouet.local/api/chat/<conv_id>
+# 4. Créer une conversation puis streamer une réponse (SSE)
+CONV=$(curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"title":"test","model_pref":"llama3.1:8b"}' \
+     https://spouet.local/api/conversations | jq -r .id)
+curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"text":"hello","model":"llama3.1:8b"}' \
+     https://spouet.local/api/conversations/$CONV/messages
 ```
 
 ---
