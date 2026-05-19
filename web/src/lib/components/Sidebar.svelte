@@ -20,7 +20,9 @@
         LayoutPanelLeft,
         Search,
         X,
-        BookOpen
+        BookOpen,
+        Pin,
+        PinOff
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -84,6 +86,17 @@
             if ($page.url.pathname === `/chat/${c.id}`) goto('/chat');
         } catch {
             toast.error('Suppression impossible');
+        }
+    }
+
+    async function togglePin(ev: Event, c: ConversationOut) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try {
+            await conversations.patch(c.id, { pinned: !c.pinned });
+            await refreshConvs();
+        } catch {
+            toast.error('Impossible d\'épingler la conversation');
         }
     }
 
@@ -217,11 +230,28 @@
                     >
                         <a
                             href="/chat/{c.id}"
-                            class="block min-w-0 flex-1 truncate px-2 py-1.5 text-xs
+                            class="flex min-w-0 flex-1 items-center gap-1.5 truncate px-2 py-1.5 text-xs
                                    {active ? 'text-white' : 'text-neutral-400 group-hover/conv:text-white'}"
                         >
-                            {c.title}
+                            {#if c.pinned}
+                                <Pin size={10} class="shrink-0 text-cyan-400" />
+                            {/if}
+                            <span class="truncate">{c.title}</span>
                         </a>
+                        <button
+                            type="button"
+                            onclick={(ev) => togglePin(ev, c)}
+                            class="hidden rounded p-1 text-neutral-500
+                                   hover:bg-white/10 hover:text-cyan-300 group-hover/conv:block"
+                            title={c.pinned ? 'Désépingler' : 'Épingler'}
+                            aria-label={c.pinned ? 'Désépingler la conversation' : 'Épingler la conversation'}
+                        >
+                            {#if c.pinned}
+                                <PinOff size={11} />
+                            {:else}
+                                <Pin size={11} />
+                            {/if}
+                        </button>
                         <button
                             type="button"
                             onclick={(ev) => deleteConversation(ev, c)}
