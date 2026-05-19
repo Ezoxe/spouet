@@ -55,6 +55,18 @@ async def patch_tool(
     return _to_out(tool)
 
 
+@router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tool(tool_id: UUID, _: CurrentUser, db: DbSession) -> None:
+    """Désinstalle un tool (supprime la row DB). L'image Docker n'est pas
+    supprimée du host — c'est une opération séparée et potentiellement
+    partagée. ON DELETE CASCADE nettoie l'historique tool_executions lié."""
+    tool = await db.get(Tool, tool_id)
+    if tool is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tool not found")
+    await db.delete(tool)
+    await db.commit()
+
+
 class ApprovalDecision(BaseModel):
     approved: bool
     note: str | None = None

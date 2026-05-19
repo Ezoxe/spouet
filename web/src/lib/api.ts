@@ -484,6 +484,7 @@ export const tools = {
     list: () => api<ToolOut[]>('/tools'),
     patch: (id: string, json: { enabled?: boolean; requires_approval?: boolean }) =>
         api<ToolOut>(`/tools/${id}`, { method: 'PATCH', json }),
+    delete: (id: string) => api<void>(`/tools/${id}`, { method: 'DELETE' }),
     decideApproval: (requestId: string, approved: boolean, note?: string) =>
         api<void>(`/tools/approvals/${requestId}`, { method: 'POST', json: { approved, note } })
 };

@@ -1,6 +1,8 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { tools as toolsApi, type ToolOut } from '$lib/api';
+    import { toast } from '$lib/toast.svelte';
+    import { Trash2 } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let list: ToolOut[] = $state([]);
@@ -11,6 +13,16 @@
     async function toggle(t: ToolOut) {
         const updated = await toolsApi.patch(t.id, { enabled: !t.enabled });
         list = list.map((x) => (x.id === t.id ? updated : x));
+    }
+    async function uninstall(t: ToolOut) {
+        if (!confirm(`Désinstaller le tool « ${t.name} » ? (l'image Docker n'est pas supprimée)`))
+            return;
+        try {
+            await toolsApi.delete(t.id);
+            list = list.filter((x) => x.id !== t.id);
+        } catch {
+            toast.error('Désinstallation impossible');
+        }
     }
     onMount(refresh);
 </script>
@@ -93,7 +105,7 @@
             {#if t.description}
                 <p class="mb-3 text-sm text-neutral-400">{t.description}</p>
             {/if}
-            <div class="flex flex-wrap gap-2 text-xs">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
                 <span class="rounded bg-neutral-800 px-2 py-0.5 text-neutral-400">
                     network: <span class="font-mono">{t.network_mode}</span>
                 </span>
@@ -103,6 +115,15 @@
                 {#if t.requires_approval}
                     <span class="rounded bg-amber-900/40 px-2 py-0.5 text-amber-300">approval</span>
                 {/if}
+                <button
+                    type="button"
+                    onclick={() => uninstall(t)}
+                    class="ml-auto rounded p-1 text-neutral-500 hover:bg-red-950 hover:text-red-300"
+                    title="Désinstaller le tool"
+                    aria-label="Désinstaller le tool"
+                >
+                    <Trash2 size={13} />
+                </button>
             </div>
         </article>
     {:else}

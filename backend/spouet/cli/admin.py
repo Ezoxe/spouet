@@ -121,6 +121,23 @@ async def _install_tool_async(manifest) -> None:  # type: ignore[no-untyped-def]
     typer.echo(f"Tool {manifest.slug} {action}.")
 
 
+@tools_app.command("uninstall")
+def uninstall_tool(slug: str = typer.Argument(..., help="Slug du tool à désinstaller")) -> None:
+    """Supprime un tool de la DB (l'image Docker n'est pas supprimée)."""
+    asyncio.run(_uninstall_tool_async(slug))
+
+
+async def _uninstall_tool_async(slug: str) -> None:
+    async with async_session_factory()() as db:
+        tool = await db.scalar(select(Tool).where(Tool.slug == slug))
+        if tool is None:
+            typer.echo(f"Tool '{slug}' introuvable", err=True)
+            raise typer.Exit(1)
+        await db.delete(tool)
+        await db.commit()
+    typer.echo(f"Tool {slug} désinstallé.")
+
+
 @tools_app.command("list")
 def list_tools() -> None:
     asyncio.run(_list_tools_async())
