@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { jobs as jobsApi, type JobOut, type JobRunOut } from '$lib/api';
-    import { Play, Trash2, Plus } from 'lucide-svelte';
+    import { Play, Trash2, Plus, Pause, Power } from 'lucide-svelte';
+    import { toast } from '$lib/toast.svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
 
     let list: JobOut[] = $state([]);
@@ -35,6 +36,14 @@
     async function run(id: string) {
         await jobsApi.run(id);
         setTimeout(refresh, 1500);
+    }
+    async function toggleEnabled(j: JobOut) {
+        try {
+            await jobsApi.patch(j.id, { enabled: !j.enabled });
+            await refresh();
+        } catch {
+            toast.error('Impossible de modifier la tâche');
+        }
     }
     onMount(refresh);
 </script>
@@ -133,11 +142,31 @@
     {#each list as j (j.id)}
         <article class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div class="mb-2 flex items-center justify-between">
-                <div>
-                    <h3 class="font-medium">{j.name}</h3>
-                    <p class="font-mono text-xs text-neutral-500">{j.cron}</p>
+                <div class="flex items-center gap-2">
+                    <div>
+                        <h3 class="font-medium">{j.name}</h3>
+                        <p class="font-mono text-xs text-neutral-500">{j.cron}</p>
+                    </div>
+                    {#if !j.enabled}
+                        <span class="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-neutral-500">
+                            en pause
+                        </span>
+                    {/if}
                 </div>
                 <div class="flex gap-1">
+                    <button
+                        type="button"
+                        onclick={() => toggleEnabled(j)}
+                        class="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+                        title={j.enabled ? 'Mettre en pause' : 'Réactiver'}
+                        aria-label={j.enabled ? 'Mettre en pause la tâche' : 'Réactiver la tâche'}
+                    >
+                        {#if j.enabled}
+                            <Pause size={14} />
+                        {:else}
+                            <Power size={14} />
+                        {/if}
+                    </button>
                     <button
                         type="button"
                         onclick={() => run(j.id)}
