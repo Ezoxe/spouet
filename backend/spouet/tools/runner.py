@@ -55,15 +55,23 @@ async def run_tool(
         try:
             client.images.get(image)
         except ImageNotFound:
-            return ToolResult(
-                status="error",
-                stdout="",
-                stderr=f"image not found locally: {image}",
-                exit_code=None,
-                duration_ms=int((time.monotonic() - started) * 1000),
-                container_id=None,
-                parsed=None,
-            )
+            # L'image n'est pas locale : tentative de pull pour les tools dont
+            # l'image vient d'un registre public (par défaut les tools custom
+            # sont builds localement par tools/install-all.sh, mais certains
+            # peuvent référencer une image Docker Hub).
+            try:
+                logger.info("tool.image_pull", image=image)
+                client.images.pull(image)
+            except (ImageNotFound, APIError) as e:
+                return ToolResult(
+                    status="error",
+                    stdout="",
+                    stderr=f"image {image!r} not available locally and pull failed: {e}",
+                    exit_code=None,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    container_id=None,
+                    parsed=None,
+                )
 
         container: Container | None = None
         try:

@@ -86,9 +86,18 @@ async def start(db: AsyncSession, connector: Connector, *, raw_token: str) -> Co
         try:
             client.images.get(image)
         except ImageNotFound:
-            return ConnectorStatus(
-                state="crashed", container_id=None, error=f"image not found: {image}"
-            )
+            # Pull si l'image n'est pas locale (cas des connectors dont l'image
+            # vient d'un registre public). Les connectors builds localement
+            # passent par CLI install (image déjà présente).
+            try:
+                logger.info("connector.image_pull", slug=connector.slug, image=image)
+                client.images.pull(image)
+            except (ImageNotFound, APIError) as e:
+                return ConnectorStatus(
+                    state="crashed",
+                    container_id=None,
+                    error=f"image {image!r} not available locally and pull failed: {e}",
+                )
 
         # Stop + remove un éventuel container précédent du même nom
         try:
