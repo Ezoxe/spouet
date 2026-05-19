@@ -347,6 +347,27 @@ export const auth = {
     rotate: () => api<{ token: string }>('/auth/rotate', { method: 'POST' })
 };
 
+export interface DiagnosticComponent {
+    ok: boolean;
+    error: string | null;
+    version?: string | null;
+}
+
+export interface DiagnosticsOut {
+    status: 'ok' | 'degraded';
+    version: string;
+    components: {
+        database: DiagnosticComponent;
+        redis: DiagnosticComponent;
+        docker: DiagnosticComponent;
+    };
+}
+
+export const health = {
+    ping: () => api<{ status: string; version: string; db: boolean }>('/health'),
+    diagnostics: () => api<DiagnosticsOut>('/health/diagnostics')
+};
+
 export interface NodeProbeOut {
     reachable: boolean;
     error: string | null;
