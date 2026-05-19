@@ -458,6 +458,17 @@ export const jobs = {
     list: () => api<JobOut[]>('/jobs'),
     create: (json: { name: string; cron: string; prompt: string; model_pref?: string }) =>
         api<JobOut>('/jobs', { method: 'POST', json }),
+    patch: (
+        id: string,
+        json: {
+            name?: string;
+            cron?: string;
+            prompt?: string;
+            tools_allowed?: string[];
+            model_pref?: string | null;
+            enabled?: boolean;
+        }
+    ) => api<JobOut>(`/jobs/${id}`, { method: 'PATCH', json }),
     delete: (id: string) => api<void>(`/jobs/${id}`, { method: 'DELETE' }),
     run: (id: string) => api<{ task_id: string }>(`/jobs/${id}/run`, { method: 'POST' }),
     runs: (id: string) => api<JobRunOut[]>(`/jobs/${id}/runs`)
