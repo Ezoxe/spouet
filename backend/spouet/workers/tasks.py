@@ -351,6 +351,46 @@ async def _purge_metrics_partitions_async() -> int:
     return dropped
 
 
+@celery_app.task(name="spouet.workers.tasks.sync_mail_accounts")
+def sync_mail_accounts() -> int:
+    """Synchronise toutes les boîtes mail activées (fetch + tri IA + brouillons)."""
+    return asyncio.run(_sync_mail_accounts_async())
+
+
+async def _sync_mail_accounts_async() -> int:
+    import redis.asyncio as redis  # type: ignore[import-untyped]
+
+    from spouet.db.models import MailAccount
+    from spouet.mail.sync import sync_account
+
+    # Verrou global : un seul cycle de synchro à la fois (évite que deux ticks
+    # beat se chevauchent si la synchro déborde l'intervalle).
+    cli = redis.from_url(str(settings.redis_url), decode_responses=True)
+    try:
+        got = await cli.set("lock:mail_sync", "1", nx=True, ex=600)
+        if not got:
+            return 0
+        synced = 0
+        async with _task_db() as db:
+            rows = (
+                await db.execute(select(MailAccount).where(MailAccount.enabled.is_(True)))
+            ).scalars().all()
+            for acc in rows:
+                try:
+                    await sync_account(db, acc)
+                    synced += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("mail.sync_account_failed", account=str(acc.id), error=str(e))
+        if synced:
+            logger.info("mail.synced", accounts=synced)
+        return synced
+    finally:
+        try:
+            await cli.delete("lock:mail_sync")
+        finally:
+            await cli.aclose()
+
+
 @celery_app.task(name="spouet.workers.tasks.monitor_connectors")
 def monitor_connectors() -> int:
     """Refresh statut + redémarre les connectors `enabled` qui ont crashé."""

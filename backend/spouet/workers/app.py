@@ -40,6 +40,10 @@ celery_app.conf.beat_schedule = {
         "task": "spouet.workers.tasks.monitor_connectors",
         "schedule": schedule(30.0),
     },
+    "sync-mail-accounts": {
+        "task": "spouet.workers.tasks.sync_mail_accounts",
+        "schedule": schedule(180.0),  # toutes les 3 min
+    },
     # Timeseries : crée les partitions à venir, rollup 1-min, purge ancien
     "create-metrics-partitions": {
         "task": "spouet.workers.tasks.create_metrics_partitions",
