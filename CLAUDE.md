@@ -102,6 +102,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 - **Connectors persistants** : à la différence des tools (jetables), un connector est un conteneur Docker long-running (Discord, Telegram, IMAP…) qui rend l'IA joignable depuis l'extérieur. Cycle de vie géré par `connectors/manager.py` ; tâche Celery `monitor_connectors` (30s) auto-restart les conteneurs crashés. Format documenté dans `docs/connectors-authoring.md`.
 - **RAG** : embeddings via Ollama (`nomic-embed-text`), stockés dans PGVector (index `ivfflat`). Abstraction `VectorStore` permet de swap vers Qdrant plus tard.
 - **Voix (STT/TTS)** : microservice `voice-engine` (conteneur dédié, hors backend) embarque faster-whisper (reconnaissance) + Piper (synthèse FR). Le frontend capture le micro via `MediaRecorder` (fonctionne dans WebView2/Tauri, contrairement à la Web Speech API), POST `/api/voice/transcribe`, puis lit l'audio renvoyé par `/api/voice/speak`. Le backend (`voice/client.py`) ne fait que proxifier avec auth. Repli navigateur (`SpeechSynthesis`) si le service est indisponible. Le service n'est jamais exposé au LAN (pas de `ports`).
+- **Mail** : module `mail/` (IMAP en lecture `readonly` + SMTP) piloté par la tâche Celery `sync_mail_accounts` (toutes les 3 min, verrou Redis anti-chevauchement). Chaque nouveau mail est classé par le LLM (spam / important / normal / newsletter / notification + score + `needs_reply` + résumé). Garde-fous **par conception** : les spams sont *déplacés* vers un dossier (jamais supprimés), et toute réponse est un brouillon `pending` qui n'est **envoyé que sur validation explicite** (`POST /api/mail/drafts/{id}/send`). Identifiants stockés au coffre (scope `mail:<account_id>`).
 
 ## Modules backend
 
@@ -118,6 +119,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 | `scheduler/` | Définitions Celery Beat dynamiques (DB-backed) |
 | `rag/` | Ingest, retriever PGVector, abstraction VectorStore |
 | `voice/` | Pont httpx vers le microservice voice-engine (STT/TTS) |
+| `mail/` | Boîtes IMAP/SMTP, tri IA, réponses validées en HITL |
 | `memory/` | Key/value persistant + résumé conversationnel |
 | `realtime/` | Hub SSE/WS backed par Redis pub/sub |
 | `workers/` | Tâches Celery (heartbeat sweeper, monitor_connectors, scheduler runs) |
