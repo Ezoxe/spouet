@@ -479,6 +479,119 @@ class ConnectorRoute(Base):
 
 
 # ---------------------------------------------------------------------------
+# Mail (boîtes IMAP/SMTP, tri IA, réponses validées en HITL)
+# ---------------------------------------------------------------------------
+
+
+class MailAccount(Base, TimestampMixin):
+    """Une boîte mail connectée (IMAP en lecture, SMTP en envoi).
+
+    Le mot de passe n'est jamais stocké ici : il vit chiffré dans le coffre
+    (scope `mail:<account_id>`, key `password`).
+    """
+
+    __tablename__ = "mail_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    imap_host: Mapped[str] = mapped_column(String(255), nullable=False)
+    imap_port: Mapped[int] = mapped_column(Integer, default=993, nullable=False)
+    imap_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    smtp_host: Mapped[str] = mapped_column(String(255), nullable=False)
+    smtp_port: Mapped[int] = mapped_column(Integer, default=465, nullable=False)
+    smtp_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(320), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Comportement automatique
+    auto_classify: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Déplacer les spams détectés vers `spam_folder` (réversible, jamais de suppression).
+    auto_trash_spam: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    spam_folder: Mapped[str] = mapped_column(String(120), default="Junk", nullable=False)
+    # Préparer automatiquement un brouillon de réponse (validation requise avant envoi).
+    auto_draft_replies: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    signature: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    # Suivi de synchro
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_uid: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    messages: Mapped[list[MailMessage]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
+
+
+class MailMessage(Base):
+    """Un mail récupéré et analysé."""
+
+    __tablename__ = "mail_messages"
+    __table_args__ = (
+        UniqueConstraint("account_id", "folder", "uid", name="uq_mail_account_folder_uid"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mail_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    uid: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    folder: Mapped[str] = mapped_column(String(120), default="INBOX", nullable=False)
+    message_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    from_addr: Mapped[str] = mapped_column(String(320), default="", nullable=False)
+    from_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    to_addrs: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    subject: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    snippet: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Analyse IA
+    classification: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    importance: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    needs_reply: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # none | trashed (déplacé vers spam_folder)
+    action_taken: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False, index=True
+    )
+
+    account: Mapped[MailAccount] = relationship(back_populates="messages")
+
+
+class MailDraft(Base, TimestampMixin):
+    """Brouillon de réponse généré par l'IA, en attente de validation HITL.
+
+    Aucun mail n'est jamais envoyé sans passer par `status='approved'` via une
+    action explicite de l'utilisateur.
+    """
+
+    __tablename__ = "mail_drafts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mail_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    # Mail auquel on répond (None = nouveau message).
+    in_reply_to_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mail_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    to_addrs: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    subject: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # pending | sent | rejected | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ---------------------------------------------------------------------------
 # Audit
 # ---------------------------------------------------------------------------
 
