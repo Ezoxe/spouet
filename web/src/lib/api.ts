@@ -538,6 +538,65 @@ export const memory = {
 };
 
 // ----------------------------------------------------------------------------
+// Voix (STT / TTS via le microservice voice-engine)
+// ----------------------------------------------------------------------------
+
+export interface VoiceHealth {
+    enabled: boolean;
+    ok: boolean;
+    error?: string;
+    stt?: { model: string; ready: boolean };
+    tts?: { voice: string; ready: boolean };
+}
+
+function audioExt(mime: string): string {
+    if (mime.includes('webm')) return 'webm';
+    if (mime.includes('ogg')) return 'ogg';
+    if (mime.includes('mp4') || mime.includes('m4a')) return 'mp4';
+    if (mime.includes('wav')) return 'wav';
+    return 'bin';
+}
+
+export const voice = {
+    health: () => api<VoiceHealth>('/voice/health'),
+    /** Envoie un enregistrement audio et renvoie le texte transcrit. */
+    transcribe: async (audio: Blob, language?: string): Promise<string> => {
+        const fd = new FormData();
+        fd.append('audio', audio, `audio.${audioExt(audio.type)}`);
+        if (language) fd.append('language', language);
+        const token = getToken();
+        const res = await fetch(`${BASE}/api/voice/transcribe`, {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: fd
+        });
+        if (!res.ok) {
+            if (res.status === 401) handleUnauthorized();
+            throw new ApiError(res.status, await res.text(), `${res.status}`);
+        }
+        const data = (await res.json()) as { text?: string };
+        return (data.text ?? '').trim();
+    },
+    /** Synthétise un texte et renvoie un Blob audio (WAV). */
+    speak: async (text: string, voiceName?: string): Promise<Blob> => {
+        const token = getToken();
+        const res = await fetch(`${BASE}/api/voice/speak`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify(voiceName ? { text, voice: voiceName } : { text })
+        });
+        if (!res.ok) {
+            if (res.status === 401) handleUnauthorized();
+            throw new ApiError(res.status, await res.text(), `${res.status}`);
+        }
+        return res.blob();
+    }
+};
+
+// ----------------------------------------------------------------------------
 // Coffre de secrets
 // ----------------------------------------------------------------------------
 

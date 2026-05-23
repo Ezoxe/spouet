@@ -1,15 +1,20 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import { fade, scale } from 'svelte/transition';
-    import { Mic, MicOff, X, Volume2, VolumeX } from 'lucide-svelte';
+    import { Mic, MicOff, X, Volume2, VolumeX, Loader2 } from 'lucide-svelte';
     import {
-        startStt,
-        createTts,
-        isSttSupported,
+        startRecorder,
+        createTtsPlayer,
+        isRecordingSupported,
+        isSecureContextOk,
+        isWebSpeechSttSupported,
+        startWebSpeechStt,
         isTtsSupported,
-        type TtsHandle,
+        type Recorder,
+        type TtsPlayer,
         type VoiceBus
     } from '$lib/voice';
+    import { voice as voiceApi } from '$lib/api';
     import Logo from './Logo.svelte';
 
     interface Props {
@@ -17,70 +22,116 @@
         streaming: boolean;
         onclose: () => void;
         onsubmit: (text: string) => void;
-        /** Le parent doit passer une instance et appeler `bus.token(delta)` /
-         *  `bus.done()`. Cela évite les pertes de re-render quand un même
-         *  delta est ré-émis. */
+        /** Bus poussé par le parent : `bus.token(delta)` / `bus.done()`. */
         bus?: VoiceBus;
+        /** Langue de transcription (déduit la voix). */
+        lang?: string;
     }
 
-    let {
-        open = $bindable(),
-        streaming,
-        onclose,
-        onsubmit,
-        bus
-    }: Props = $props();
+    let { open = $bindable(), streaming, onclose, onsubmit, bus, lang = 'fr' }: Props = $props();
 
-    const sttOk = isSttSupported();
-    const ttsOk = isTtsSupported();
+    // Mode de capture déterminé au runtime.
+    const canRecord = isRecordingSupported() && isSecureContextOk();
+    const mode: 'recorder' | 'webspeech' | 'none' = canRecord
+        ? 'recorder'
+        : isWebSpeechSttSupported()
+          ? 'webspeech'
+          : 'none';
+    const ttsOk = isTtsSupported() || mode === 'recorder';
 
     let listening = $state(false);
+    let transcribing = $state(false);
     let muted = $state(false);
+    let level = $state(0);
     let partial = $state('');
-    let lastFinal = $state('');
     let error = $state<string | null>(null);
 
-    let rec: ReturnType<typeof startStt> = null;
-    let tts: TtsHandle | null = null;
+    let rec: Recorder | null = null;
+    let webrec: ReturnType<typeof startWebSpeechStt> = null;
+    let tts: TtsPlayer | null = null;
 
-    function ensureTts(): TtsHandle {
-        if (!tts) tts = createTts('fr-FR');
+    function ensureTts(): TtsPlayer {
+        if (!tts) tts = createTtsPlayer({ lang: `${lang}-${lang.toUpperCase()}`, useBackend: true });
         return tts;
     }
 
-    function startListening() {
-        if (!sttOk || streaming) return;
-        partial = '';
-        lastFinal = '';
+    function humanizeMicError(e: unknown): string {
+        const name = (e as { name?: string })?.name ?? '';
+        if (name === 'NotAllowedError' || name === 'SecurityError')
+            return 'Accès au micro refusé. Autorisez-le dans le navigateur.';
+        if (name === 'NotFoundError') return 'Aucun micro détecté.';
+        return e instanceof Error ? e.message : String(e);
+    }
+
+    async function startListening() {
+        if (streaming || listening || transcribing) return;
         error = null;
-        rec = startStt({
-            lang: 'fr-FR',
-            onPartial: (t) => (partial = t),
-            onFinal: (t) => (lastFinal = t),
-            onError: (e) => {
-                error = e;
+        partial = '';
+
+        if (mode === 'recorder') {
+            try {
+                rec = await startRecorder({
+                    silenceMs: 1500,
+                    onLevel: (l) => (level = l),
+                    onSilence: () => void finishRecording()
+                });
+                listening = true;
+            } catch (e) {
+                error = humanizeMicError(e);
                 listening = false;
-            },
-            onEnd: () => {
-                listening = false;
-                const text = (lastFinal || partial).trim();
-                if (text) {
-                    onsubmit(text);
-                    partial = '';
-                    lastFinal = '';
-                }
             }
-        });
-        listening = !!rec;
+            return;
+        }
+
+        if (mode === 'webspeech') {
+            let lastFinal = '';
+            webrec = startWebSpeechStt({
+                lang: `${lang}-${lang.toUpperCase()}`,
+                onPartial: (t) => (partial = t),
+                onFinal: (t) => (lastFinal = t),
+                onError: (err) => {
+                    error = err;
+                    listening = false;
+                },
+                onEnd: () => {
+                    listening = false;
+                    const text = (lastFinal || partial).trim();
+                    partial = '';
+                    if (text) onsubmit(text);
+                }
+            });
+            listening = !!webrec;
+        }
+    }
+
+    async function finishRecording() {
+        if (!rec || !listening) return;
+        listening = false;
+        level = 0;
+        const r = rec;
+        rec = null;
+        const blob = await r.stop();
+        if (!blob) return;
+        transcribing = true;
+        try {
+            const text = await voiceApi.transcribe(blob, lang);
+            if (text.trim()) onsubmit(text.trim());
+            else error = 'Rien compris, réessayez.';
+        } catch {
+            error = 'Transcription échouée (moteur voix indisponible ?).';
+        } finally {
+            transcribing = false;
+        }
     }
 
     function stopListening() {
-        rec?.stop();
+        if (mode === 'recorder') void finishRecording();
+        else webrec?.stop();
     }
 
     function toggleListen() {
         if (listening) stopListening();
-        else startListening();
+        else void startListening();
     }
 
     function toggleMute() {
@@ -89,22 +140,25 @@
     }
 
     function close() {
-        rec?.abort();
+        rec?.cancel();
+        webrec?.abort();
         tts?.cancel();
         listening = false;
+        transcribing = false;
+        level = 0;
         onclose();
     }
 
-    // Branchement du bus parent → TTS
+    // Stream LLM -> TTS
     $effect(() => {
         if (!bus) return;
         const off = bus.subscribe({
             token: (delta) => {
-                if (!ttsOk || muted) return;
+                if (muted) return;
                 ensureTts().speak(delta);
             },
             done: () => {
-                if (!ttsOk || muted) return;
+                if (muted) return;
                 ensureTts().flush();
             }
         });
@@ -112,7 +166,8 @@
     });
 
     onDestroy(() => {
-        rec?.abort();
+        rec?.cancel();
+        webrec?.abort();
         tts?.cancel();
     });
 
@@ -159,6 +214,7 @@
                 class="orb"
                 class:listening
                 class:speaking={streaming && !muted}
+                style:opacity={listening ? 0.55 + level * 0.45 : undefined}
             ></span>
             <span class="relative z-10 grid place-items-center">
                 <Logo size={140} glow animated />
@@ -168,13 +224,15 @@
         <p class="mt-10 max-w-xl px-6 text-center text-base text-neutral-200 min-h-[3rem]">
             {#if error}
                 <span class="text-red-400">⚠ {error}</span>
+            {:else if transcribing}
+                <span class="text-cyan-300">Transcription…</span>
             {:else if listening}
-                {partial || lastFinal || 'À l’écoute…'}
+                {partial || 'À l’écoute…'}
             {:else if streaming}
                 <span class="text-cyan-300">Spouet répond…</span>
-            {:else if !sttOk}
+            {:else if mode === 'none'}
                 <span class="text-amber-300">
-                    La reconnaissance vocale n’est pas supportée par ce navigateur.
+                    Aucun moyen de capter le micro ici. Utilisez l’app ou un accès HTTPS.
                 </span>
             {:else}
                 Appuyez sur Espace ou sur le micro pour parler.
@@ -202,7 +260,7 @@
             <button
                 type="button"
                 onclick={toggleListen}
-                disabled={!sttOk || streaming}
+                disabled={mode === 'none' || streaming || transcribing}
                 aria-pressed={listening}
                 aria-label={listening ? 'Arrêter l’écoute' : 'Commencer à parler'}
                 class="grid h-16 w-16 place-items-center rounded-full text-white shadow-xl
@@ -211,7 +269,9 @@
                     ? 'bg-gradient-to-br from-rose-500 to-rose-700'
                     : 'bg-gradient-to-br from-cyan-500 to-cyan-700'}"
             >
-                {#if listening}
+                {#if transcribing}
+                    <Loader2 size={22} class="animate-spin" />
+                {:else if listening}
                     <MicOff size={22} />
                 {:else}
                     <Mic size={22} />
@@ -277,11 +337,9 @@
         0%,
         100% {
             transform: scale(0.95);
-            opacity: 0.85;
         }
         50% {
             transform: scale(1.18);
-            opacity: 1;
         }
     }
     @keyframes speak-pulse {
