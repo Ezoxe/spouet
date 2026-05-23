@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import { fade, scale } from 'svelte/transition';
-    import { Mic, MicOff, X, Volume2, VolumeX, Loader2 } from 'lucide-svelte';
+    import { Mic, MicOff, X, Volume2, VolumeX, Loader2, Repeat } from 'lucide-svelte';
     import {
         startRecorder,
         createTtsPlayer,
@@ -26,9 +26,19 @@
         bus?: VoiceBus;
         /** Langue de transcription (déduit la voix). */
         lang?: string;
+        /** Incrémenté par le parent (hotkey/tray) pour déclencher l'écoute. */
+        requestListen?: number;
     }
 
-    let { open = $bindable(), streaming, onclose, onsubmit, bus, lang = 'fr' }: Props = $props();
+    let {
+        open = $bindable(),
+        streaming,
+        onclose,
+        onsubmit,
+        bus,
+        lang = 'fr',
+        requestListen = 0
+    }: Props = $props();
 
     // Mode de capture déterminé au runtime.
     const canRecord = isRecordingSupported() && isSecureContextOk();
@@ -45,10 +55,12 @@
     let level = $state(0);
     let partial = $state('');
     let error = $state<string | null>(null);
+    let handsFree = $state(false);
 
     let rec: Recorder | null = null;
     let webrec: ReturnType<typeof startWebSpeechStt> = null;
     let tts: TtsPlayer | null = null;
+    let relistenTimer: ReturnType<typeof setInterval> | null = null;
 
     function ensureTts(): TtsPlayer {
         if (!tts) tts = createTtsPlayer({ lang: `${lang}-${lang.toUpperCase()}`, useBackend: true });
@@ -140,6 +152,7 @@
     }
 
     function close() {
+        stopRelisten();
         rec?.cancel();
         webrec?.abort();
         tts?.cancel();
@@ -147,6 +160,11 @@
         transcribing = false;
         level = 0;
         onclose();
+    }
+
+    function toggleHandsFree() {
+        handsFree = !handsFree;
+        if (!handsFree) stopRelisten();
     }
 
     // Stream LLM -> TTS
@@ -165,7 +183,49 @@
         return () => off();
     });
 
+    // Déclenchement de l'écoute sur demande externe (hotkey/tray de l'app).
+    let lastRequest = 0;
+    $effect(() => {
+        const r = requestListen;
+        if (r && r !== lastRequest) {
+            lastRequest = r;
+            if (open && !listening && !transcribing && !streaming) void startListening();
+        }
+    });
+
+    // Mode mains-libres : à la fin d'un tour (stream + TTS terminés), réécoute.
+    let wasStreaming = false;
+    $effect(() => {
+        const s = streaming;
+        if (wasStreaming && !s && handsFree && open) scheduleRelisten();
+        wasStreaming = s;
+    });
+
+    function scheduleRelisten() {
+        if (relistenTimer) clearInterval(relistenTimer);
+        let ticks = 0;
+        relistenTimer = setInterval(() => {
+            ticks++;
+            const speaking = tts?.speaking ?? false;
+            if (!speaking || ticks > 150) {
+                if (relistenTimer) clearInterval(relistenTimer);
+                relistenTimer = null;
+                if (handsFree && open && !muted && !listening && !transcribing && !streaming) {
+                    void startListening();
+                }
+            }
+        }, 200);
+    }
+
+    function stopRelisten() {
+        if (relistenTimer) {
+            clearInterval(relistenTimer);
+            relistenTimer = null;
+        }
+    }
+
     onDestroy(() => {
+        stopRelisten();
         rec?.cancel();
         webrec?.abort();
         tts?.cancel();
@@ -278,13 +338,23 @@
                 {/if}
             </button>
 
-            <span class="grid h-12 w-12 place-items-center rounded-full text-[10px] text-neutral-500">
-                Esc
-            </span>
+            <button
+                type="button"
+                onclick={toggleHandsFree}
+                aria-pressed={handsFree}
+                title={handsFree ? 'Conversation continue activée' : 'Conversation continue'}
+                aria-label="Mode mains-libres"
+                class="grid h-12 w-12 place-items-center rounded-full border transition
+                       {handsFree
+                    ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-300'
+                    : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10'}"
+            >
+                <Repeat size={16} />
+            </button>
         </div>
 
         <p class="mt-6 text-[10px] uppercase tracking-widest text-neutral-600">
-            Espace : parler · Esc : fermer
+            Espace : parler · Esc : fermer{handsFree ? ' · mains-libres ⟳' : ''}
         </p>
     </div>
 {/if}

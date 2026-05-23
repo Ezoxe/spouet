@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, tick } from 'svelte';
+    import { onMount, onDestroy, tick } from 'svelte';
     import { fade, fly, scale } from 'svelte/transition';
     import {
         nodes as nodesApi,
@@ -22,7 +22,26 @@
     let scroller: HTMLElement | undefined = $state();
     let expanded = $state(false);
     let voiceOpen = $state(false);
+    let voiceStart = $state(0);
     const voiceBus = createVoiceBus();
+
+    // Dans l'app desktop, le raccourci Ctrl+Maj+Espace / le tray émettent
+    // `spouet://start-voice` : on ouvre le mode vocal et on démarre l'écoute.
+    let unlistenVoice: (() => void) | null = null;
+    onMount(() => {
+        const tauri = (window as unknown as { __TAURI__?: { event?: { listen?: Function } } })
+            .__TAURI__;
+        if (tauri?.event?.listen) {
+            tauri.event
+                .listen('spouet://start-voice', () => {
+                    voiceOpen = true;
+                    voiceStart++;
+                })
+                .then((un: () => void) => (unlistenVoice = un))
+                .catch(() => {});
+        }
+    });
+    onDestroy(() => unlistenVoice?.());
 
     async function ensureConv() {
         if (convId) return convId;
@@ -218,6 +237,7 @@
     bind:open={voiceOpen}
     {streaming}
     bus={voiceBus}
+    requestListen={voiceStart}
     onclose={() => (voiceOpen = false)}
     onsubmit={(t) => send(t)}
 />
