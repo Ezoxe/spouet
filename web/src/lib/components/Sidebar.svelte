@@ -22,7 +22,8 @@
         X,
         BookOpen,
         Pin,
-        PinOff
+        PinOff,
+        Mail
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -41,6 +42,7 @@
         { href: '/tools', label: 'Tools', icon: Wrench },
         { href: '/templates', label: 'Templates', icon: BookOpen },
         { href: '/connectors', label: 'Connectors', icon: Plug },
+        { href: '/mail', label: 'Mail', icon: Mail },
         { href: '/jobs', label: 'Tâches', icon: Clock },
         { href: '/docs', label: 'Documents', icon: FileText },
         { href: '/memory', label: 'Mémoire', icon: Brain },

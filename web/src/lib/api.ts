@@ -597,6 +597,109 @@ export const voice = {
 };
 
 // ----------------------------------------------------------------------------
+// Mail (boîtes IMAP/SMTP, tri IA, validation des réponses)
+// ----------------------------------------------------------------------------
+
+export interface MailAccountOut {
+    id: string;
+    name: string;
+    email: string;
+    imap_host: string;
+    imap_port: number;
+    imap_ssl: boolean;
+    smtp_host: string;
+    smtp_port: number;
+    smtp_ssl: boolean;
+    username: string;
+    enabled: boolean;
+    auto_classify: boolean;
+    auto_trash_spam: boolean;
+    spam_folder: string;
+    auto_draft_replies: boolean;
+    signature: string;
+    last_sync_at: string | null;
+    last_error: string | null;
+}
+
+export interface MailAccountIn {
+    name: string;
+    email: string;
+    imap_host: string;
+    imap_port: number;
+    imap_ssl: boolean;
+    smtp_host: string;
+    smtp_port: number;
+    smtp_ssl: boolean;
+    username: string;
+    password: string;
+    auto_classify: boolean;
+    auto_trash_spam: boolean;
+    spam_folder: string;
+    auto_draft_replies: boolean;
+    signature: string;
+}
+
+export interface MailMessageOut {
+    id: string;
+    account_id: string;
+    from_addr: string;
+    from_name: string;
+    subject: string;
+    snippet: string;
+    classification: string | null;
+    importance: number;
+    needs_reply: boolean;
+    summary: string;
+    is_read: boolean;
+    action_taken: string;
+    received_at: string | null;
+    created_at: string;
+}
+
+export interface MailDraftOut {
+    id: string;
+    account_id: string;
+    in_reply_to_id: string | null;
+    to_addrs: string;
+    subject: string;
+    body: string;
+    status: string;
+    error: string | null;
+    created_at: string;
+}
+
+export const mail = {
+    accounts: () => api<MailAccountOut[]>('/mail/accounts'),
+    createAccount: (json: MailAccountIn) =>
+        api<MailAccountOut>('/mail/accounts', { method: 'POST', json }),
+    patchAccount: (id: string, json: Partial<MailAccountIn> & { enabled?: boolean }) =>
+        api<MailAccountOut>(`/mail/accounts/${id}`, { method: 'PATCH', json }),
+    deleteAccount: (id: string) => api<void>(`/mail/accounts/${id}`, { method: 'DELETE' }),
+    testAccount: (id: string) =>
+        api<{ imap_ok: boolean; smtp_ok: boolean; error: string | null }>(
+            `/mail/accounts/${id}/test`,
+            { method: 'POST' }
+        ),
+    sync: () => api<{ status: string }>('/mail/sync', { method: 'POST' }),
+    messages: (opts: { accountId?: string; classification?: string; limit?: number } = {}) => {
+        const qs = new URLSearchParams();
+        if (opts.accountId) qs.set('account_id', opts.accountId);
+        if (opts.classification) qs.set('classification', opts.classification);
+        if (opts.limit) qs.set('limit', String(opts.limit));
+        const q = qs.toString();
+        return api<MailMessageOut[]>(`/mail/messages${q ? `?${q}` : ''}`);
+    },
+    drafts: (statusFilter?: string) =>
+        api<MailDraftOut[]>(
+            `/mail/drafts${statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : ''}`
+        ),
+    patchDraft: (id: string, json: { subject?: string; body?: string }) =>
+        api<MailDraftOut>(`/mail/drafts/${id}`, { method: 'PATCH', json }),
+    sendDraft: (id: string) => api<MailDraftOut>(`/mail/drafts/${id}/send`, { method: 'POST' }),
+    rejectDraft: (id: string) => api<void>(`/mail/drafts/${id}`, { method: 'DELETE' })
+};
+
+// ----------------------------------------------------------------------------
 // Coffre de secrets
 // ----------------------------------------------------------------------------
 
