@@ -1,0 +1,50 @@
+slug: spotify
+name: Spotify
+version: 0.1.0
+description: |
+  Contrôle la lecture Spotify de l'utilisateur (Spotify Connect) : lancer un
+  titre ou un artiste, mettre en pause, piste suivante/précédente, régler le
+  volume, chercher, ou voir ce qui joue. Nécessite un compte Spotify Premium
+  connecté dans Spouet (onglet Spotify) et un appareil actif.
+image: spouet/tool-spotify:0.1.0
+
+# internal : attaché au réseau Spouet pour résoudre `backend` (cf. SPOUET_API_URL)
+network: internal
+timeout_s: 15
+mem_limit: 96m
+cpu_limit: 0.5
+
+secrets:
+  SPOUET_API_TOKEN: tool:spouet-api/token
+
+env:
+  SPOUET_API_URL: http://backend:8000
+
+input_schema:
+  type: object
+  required: [action]
+  additionalProperties: false
+  properties:
+    action:
+      type: string
+      enum: [play, pause, next, previous, volume, search, status]
+      description: >
+        play (avec `query` pour lancer un titre, sans `query` pour reprendre),
+        pause, next, previous, volume (avec `volume`), search (avec `query`), status.
+    query:
+      type: string
+      description: Titre / artiste à chercher ou à jouer (actions play et search).
+    volume:
+      type: integer
+      minimum: 0
+      maximum: 100
+      description: Niveau de volume 0-100 (action volume).
+
+output_schema:
+  type: object
+  properties:
+    ok: { type: boolean }
+    message: { type: string }
+    now_playing: { type: object }
+    tracks: { type: array }
+    playback: { type: ["object", "null"] }
