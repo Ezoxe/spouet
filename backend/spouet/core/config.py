@@ -83,6 +83,15 @@ class Settings(BaseSettings):
     connector_docker_network: str = "spouet_default"
     connector_backend_url: str = "ws://backend:8000"
 
+    # Voix (microservice voice-engine : STT faster-whisper + TTS Piper)
+    voice_enabled: bool = True
+    voice_engine_url: str = "http://voice-engine:8001"
+    voice_language: str = "fr"
+    voice_tts_voice: str = "fr_FR-siwis-medium"
+    voice_timeout_s: int = 60
+    # Taille max d'un upload audio à transcrire (octets). 25 Mo ~= plusieurs min.
+    voice_max_audio_bytes: int = 25 * 1024 * 1024
+
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10

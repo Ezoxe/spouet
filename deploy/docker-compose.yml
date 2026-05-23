@@ -32,6 +32,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # Moteur voix self-hosted : STT (faster-whisper) + TTS (Piper).
+  # Non exposé au LAN (pas de `ports`), seul le backend l'appelle en interne.
+  voice-engine:
+    build:
+      context: ../voice-engine
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${SPOUET_WHISPER_MODEL:-small}
+      WHISPER_DEVICE: ${SPOUET_WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${SPOUET_WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_LANGUAGE: ${SPOUET_VOICE_LANGUAGE:-fr}
+      PIPER_VOICE: ${SPOUET_PIPER_VOICE:-fr_FR-siwis-medium}
+    volumes:
+      - ./data/voice:/data
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
   backend:
     build:
       context: ../backend
