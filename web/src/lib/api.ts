@@ -700,6 +700,49 @@ export const mail = {
 };
 
 // ----------------------------------------------------------------------------
+// Spotify (OAuth + contrôle de lecture)
+// ----------------------------------------------------------------------------
+
+export interface SpotifyTrack {
+    uri: string;
+    name: string;
+    artists: string;
+    album: string;
+}
+
+export interface SpotifyPlayback {
+    is_playing: boolean;
+    track: SpotifyTrack | null;
+    volume: number | null;
+    device: string | null;
+}
+
+export interface SpotifyStatus {
+    configured: boolean;
+    connected: boolean;
+    playback: SpotifyPlayback | null;
+}
+
+export interface SpotifyControlResult {
+    ok: boolean;
+    message?: string;
+    now_playing?: SpotifyTrack;
+    tracks?: SpotifyTrack[];
+    playback?: SpotifyPlayback | null;
+}
+
+export const spotify = {
+    status: () => api<SpotifyStatus>('/spotify/status'),
+    login: () => api<{ url: string }>('/spotify/login'),
+    control: (action: string, opts: { query?: string; volume?: number } = {}) =>
+        api<SpotifyControlResult>('/spotify/control', {
+            method: 'POST',
+            json: { action, ...opts }
+        }),
+    disconnect: () => api<void>('/spotify/disconnect', { method: 'POST' })
+};
+
+// ----------------------------------------------------------------------------
 // Coffre de secrets
 // ----------------------------------------------------------------------------
 
