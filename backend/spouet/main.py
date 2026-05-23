@@ -19,6 +19,7 @@ from spouet.api import (
     conversations,
     health,
     jobs,
+    mail,
     memory,
     nodes,
     prompt_templates,
@@ -72,6 +73,7 @@ app.include_router(nodes.router, prefix="/api/nodes", tags=["nodes"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(tools.router, prefix="/api/tools", tags=["tools"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(mail.router, prefix="/api/mail", tags=["mail"])
 app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(secrets_api.router, prefix="/api/secrets", tags=["secrets"])
