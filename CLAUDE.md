@@ -25,6 +25,7 @@ Le backend tourne sur Debian (docker-compose). Les autres surfaces sont distribu
 - **Frontend web** : SvelteKit 2 + Tailwind 4 + shadcn-svelte (PWA mobile-first)
 - **Desktop** : Tauri 2.0 (Rust shell + frontend Svelte réutilisé)
 - **Sandbox tools** : Docker SDK Python (`docker-py`), conteneur jetable par appel
+- **Voix** : microservice `voice-engine` (faster-whisper STT + Piper TTS), self-hosted, conteneur dédié
 - **Reverse proxy** : Caddy
 - **Package manager Python** : `uv`
 - **Package manager JS** : `pnpm`
@@ -100,6 +101,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 - **Coffre de secrets** : Fernet (clé dérivée de `SPOUET_SECRET_KEY`), stockage chiffré en DB, jamais réaffiché en clair. Injecté dans les tools/connectors via `manifest.secrets: { ENV_VAR: scope/key }` (scopes : `global`, `tool:<slug>`, `connector:<slug>`).
 - **Connectors persistants** : à la différence des tools (jetables), un connector est un conteneur Docker long-running (Discord, Telegram, IMAP…) qui rend l'IA joignable depuis l'extérieur. Cycle de vie géré par `connectors/manager.py` ; tâche Celery `monitor_connectors` (30s) auto-restart les conteneurs crashés. Format documenté dans `docs/connectors-authoring.md`.
 - **RAG** : embeddings via Ollama (`nomic-embed-text`), stockés dans PGVector (index `ivfflat`). Abstraction `VectorStore` permet de swap vers Qdrant plus tard.
+- **Voix (STT/TTS)** : microservice `voice-engine` (conteneur dédié, hors backend) embarque faster-whisper (reconnaissance) + Piper (synthèse FR). Le frontend capture le micro via `MediaRecorder` (fonctionne dans WebView2/Tauri, contrairement à la Web Speech API), POST `/api/voice/transcribe`, puis lit l'audio renvoyé par `/api/voice/speak`. Le backend (`voice/client.py`) ne fait que proxifier avec auth. Repli navigateur (`SpeechSynthesis`) si le service est indisponible. Le service n'est jamais exposé au LAN (pas de `ports`).
 
 ## Modules backend
 
@@ -115,6 +117,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 | `secrets/` | Coffre Fernet (chiffrement, scopes, injection en env var) |
 | `scheduler/` | Définitions Celery Beat dynamiques (DB-backed) |
 | `rag/` | Ingest, retriever PGVector, abstraction VectorStore |
+| `voice/` | Pont httpx vers le microservice voice-engine (STT/TTS) |
 | `memory/` | Key/value persistant + résumé conversationnel |
 | `realtime/` | Hub SSE/WS backed par Redis pub/sub |
 | `workers/` | Tâches Celery (heartbeat sweeper, monitor_connectors, scheduler runs) |
@@ -144,6 +147,8 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 - `SPOUET_FORCE_CPU=1` (node-agent) : court-circuite la détection GPU, force `compute_class=cpu`. Filet de sécurité si la détection se trompe sur un dGPU non utilisable.
 - `SPOUET_METRICS_RETENTION_DAYS` (backend, défaut 7) : durée de conservation de `node_metrics_1min`. La table `node_metrics_raw` est toujours purgée à 24h.
 - `SPOUET_CONNECTORS_REGISTRY_DIR` (backend, défaut `/opt/spouet/connectors/registry`) : chemin où le wizard Discord cherche le manifest canonique.
+- `SPOUET_WHISPER_MODEL` / `SPOUET_WHISPER_DEVICE` / `SPOUET_WHISPER_COMPUTE_TYPE` / `SPOUET_PIPER_VOICE` (service `voice-engine`) : modèle Whisper (`small` par défaut), device (`cpu`/`cuda`), type de calcul, et voix Piper FR. Cf. `voice-engine/README.md`. Premier démarrage = téléchargement des modèles (volume `deploy/data/voice`).
+- `SPOUET_VOICE_ENABLED` (backend, défaut `true`) : coupe proprement les endpoints `/api/voice/*` et le check santé voix si la voix n'est pas déployée.
 
 ## Capabilities : source unique de vérité hardware
 

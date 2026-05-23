@@ -63,6 +63,25 @@ async def _check_docker() -> dict[str, Any]:
     return await asyncio.to_thread(_check_docker_sync)
 
 
+async def _check_voice() -> dict[str, Any] | None:
+    """État du microservice voix (None si la voix est désactivée)."""
+    if not settings.voice_enabled:
+        return None
+    try:
+        from spouet.voice import client as voice_client
+
+        info = await asyncio.wait_for(voice_client.health(), timeout=3.0)
+        stt = info.get("stt") or {}
+        tts = info.get("tts") or {}
+        return {
+            "ok": True,
+            "error": None,
+            "version": f"whisper={stt.get('model', '?')} · piper={tts.get('voice', '?')}",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "version": None}
+
+
 @router.get("/health/diagnostics")
 async def diagnostics(_: CurrentUser, db: DbSession) -> dict[str, Any]:
     """Vérification approfondie : DB, Redis, Docker. Requiert auth.
@@ -77,17 +96,24 @@ async def diagnostics(_: CurrentUser, db: DbSession) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         db_check["error"] = f"{type(e).__name__}: {e}"
 
-    redis_check, docker_check = await asyncio.gather(
-        _check_redis(), _check_docker(), return_exceptions=False
+    redis_check, docker_check, voice_check = await asyncio.gather(
+        _check_redis(), _check_docker(), _check_voice(), return_exceptions=False
     )
 
     all_ok = db_check["ok"] and redis_check["ok"] and docker_check["ok"]
+    components: dict[str, Any] = {
+        "database": db_check,
+        "redis": redis_check,
+        "docker": docker_check,
+    }
+    # La voix est optionnelle : on ne l'ajoute (et ne l'intègre au statut global)
+    # que si elle est activée.
+    if voice_check is not None:
+        components["voice"] = voice_check
+        all_ok = all_ok and voice_check["ok"]
+
     return {
         "status": "ok" if all_ok else "degraded",
         "version": __version__,
-        "components": {
-            "database": db_check,
-            "redis": redis_check,
-            "docker": docker_check,
-        },
+        "components": components,
     }
