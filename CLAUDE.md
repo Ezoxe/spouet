@@ -103,6 +103,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 - **RAG** : embeddings via Ollama (`nomic-embed-text`), stockés dans PGVector (index `ivfflat`). Abstraction `VectorStore` permet de swap vers Qdrant plus tard.
 - **Voix (STT/TTS)** : microservice `voice-engine` (conteneur dédié, hors backend) embarque faster-whisper (reconnaissance) + Piper (synthèse FR). Le frontend capture le micro via `MediaRecorder` (fonctionne dans WebView2/Tauri, contrairement à la Web Speech API), POST `/api/voice/transcribe`, puis lit l'audio renvoyé par `/api/voice/speak`. Le backend (`voice/client.py`) ne fait que proxifier avec auth. Repli navigateur (`SpeechSynthesis`) si le service est indisponible. Le service n'est jamais exposé au LAN (pas de `ports`).
 - **Mail** : module `mail/` (IMAP en lecture `readonly` + SMTP) piloté par la tâche Celery `sync_mail_accounts` (toutes les 3 min, verrou Redis anti-chevauchement). Chaque nouveau mail est classé par le LLM (spam / important / normal / newsletter / notification + score + `needs_reply` + résumé). Garde-fous **par conception** : les spams sont *déplacés* vers un dossier (jamais supprimés), et toute réponse est un brouillon `pending` qui n'est **envoyé que sur validation explicite** (`POST /api/mail/drafts/{id}/send`). Identifiants stockés au coffre (scope `mail:<account_id>`).
+- **Spotify** : module `spotify/` (OAuth Authorization Code + refresh). Le contrôle de lecture passe par `POST /api/spotify/control`, consommé à la fois par l'UI (`/spotify`) et par le tool `spotify` (réseau `internal`) que l'IA invoque pour lancer/piloter la musique. `refresh_token` au coffre (scope `spotify:<user_id>`), `access_token` caché en Redis. Premium + appareil actif requis (l'API Web pilote un appareil Connect existant, elle ne crée pas de lecteur).
 
 ## Modules backend
 
@@ -120,6 +121,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 | `rag/` | Ingest, retriever PGVector, abstraction VectorStore |
 | `voice/` | Pont httpx vers le microservice voice-engine (STT/TTS) |
 | `mail/` | Boîtes IMAP/SMTP, tri IA, réponses validées en HITL |
+| `spotify/` | OAuth Spotify + contrôle de lecture (Connect) |
 | `memory/` | Key/value persistant + résumé conversationnel |
 | `realtime/` | Hub SSE/WS backed par Redis pub/sub |
 | `workers/` | Tâches Celery (heartbeat sweeper, monitor_connectors, scheduler runs) |
@@ -151,6 +153,7 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 - `SPOUET_CONNECTORS_REGISTRY_DIR` (backend, défaut `/opt/spouet/connectors/registry`) : chemin où le wizard Discord cherche le manifest canonique.
 - `SPOUET_WHISPER_MODEL` / `SPOUET_WHISPER_DEVICE` / `SPOUET_WHISPER_COMPUTE_TYPE` / `SPOUET_PIPER_VOICE` (service `voice-engine`) : modèle Whisper (`small` par défaut), device (`cpu`/`cuda`), type de calcul, et voix Piper FR. Cf. `voice-engine/README.md`. Premier démarrage = téléchargement des modèles (volume `deploy/data/voice`).
 - `SPOUET_VOICE_ENABLED` (backend, défaut `true`) : coupe proprement les endpoints `/api/voice/*` et le check santé voix si la voix n'est pas déployée.
+- `SPOUET_SPOTIFY_CLIENT_ID` / `SPOUET_SPOTIFY_CLIENT_SECRET` / `SPOUET_SPOTIFY_REDIRECT_URI` (backend) : OAuth Spotify. App créée sur developer.spotify.com ; le `redirect_uri` doit correspondre exactement (ex. `https://spouet.local/api/spotify/callback`). Vide = intégration Spotify désactivée.
 
 ## Capabilities : source unique de vérité hardware
 
