@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     # Taille max d'un upload audio à transcrire (octets). 25 Mo ~= plusieurs min.
     voice_max_audio_bytes: int = 25 * 1024 * 1024
 
+    # Spotify (OAuth Authorization Code — contrôle de lecture, Premium requis).
+    # Créer une app sur https://developer.spotify.com/dashboard et y déclarer le
+    # redirect_uri (ex https://spouet.local/api/spotify/callback).
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    spotify_redirect_uri: str = ""
+
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10

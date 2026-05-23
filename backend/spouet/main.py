@@ -25,6 +25,7 @@ from spouet.api import (
     prompt_templates,
     rag,
     secrets as secrets_api,
+    spotify,
     tools,
     voice,
     workspaces,
@@ -79,6 +80,7 @@ app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(secrets_api.router, prefix="/api/secrets", tags=["secrets"])
 app.include_router(connectors.router, prefix="/api/connectors", tags=["connectors"])
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
+app.include_router(spotify.router, prefix="/api/spotify", tags=["spotify"])
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(
