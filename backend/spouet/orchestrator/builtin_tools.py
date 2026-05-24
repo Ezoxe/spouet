@@ -372,19 +372,13 @@ async def _h_run_macro(
             },
         )
 
+    step_results = await run_macro_steps(conversation.user_id, macro.steps_json)
     events: list[dict[str, Any]] = []
-    step_results: list[dict[str, Any]] = []
     ok = True
-    for idx, raw_step in enumerate(macro.steps_json):
-        step, _ = _validate_step(raw_step)  # déjà validé à la création
-        result = await _exec_step(conversation.user_id, step)
-        status = result.get("status", "ok")
-        if status not in ("ok", "shown"):
+    for entry in step_results:
+        if entry["result"].get("status") not in ("ok", "shown"):
             ok = False
-        entry = {"step": idx + 1, "action": step, "result": result}
-        step_results.append(entry)
-        ev = {"event": "desktop_step", "data": entry}
-        events.append(ev)
+        events.append({"event": "desktop_step", "data": entry})
         await publish(channel, "desktop_step", entry)
 
     return BuiltinOutcome(
@@ -585,6 +579,41 @@ async def _exec_step(user_id: UUID, step: dict[str, Any]) -> dict[str, Any]:
     """Envoie une étape au client desktop et attend son résultat."""
     rid = await bridge.request_action(user_id, step)
     return await bridge.wait_for_result(rid)
+
+
+# --- Helpers publics réutilisés par l'API REST (api/desktop.py) -------------
+
+
+async def run_macro_steps(
+    user_id: UUID, steps: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Exécute séquentiellement les étapes d'une macro via le pont desktop."""
+    out: list[dict[str, Any]] = []
+    for idx, raw in enumerate(steps):
+        step, _ = _validate_step(raw)
+        result = await _exec_step(user_id, step)
+        out.append({"step": idx + 1, "action": step, "result": result})
+    return out
+
+
+def validate_steps(raw_steps: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Valide une liste d'étapes (création manuelle via l'UI). Retourne
+    (étapes_nettoyées, erreurs)."""
+    cleaned: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return [], ["au moins une étape est requise"]
+    for i, raw in enumerate(raw_steps):
+        step, errs = _validate_step(raw if isinstance(raw, dict) else {})
+        if errs:
+            errors.append(f"étape {i + 1}: {'; '.join(errs)}")
+        else:
+            cleaned.append(step)
+    return cleaned, errors
+
+
+def slugify(name: str) -> str:
+    return _slugify(name)
 
 
 def _app_matches(app: str, known: list[str]) -> bool:
