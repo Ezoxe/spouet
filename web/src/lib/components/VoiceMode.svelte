@@ -15,7 +15,7 @@
         type VoiceBus
     } from '$lib/voice';
     import { voice as voiceApi } from '$lib/api';
-    import Logo from './Logo.svelte';
+    import AiOrb from './AiOrb.svelte';
 
     interface Props {
         open: boolean;
@@ -277,7 +277,10 @@
                 style:opacity={listening ? 0.55 + level * 0.45 : undefined}
             ></span>
             <span class="relative z-10 grid place-items-center">
-                <Logo size={140} glow animated />
+                <AiOrb
+                    size={132}
+                    state={listening ? 'thinking' : streaming && !muted ? 'speaking' : 'idle'}
+                />
             </span>
         </div>
 
