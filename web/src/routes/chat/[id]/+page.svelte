@@ -375,6 +375,17 @@
         }
         return { count, tokensOut, tokensIn, totalMs };
     });
+    // Libellé/détail de l'état de réflexion, transmis à la dernière bulle assistant.
+    const thinkingLabel = $derived(loadingModel ? 'Chargement du modèle' : 'Réflexion');
+    const thinkingDetail = $derived.by(() => {
+        if (loadingModel) {
+            if (loadingModel.phase === 'start') return `${loadingModel.model} · ${loadingModel.node}`;
+            if (loadingModel.phase === 'warming') return `chauffe… ${loadingModel.elapsed_s ?? 0}s`;
+            return `prêt · ${loadingModel.elapsed_s ?? 0}s`;
+        }
+        return nodeBadge;
+    });
+
     function fmtSec(ms: number): string {
         if (ms < 1000) return `${ms} ms`;
         if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
@@ -513,6 +524,8 @@
                 streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
                 canEdit={m.role === 'user' && !streaming}
                 canRegenerate={isLastAssistant}
+                {thinkingLabel}
+                {thinkingDetail}
                 onedit={editUserMessage}
                 onregenerate={regenerate}
             />

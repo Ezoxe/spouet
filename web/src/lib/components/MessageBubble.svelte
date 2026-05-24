@@ -4,6 +4,9 @@
     import { User, Bot, Wrench, Cog, Info, Copy, Pencil, RefreshCw, Check, X } from 'lucide-svelte';
     import type { MessageOut } from '$lib/api';
     import MessageDetails from './MessageDetails.svelte';
+    import AiOrb from './AiOrb.svelte';
+    import ThinkingIndicator from './ThinkingIndicator.svelte';
+    import Markdown from './Markdown.svelte';
     import { toast } from '$lib/toast.svelte';
 
     interface Props {
@@ -20,6 +23,8 @@
         streaming?: boolean;
         canEdit?: boolean;
         canRegenerate?: boolean;
+        thinkingLabel?: string;
+        thinkingDetail?: string | null;
         onedit?: (msgId: string, newText: string) => void;
         onregenerate?: () => void;
     }
@@ -28,6 +33,8 @@
         streaming = false,
         canEdit = false,
         canRegenerate = false,
+        thinkingLabel,
+        thinkingDetail,
         onedit,
         onregenerate
     }: Props = $props();
@@ -118,7 +125,11 @@
 
 <div class="group flex flex-col gap-1 {meta.align}" in:fly={{ y: 8, duration: 220, easing: quintOut }}>
     <div class="flex items-center gap-1.5 text-xs text-neutral-500">
-        <meta.Icon size={12} />
+        {#if message.role === 'assistant'}
+            <AiOrb size={15} state={streaming ? 'thinking' : 'idle'} />
+        {:else}
+            <meta.Icon size={12} />
+        {/if}
         <span>{meta.label}</span>
         {#if 'latency_ms' in message && message.latency_ms != null}
             <span class="text-neutral-600">· {message.latency_ms}ms</span>
@@ -165,11 +176,20 @@
         </div>
     {:else}
         <div
-            class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
-                   whitespace-pre-wrap break-words {meta.bubble}"
-            class:cursor-blink={streaming}
+            class="max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed {meta.bubble}"
+            class:whitespace-pre-wrap={message.role !== 'assistant'}
         >
-            {message.content || (streaming ? '' : '…')}
+            {#if message.role === 'assistant'}
+                {#if streaming && !message.content}
+                    <ThinkingIndicator label={thinkingLabel} detail={thinkingDetail} />
+                {:else}
+                    <Markdown content={message.content} />{#if streaming}<span
+                            class="stream-caret"
+                        ></span>{/if}
+                {/if}
+            {:else}
+                {message.content || (streaming ? '' : '…')}
+            {/if}
         </div>
 
         {#if !streaming && message.content}
@@ -217,3 +237,18 @@
         onclose={() => (detailsOpen = false)}
     />
 {/if}
+
+<style>
+    /* Curseur de frappe pendant le streaming */
+    .stream-caret {
+        display: inline-block;
+        width: 0.5em;
+        height: 1.05em;
+        margin-left: 2px;
+        transform: translateY(0.18em);
+        border-radius: 2px;
+        background: var(--color-accent);
+        box-shadow: 0 0 8px -1px color-mix(in oklch, var(--color-accent) 70%, transparent);
+        animation: blink 1.05s step-end infinite;
+    }
+</style>
