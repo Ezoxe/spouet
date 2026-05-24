@@ -18,7 +18,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from spouet.core.config import settings
-from spouet.db.models import Memory, Model, Node, Tool
+from spouet.db.models import DesktopMacro, Memory, Model, Node, Tool
+from spouet.desktop import registry as desktop_registry
 
 PERSONA_NAME = "Spouet"
 
@@ -71,6 +72,65 @@ async def build_persona_prompt(
         "planifiées (Celery), mémoire persistante par utilisateur, RAG "
         "PGVector (modèle d'embedding nomic-embed-text), connecteurs externes."
     )
+
+    cap_block = await _live_capabilities_block(db, user_id)
+    if cap_block:
+        parts.append(cap_block)
+
+    return "\n\n".join(parts)
+
+
+async def _live_capabilities_block(db: AsyncSession, user_id: UUID | None) -> str:
+    """Bloc dynamique : connaissance web + pilotage PC (capability-aware).
+
+    Le pilotage du PC n'est présenté comme possible que si un client desktop
+    (app Tauri) est effectivement connecté — sinon l'IA sait qu'elle doit
+    rediriger l'utilisateur vers l'app Windows.
+    """
+    parts: list[str] = [
+        "Connaissance temps réel : appelle le tool `web_search` pour chercher sur "
+        "Internet (counters de jeux, actualités, prix, définitions, docs). Fais-le "
+        "spontanément dès que la réponse dépend d'infos récentes ou incertaines. "
+        "Tu peux ensuite afficher une image avec `show_visual` (kind='image')."
+    ]
+
+    caps = await desktop_registry.get_caps(user_id) if user_id else None
+    if caps:
+        monitors = caps.get("monitors") or []
+        apps = desktop_registry.known_app_names(caps)
+        bits = ["Pilotage du PC : un client Spouet est connecté sur cette machine."]
+        if monitors:
+            bits.append(f"{len(monitors)} écran(s) détecté(s) (1 = principal).")
+        bits.append(
+            "Tu peux lancer une application détectée (`run_desktop_action` "
+            "action=launch_app) ou ouvrir une URL (open_url), en ciblant un écran. "
+            "Pour une routine récurrente (ex. « soirée Minecraft »), utilise "
+            "`run_macro` ; si elle est inconnue, demande à l'utilisateur les étapes "
+            "voulues puis enregistre-la via `define_macro`. Si une action est "
+            "impossible (application non détectée…), dis-le clairement et propose "
+            "une reformulation."
+        )
+        if apps:
+            bits.append(f"Applications détectées (extrait) : {', '.join(sorted(apps)[:12])}.")
+        parts.append(" ".join(bits))
+
+        if user_id is not None:
+            macros = (
+                await db.execute(
+                    select(DesktopMacro)
+                    .where(DesktopMacro.user_id == user_id)
+                    .order_by(DesktopMacro.name)
+                )
+            ).scalars().all()
+            if macros:
+                names = ", ".join(f"« {m.name} »" for m in macros[:12])
+                parts.append(f"Macros desktop déjà enregistrées : {names}.")
+    else:
+        parts.append(
+            "Pilotage du PC : aucun client desktop connecté pour l'instant. Tu ne "
+            "peux pas lancer d'application ni ouvrir de fenêtre — si l'utilisateur "
+            "le demande, précise que cela nécessite l'app Windows Spouet ouverte."
+        )
 
     return "\n\n".join(parts)
 
