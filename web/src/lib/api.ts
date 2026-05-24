@@ -743,6 +743,78 @@ export const spotify = {
 };
 
 // ----------------------------------------------------------------------------
+// Desktop : pilotage du PC (macros, capacités du client) + proxy d'images
+// ----------------------------------------------------------------------------
+
+export interface MacroStep {
+    action: 'launch_app' | 'open_url';
+    app?: string;
+    url?: string;
+    monitor?: number;
+    mode?: 'normal' | 'maximized' | 'fullscreen';
+}
+
+export interface MacroOut {
+    id: string;
+    slug: string;
+    name: string;
+    description: string;
+    steps: MacroStep[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface DesktopMonitor {
+    index: number;
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    primary: boolean;
+    scale: number;
+}
+
+export interface DesktopCapabilities {
+    connected: boolean;
+    os: string | null;
+    version?: string | null;
+    monitors: DesktopMonitor[];
+    apps: string[];
+}
+
+export interface MacroRunResult {
+    status: string;
+    macro: string;
+    steps: { step: number; action: MacroStep; result: Record<string, unknown> }[];
+}
+
+export const desktop = {
+    capabilities: () => api<DesktopCapabilities>('/desktop/capabilities'),
+    macros: () => api<MacroOut[]>('/desktop/macros'),
+    createMacro: (json: { name: string; description?: string; steps: MacroStep[] }) =>
+        api<MacroOut>('/desktop/macros', { method: 'POST', json }),
+    patchMacro: (id: string, json: { name: string; description?: string; steps: MacroStep[] }) =>
+        api<MacroOut>(`/desktop/macros/${id}`, { method: 'PATCH', json }),
+    deleteMacro: (id: string) => api<void>(`/desktop/macros/${id}`, { method: 'DELETE' }),
+    runMacro: (id: string) => api<MacroRunResult>(`/desktop/macros/${id}/run`, { method: 'POST' })
+};
+
+/**
+ * Récupère une image via le proxy backend (authentifié) et renvoie un object URL.
+ * Un `<img src>` ne pouvant pas porter le header Authorization, l'overlay fetch
+ * l'image puis crée un blob — ça évite aussi les soucis de mixed-content/CORS.
+ */
+export async function proxiedImage(url: string): Promise<string> {
+    const token = getToken();
+    const res = await fetch(`${BASE}/api/visual/proxy?url=${encodeURIComponent(url)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!res.ok) throw new ApiError(res.status, null, `${res.status}`);
+    return URL.createObjectURL(await res.blob());
+}
+
+// ----------------------------------------------------------------------------
 // Coffre de secrets
 // ----------------------------------------------------------------------------
 

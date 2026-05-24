@@ -6,6 +6,7 @@
     import { fade } from 'svelte/transition';
     import { getToken, isTokenExpired, setToken } from '$lib/api';
     import { initTheme } from '$lib/theme';
+    import { startDesktopAgent } from '$lib/realtime';
     import { toast } from '$lib/toast.svelte';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Toaster from '$lib/components/Toaster.svelte';
@@ -36,19 +37,24 @@
             }
         }, 60_000);
 
+        // Agent de pilotage PC (app desktop, fenêtre main uniquement — idempotent).
+        startDesktopAgent();
+
         ready = true;
         return () => clearInterval(timer);
     });
 
     const isLogin = $derived($page.url.pathname === '/login');
     const isCompanion = $derived($page.url.pathname === '/companion');
+    // L'overlay (HUD de visuels) se rend en pleine page, sans sidebar ni chrome.
+    const isBare = $derived(isCompanion || $page.url.pathname === '/overlay');
 </script>
 
 <Toaster />
 
-{#if !ready && !isLogin}
+{#if !ready && !isLogin && !isBare}
     <div class="grid min-h-screen place-items-center text-neutral-500" in:fade>…</div>
-{:else if isLogin || isCompanion}
+{:else if isLogin || isBare}
     {@render children?.()}
 {:else}
     <div class="flex h-screen flex-col md:flex-row overflow-hidden">
