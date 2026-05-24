@@ -3,7 +3,7 @@
     import { fly } from 'svelte/transition';
     import { Loader2, KeyRound } from 'lucide-svelte';
     import { auth, setToken } from '$lib/api';
-    import Logo from '$lib/components/Logo.svelte';
+    import AiOrb from '$lib/components/AiOrb.svelte';
 
     let token = $state('');
     let loading = $state(false);
@@ -31,11 +31,11 @@
 <div class="grid min-h-screen place-items-center p-4">
     <form
         onsubmit={submit}
-        class="glass w-full max-w-sm space-y-5 rounded-2xl p-8 shadow-2xl"
+        class="glass-strong w-full max-w-sm space-y-5 rounded-2xl p-8 shadow-2xl"
         in:fly={{ y: 12, duration: 320 }}
     >
-        <div class="flex flex-col items-center gap-3 text-center">
-            <Logo size={56} glow animated />
+        <div class="flex flex-col items-center gap-4 text-center">
+            <AiOrb size={72} state="idle" />
             <div>
                 <h1 class="text-xl font-semibold tracking-tight">Bienvenue sur Spouet</h1>
                 <p class="mt-1 text-xs text-neutral-400">Connectez-vous avec votre token API</p>

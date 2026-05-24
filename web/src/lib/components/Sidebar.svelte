@@ -177,8 +177,8 @@
                                to-transparent ring-1 ring-cyan-500/20"
                     ></span>
                     <span
-                        class="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full
-                               bg-cyan-400"
+                        class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full
+                               bg-cyan-400 shadow-[0_0_10px_-1px_oklch(0.78_0.16_210/0.9)]"
                     ></span>
                 {/if}
                 <it.icon
