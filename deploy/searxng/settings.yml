@@ -1,0 +1,18 @@
+# Configuration SearXNG pour Spouet — usage interne, jamais exposé au LAN.
+# `use_default_settings: true` fusionne avec les réglages par défaut de l'image
+# (l'entrypoint crée uwsgi.ini au premier démarrage s'il manque).
+use_default_settings: true
+
+server:
+  # Remplacé au démarrage par $SEARXNG_SECRET (entrypoint de l'image searxng).
+  secret_key: "ultrasecretkey"
+  # Pas de limiteur anti-bot : seules des requêtes internes (backend) arrivent ici.
+  limiter: false
+  image_proxy: true
+
+search:
+  safe_search: 1
+  # IMPORTANT : active la sortie JSON consommée par spouet.websearch.client.
+  formats:
+    - html
+    - json

@@ -56,6 +56,20 @@ services:
       retries: 10
       start_period: 90s
 
+  # Recherche web self-hosted (méta-moteur SearXNG). Jamais exposé au LAN
+  # (pas de `ports`) : seul le backend l'appelle en interne (spouet.websearch).
+  # La sortie JSON est activée dans deploy/searxng/settings.yml.
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-spouet-searxng-secret}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    expose:
+      - "8080"
+
   backend:
     build:
       context: ../backend

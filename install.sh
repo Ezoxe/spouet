@@ -241,6 +241,7 @@ if [[ ! -f .env ]]; then
     POSTGRES_PASSWORD=$(gen_secret 24)
     REDIS_PASSWORD=$(gen_secret 24)
     SPOUET_SECRET_KEY=$(gen_secret 32)
+    SEARXNG_SECRET=$(gen_secret 24)
 
     cat > .env <<EOF
 # --- Généré par install.sh le $(date -u +%FT%TZ) ---
@@ -265,6 +266,10 @@ SPOUET_TOOL_DEFAULT_CPU_LIMIT=1.0
 SPOUET_TOOL_DEFAULT_TIMEOUT_S=30
 
 SPOUET_NODE_OFFLINE_AFTER_S=30
+
+# Recherche web (SearXNG self-hosted)
+SEARXNG_SECRET=$SEARXNG_SECRET
+SPOUET_SEARXNG_URL=http://searxng:8080
 
 # Ports hôte alloués dynamiquement
 SPOUET_POSTGRES_PORT=$PORT_PG
