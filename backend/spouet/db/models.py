@@ -271,6 +271,39 @@ class ToolExecution(Base):
 
 
 # ---------------------------------------------------------------------------
+# Macros desktop (séquences d'actions apprises, exécutées côté client Tauri)
+# ---------------------------------------------------------------------------
+
+
+class DesktopMacro(Base, TimestampMixin):
+    """Séquence d'actions bureau nommée, apprise par la conversation.
+
+    Ex. « soirée Minecraft » = [lancer CurseForge sur l'écran 1, ouvrir YouTube
+    sur l'écran 2]. Exécutée côté client (app Tauri) via le pont desktop, jamais
+    dans un conteneur Docker. Validée par l'utilisateur à la création (HITL),
+    puis considérée de confiance pour les exécutions suivantes.
+    """
+
+    __tablename__ = "desktop_macros"
+    __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_macro_user_slug"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Liste d'étapes primitives, ex :
+    #   [{"action": "launch_app", "app": "CurseForge", "monitor": 1, "mode": "fullscreen"},
+    #    {"action": "open_url", "url": "https://youtube.com", "monitor": 2}]
+    steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
