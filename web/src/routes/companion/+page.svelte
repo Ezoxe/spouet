@@ -10,7 +10,9 @@
         type MessageOut
     } from '$lib/api';
     import { Send, X, AudioLines, Sparkles } from 'lucide-svelte';
-    import Logo from '$lib/components/Logo.svelte';
+    import AiOrb from '$lib/components/AiOrb.svelte';
+    import Markdown from '$lib/components/Markdown.svelte';
+    import ThinkingIndicator from '$lib/components/ThinkingIndicator.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import VisualCard from '$lib/components/VisualCard.svelte';
     import { createVoiceBus } from '$lib/voice';
@@ -218,7 +220,7 @@
             in:fade={{ duration: 180 }}
         >
             <div in:scale={{ duration: 320, start: 0.85 }}>
-                <Logo size={130} glow animated />
+                <AiOrb size={128} state={streaming ? 'thinking' : 'idle'} />
             </div>
             <p class="text-center text-xs text-neutral-500">
                 Posez une question rapide à Spouet.
@@ -226,16 +228,28 @@
         </div>
     {:else}
         <div bind:this={scroller} class="flex-1 overflow-y-auto px-3 py-2">
-            {#each messages as m (m.id)}
+            {#each messages as m, i (m.id)}
                 <div class="mb-2" in:fly={{ y: 4, duration: 150 }}>
-                    <p class="text-[10px] uppercase text-neutral-600">{m.role}</p>
+                    <p class="flex items-center gap-1.5 text-[10px] uppercase text-neutral-600">
+                        {#if m.role === 'assistant'}
+                            <AiOrb size={12} state={streaming && i === messages.length - 1 ? 'thinking' : 'idle'} />
+                        {/if}
+                        {m.role}
+                    </p>
                     <div
-                        class="rounded-lg px-3 py-2 text-sm whitespace-pre-wrap
-                               {m.role === 'user'
-                            ? 'bg-cyan-900/30 text-cyan-100'
+                        class="rounded-lg px-3 py-2 text-sm {m.role === 'user'
+                            ? 'whitespace-pre-wrap bg-cyan-900/30 text-cyan-100'
                             : 'bg-neutral-900/70 text-neutral-200'}"
                     >
-                        {m.content || '…'}
+                        {#if m.role === 'assistant'}
+                            {#if streaming && i === messages.length - 1 && !m.content}
+                                <ThinkingIndicator />
+                            {:else}
+                                <Markdown content={m.content} />
+                            {/if}
+                        {:else}
+                            {m.content || '…'}
+                        {/if}
                     </div>
                 </div>
             {/each}
