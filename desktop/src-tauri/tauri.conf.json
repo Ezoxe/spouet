@@ -35,6 +35,21 @@
                 "visible": false,
                 "resizable": true,
                 "shadow": true
+            },
+            {
+                "label": "overlay",
+                "title": "Spouet Overlay",
+                "url": "/overlay",
+                "width": 540,
+                "height": 460,
+                "decorations": false,
+                "transparent": true,
+                "alwaysOnTop": true,
+                "skipTaskbar": true,
+                "visible": false,
+                "resizable": false,
+                "shadow": false,
+                "focus": false
             }
         ],
         "security": {

@@ -6,6 +6,8 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+mod desktop_actions;
+
 #[tauri::command]
 fn focus_main<R: Runtime>(app: AppHandle<R>) {
     show_main(&app);
@@ -117,7 +119,11 @@ pub fn run() {
         focus_main,
         toggle_companion_cmd,
         start_voice_cmd,
-        notify
+        notify,
+        desktop_actions::list_monitors,
+        desktop_actions::list_installed_apps,
+        desktop_actions::launch_app,
+        desktop_actions::open_url
     ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage de Spouet");
