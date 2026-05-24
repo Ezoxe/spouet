@@ -23,10 +23,13 @@ COPY voice_engine ./voice_engine
 
 RUN uv pip install --system .
 
-RUN useradd -m -u 1000 voice \
+# NB : ne pas nommer l'utilisateur « voice » — un groupe système « voice »
+# (gid 29) existe déjà dans python:3.11-slim et useradd refuse de le recréer.
+RUN groupadd -g 1000 spouet \
+    && useradd -m -u 1000 -g spouet spouet \
     && mkdir -p /data/piper /data/hf \
-    && chown -R voice:voice /app /data
-USER voice
+    && chown -R spouet:spouet /app /data
+USER spouet
 
 EXPOSE 8001
 CMD ["uvicorn", "voice_engine.app:app", "--host", "0.0.0.0", "--port", "8001"]
