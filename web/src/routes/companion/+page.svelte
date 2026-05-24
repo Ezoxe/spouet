@@ -4,6 +4,7 @@
     import {
         nodes as nodesApi,
         conversations,
+        tools as toolsApi,
         uuid,
         type ModelAgg,
         type MessageOut
@@ -11,7 +12,10 @@
     import { Send, X, AudioLines, Sparkles } from 'lucide-svelte';
     import Logo from '$lib/components/Logo.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
+    import VisualCard from '$lib/components/VisualCard.svelte';
     import { createVoiceBus } from '$lib/voice';
+
+    type Step = { action: string; app?: string; url?: string; monitor?: number; mode?: string };
 
     let convId: string | null = $state(null);
     let messages: MessageOut[] = $state([]);
@@ -23,7 +27,29 @@
     let expanded = $state(false);
     let voiceOpen = $state(false);
     let voiceStart = $state(0);
+    let approval: { request_id: string; kind?: string; name?: string; tool?: string; steps?: Step[] } | null =
+        $state(null);
+    let currentVisual: {
+        kind: 'image' | 'card' | 'fact';
+        url?: string | null;
+        title?: string | null;
+        text?: string | null;
+        duration_ms?: number;
+    } | null = $state(null);
     const voiceBus = createVoiceBus();
+
+    function stepLabel(s: Step): string {
+        const extra = s.monitor ? ` (écran ${s.monitor})` : '';
+        if (s.action === 'launch_app') return `Lancer ${s.app ?? '?'}${extra}`;
+        if (s.action === 'open_url') return `Ouvrir ${s.url ?? '?'}${extra}`;
+        return `${s.action}${extra}`;
+    }
+
+    async function decide(approved: boolean) {
+        if (!approval) return;
+        await toolsApi.decideApproval(approval.request_id, approved);
+        approval = null;
+    }
 
     // Dans l'app desktop, le raccourci Ctrl+Maj+Espace / le tray émettent
     // `spouet://start-voice` : on ouvre le mode vocal et on démarre l'écoute.
@@ -90,6 +116,23 @@
                     messages = [...messages.slice(0, -1), { ...assistant }];
                     await tick();
                     scroller?.scrollTo({ top: scroller.scrollHeight });
+                } else if (ev.event === 'approval_required') {
+                    const d = ev.data as {
+                        request_id: string;
+                        kind?: string;
+                        name?: string;
+                        tool?: string;
+                        steps?: Step[];
+                    };
+                    approval = {
+                        request_id: d.request_id,
+                        kind: d.kind,
+                        name: d.name,
+                        tool: d.tool,
+                        steps: d.steps
+                    };
+                } else if (ev.event === 'visual') {
+                    currentVisual = ev.data as typeof currentVisual;
                 } else if (ev.event === 'done') {
                     voiceBus.done();
                 }
@@ -161,6 +204,14 @@
         </div>
     </header>
 
+    {#if currentVisual}
+        <div class="pointer-events-none absolute inset-x-0 top-12 z-30 flex justify-center px-3">
+            <div class="pointer-events-auto">
+                <VisualCard visual={currentVisual} ondone={() => (currentVisual = null)} />
+            </div>
+        </div>
+    {/if}
+
     {#if !expanded}
         <div
             class="flex flex-1 flex-col items-center justify-center gap-6 px-6"
@@ -188,6 +239,36 @@
                     </div>
                 </div>
             {/each}
+        </div>
+    {/if}
+
+    {#if approval}
+        <div
+            class="mx-2 mb-1 rounded-lg border border-amber-900/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-100"
+        >
+            {#if approval.kind === 'define_macro'}
+                <p>Enregistrer « {approval.name} » ?</p>
+                <ul class="mt-1 space-y-0.5 text-[11px] text-amber-200/80">
+                    {#each approval.steps ?? [] as s, i}
+                        <li>{i + 1}. {stepLabel(s)}</li>
+                    {/each}
+                </ul>
+            {:else}
+                <p>Autoriser <strong>{approval.tool}</strong> ?</p>
+            {/if}
+            <div class="mt-1.5 flex gap-2">
+                <button
+                    type="button"
+                    onclick={() => decide(false)}
+                    class="rounded border border-neutral-700 px-2 py-1 hover:bg-neutral-800">Refuser</button
+                >
+                <button
+                    type="button"
+                    onclick={() => decide(true)}
+                    class="rounded bg-amber-500 px-2 py-1 font-medium text-amber-950 hover:bg-amber-400"
+                    >Approuver</button
+                >
+            </div>
         </div>
     {/if}
 

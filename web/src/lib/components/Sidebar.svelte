@@ -24,7 +24,8 @@
         Pin,
         PinOff,
         Mail,
-        Music
+        Music,
+        MonitorPlay
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -45,6 +46,7 @@
         { href: '/connectors', label: 'Connectors', icon: Plug },
         { href: '/mail', label: 'Mail', icon: Mail },
         { href: '/spotify', label: 'Spotify', icon: Music },
+        { href: '/macros', label: 'Macros PC', icon: MonitorPlay },
         { href: '/jobs', label: 'Tâches', icon: Clock },
         { href: '/docs', label: 'Documents', icon: FileText },
         { href: '/memory', label: 'Mémoire', icon: Brain },

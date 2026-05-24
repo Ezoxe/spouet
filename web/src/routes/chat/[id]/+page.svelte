@@ -17,6 +17,7 @@
     import EmptyState from '$lib/components/EmptyState.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import ToolPicker from '$lib/components/ToolPicker.svelte';
+    import VisualCard from '$lib/components/VisualCard.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
     import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square, Copy } from 'lucide-svelte';
@@ -35,7 +36,20 @@
     let focusComposer: (() => void) | null = $state(null);
     let nodeBadge: string | null = $state(null);
     let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
-    let approval: { request_id: string; tool: string } | null = $state(null);
+    let approval: {
+        request_id: string;
+        tool?: string;
+        kind?: string;
+        name?: string;
+        steps?: { action: string; app?: string; url?: string; monitor?: number; mode?: string }[];
+    } | null = $state(null);
+    let currentVisual: {
+        kind: 'image' | 'card' | 'fact';
+        url?: string | null;
+        title?: string | null;
+        text?: string | null;
+        duration_ms?: number;
+    } | null = $state(null);
     let scroller: HTMLElement | undefined = $state();
 
     // Dropdown models
@@ -152,8 +166,28 @@
                     messages = [...messages.slice(0, -1), { ...assistant }];
                     scrollBottom();
                 } else if (ev.event === 'approval_required') {
-                    const d = ev.data as { request_id: string; tool: string };
-                    approval = { request_id: d.request_id, tool: d.tool };
+                    const d = ev.data as {
+                        request_id: string;
+                        tool?: string;
+                        kind?: string;
+                        name?: string;
+                        steps?: {
+                            action: string;
+                            app?: string;
+                            url?: string;
+                            monitor?: number;
+                            mode?: string;
+                        }[];
+                    };
+                    approval = {
+                        request_id: d.request_id,
+                        tool: d.tool,
+                        kind: d.kind,
+                        name: d.name,
+                        steps: d.steps
+                    };
+                } else if (ev.event === 'visual') {
+                    currentVisual = ev.data as typeof currentVisual;
                 } else if (ev.event === 'tool_result') {
                     if (convId) messages = await conversations.messages(convId);
                     // après reload, on perd la ref locale assistant → on recrée un placeholder
@@ -269,6 +303,23 @@
         if (!approval) return;
         await toolsApi.decideApproval(approval.request_id, approved);
         approval = null;
+    }
+
+    function stepLabel(s: {
+        action: string;
+        app?: string;
+        url?: string;
+        monitor?: number;
+        mode?: string;
+    }): string {
+        const extra = s.monitor
+            ? ` (écran ${s.monitor}${s.mode ? `, ${s.mode}` : ''})`
+            : s.mode
+              ? ` (${s.mode})`
+              : '';
+        if (s.action === 'launch_app') return `Lancer ${s.app ?? '?'}${extra}`;
+        if (s.action === 'open_url') return `Ouvrir ${s.url ?? '?'}${extra}`;
+        return `${s.action}${extra}`;
     }
 
     onMount(() => {
@@ -475,15 +526,34 @@
     </div>
 </div>
 
+{#if currentVisual}
+    <div class="pointer-events-none fixed bottom-28 right-6 z-40 flex justify-end">
+        <div class="pointer-events-auto">
+            <VisualCard visual={currentVisual} ondone={() => (currentVisual = null)} />
+        </div>
+    </div>
+{/if}
+
 {#if approval}
     <div
         in:fade
         class="border-t border-amber-900/50 bg-amber-950/40 px-4 py-3 sm:px-8"
     >
         <div class="mx-auto flex max-w-3xl items-center justify-between gap-4">
-            <p class="text-sm text-amber-100">
-                L'assistant veut utiliser <strong>{approval.tool}</strong>. Approuver ?
-            </p>
+            {#if approval.kind === 'define_macro'}
+                <div class="min-w-0 text-sm text-amber-100">
+                    <p>Enregistrer la macro <strong>« {approval.name} »</strong> ?</p>
+                    <ul class="mt-1 space-y-0.5 text-xs text-amber-200/80">
+                        {#each approval.steps ?? [] as s, i}
+                            <li>{i + 1}. {stepLabel(s)}</li>
+                        {/each}
+                    </ul>
+                </div>
+            {:else}
+                <p class="text-sm text-amber-100">
+                    L'assistant veut utiliser <strong>{approval.tool}</strong>. Approuver ?
+                </p>
+            {/if}
             <div class="flex gap-2">
                 <button
                     type="button"
