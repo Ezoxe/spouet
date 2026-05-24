@@ -122,17 +122,34 @@ body {
 body::before {
     content: '';
     position: fixed;
-    inset: 0;
+    inset: -25%;
     pointer-events: none;
     z-index: 0;
     background:
-        radial-gradient(1200px circle at 110% -20%, oklch(0.7 0.05 230 / 0.05), transparent 60%),
-        radial-gradient(900px circle at -20% 120%, oklch(0.7 0.04 30 / 0.04), transparent 65%);
+        radial-gradient(38% 48% at 82% 8%, oklch(0.7 0.05 230 / 0.07), transparent 70%),
+        radial-gradient(42% 52% at 12% 102%, oklch(0.7 0.04 30 / 0.05), transparent 72%);
+    animation: aurora-drift 26s ease-in-out infinite alternate;
+    will-change: transform;
 }
 :root[data-theme='dark'] body::before {
     background:
-        radial-gradient(900px circle at 85% -10%, oklch(0.55 0.18 210 / 0.15), transparent 55%),
-        radial-gradient(700px circle at -10% 110%, oklch(0.4 0.14 290 / 0.12), transparent 60%);
+        radial-gradient(36% 46% at 84% -6%, oklch(0.58 0.19 210 / 0.18), transparent 62%),
+        radial-gradient(40% 50% at 8% 108%, oklch(0.45 0.16 290 / 0.16), transparent 64%),
+        radial-gradient(34% 40% at 70% 116%, oklch(0.55 0.15 165 / 0.1), transparent 60%);
+}
+
+/* Voile de grain : casse les aplats de dégradé, look "matière" premium. */
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.02;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+:root[data-theme='dark'] body::after {
+    opacity: 0.04;
 }
 body > div {
     position: relative;
@@ -633,4 +650,393 @@ textarea {
         color 0.15s ease,
         transform 0.15s ease,
         box-shadow 0.15s ease;
+}
+
+/* ----------------------------------------------------------------------------
+ * Effet "IA" — keyframes d'ambiance & utilitaires
+ * ---------------------------------------------------------------------------- */
+
+/* Dérive lente de l'aurore d'arrière-plan */
+@keyframes aurora-drift {
+    0% {
+        transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    }
+    50% {
+        transform: translate3d(2.5%, -2%, 0) scale(1.08) rotate(1.5deg);
+    }
+    100% {
+        transform: translate3d(-2%, 2%, 0) scale(1.05) rotate(-1deg);
+    }
+}
+
+/* Respiration douce (orbe au repos, halos) */
+@keyframes breathe {
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 0.85;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 1;
+    }
+}
+
+/* Rotation continue (couches coniques de l'orbe IA) */
+@keyframes orb-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@keyframes orb-spin-rev {
+    to {
+        transform: rotate(-360deg);
+    }
+}
+
+/* Halo pulsé (glow qui respire) */
+@keyframes glow-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 22px -8px color-mix(in oklch, var(--color-accent) 35%, transparent);
+    }
+    50% {
+        box-shadow: 0 0 36px -4px color-mix(in oklch, var(--color-accent) 60%, transparent);
+    }
+}
+
+/* Balayage de lumière sur un texte — état "Réflexion…" */
+@keyframes text-shimmer {
+    0% {
+        background-position: 200% center;
+    }
+    100% {
+        background-position: -200% center;
+    }
+}
+
+/* Entrées */
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+@keyframes pop-in {
+    0% {
+        opacity: 0;
+        transform: scale(0.92);
+    }
+    60% {
+        opacity: 1;
+        transform: scale(1.012);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Points de réflexion (typing) */
+@keyframes typing-bounce {
+    0%,
+    65%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.35;
+    }
+    32% {
+        transform: translateY(-4px);
+        opacity: 1;
+    }
+}
+
+/* Barres d'onde (orbe qui "parle", mode vocal) */
+@keyframes sound-wave {
+    0%,
+    100% {
+        transform: scaleY(0.35);
+    }
+    50% {
+        transform: scaleY(1);
+    }
+}
+
+.animate-fade-in-up {
+    animation: fade-in-up 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.animate-pop-in {
+    animation: pop-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.animate-breathe {
+    animation: breathe 4s ease-in-out infinite;
+}
+
+/* Texte à dégradé balayé — réflexion / chargement */
+.ai-shimmer-text {
+    background: linear-gradient(
+        100deg,
+        var(--color-text-subtle) 30%,
+        var(--color-accent) 50%,
+        var(--color-text-subtle) 70%
+    );
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: text-shimmer 2.4s linear infinite;
+}
+
+/* Anneau lumineux d'accent */
+.glow-ring {
+    box-shadow:
+        0 0 0 1px color-mix(in oklch, var(--color-accent) 30%, transparent),
+        0 0 24px -6px color-mix(in oklch, var(--color-accent) 45%, transparent);
+}
+
+/* Verre plus dense (modales, surfaces flottantes) */
+.glass-strong {
+    background: color-mix(in oklch, var(--color-bg-1) 88%, transparent);
+    backdrop-filter: saturate(160%) blur(20px);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+}
+:root:not([data-theme='dark']) .glass-strong {
+    background: color-mix(in oklch, var(--light-surface-elevated, oklch(0.99 0.002 240)) 92%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+ * Rendu Markdown (messages assistant). Styles globaux : le contenu {@html}
+ * n'est pas atteint par les styles "scoped" des composants Svelte.
+ * ---------------------------------------------------------------------------- */
+
+.md {
+    font-size: 0.9rem;
+    line-height: 1.7;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+}
+.md > :first-child {
+    margin-top: 0;
+}
+.md > :last-child {
+    margin-bottom: 0;
+}
+.md p {
+    margin: 0.65em 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+    margin: 1.1em 0 0.5em;
+    font-weight: 650;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+}
+.md h1 {
+    font-size: 1.4em;
+}
+.md h2 {
+    font-size: 1.2em;
+}
+.md h3 {
+    font-size: 1.06em;
+}
+.md h4 {
+    font-size: 0.95em;
+    color: var(--color-text-muted);
+}
+.md a {
+    color: var(--color-accent);
+    text-decoration: none;
+    border-bottom: 1px solid color-mix(in oklch, var(--color-accent) 35%, transparent);
+    transition:
+        border-color 0.15s,
+        color 0.15s;
+}
+.md a:hover {
+    border-bottom-color: var(--color-accent);
+}
+.md ul,
+.md ol {
+    margin: 0.6em 0;
+    padding-left: 1.45em;
+}
+.md li {
+    margin: 0.25em 0;
+}
+.md li > ul,
+.md li > ol {
+    margin: 0.2em 0;
+}
+.md ul li::marker {
+    color: var(--color-accent);
+}
+.md ol li::marker {
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.md blockquote {
+    margin: 0.85em 0;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 3px solid color-mix(in oklch, var(--color-accent) 55%, transparent);
+    color: var(--color-text-muted);
+}
+.md hr {
+    margin: 1.2em 0;
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--color-border-strong), transparent);
+}
+.md strong {
+    font-weight: 650;
+    color: var(--color-text);
+}
+.md em {
+    font-style: italic;
+}
+.md table {
+    width: 100%;
+    margin: 0.85em 0;
+    border-collapse: collapse;
+    font-size: 0.9em;
+    display: block;
+    overflow-x: auto;
+}
+.md th,
+.md td {
+    border: 1px solid var(--color-border-subtle);
+    padding: 0.4em 0.7em;
+    text-align: left;
+}
+.md th {
+    background: color-mix(in oklch, var(--color-accent) 10%, transparent);
+    font-weight: 600;
+}
+
+/* Code inline */
+.md :not(pre) > code {
+    font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85em;
+    padding: 0.12em 0.42em;
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--color-accent) 12%, var(--color-bg-2));
+    border: 1px solid color-mix(in oklch, var(--color-accent) 18%, transparent);
+    color: var(--color-text);
+    white-space: break-spaces;
+}
+
+/* Bloc de code */
+.md-code {
+    position: relative;
+    margin: 0.9em 0;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    background: color-mix(in oklch, var(--color-bg-0) 80%, oklch(0 0 0 / 0.2));
+    box-shadow: var(--shadow-card);
+}
+:root:not([data-theme='dark']) .md-code {
+    background: var(--light-surface-1, oklch(0.965 0.004 240));
+}
+.md-code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    padding: 0.4em 0.4em 0.4em 0.85em;
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    background: color-mix(in oklch, var(--color-bg-2) 60%, transparent);
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+.md-code-lang {
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-weight: 600;
+}
+.md-code-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.2em 0.55em;
+    border-radius: 6px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition:
+        background 0.15s,
+        color 0.15s;
+}
+.md-code-copy:hover {
+    background: var(--color-bg-3);
+    color: var(--color-text);
+}
+.md-code pre {
+    margin: 0;
+    padding: 0.9em 1em;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.6;
+}
+.md-code code {
+    font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+    color: var(--color-text);
+}
+
+/* Tokens de coloration syntaxique (thème sombre) */
+.tok-comment {
+    color: var(--color-text-subtle);
+    font-style: italic;
+}
+.tok-string {
+    color: oklch(0.82 0.13 150);
+}
+.tok-number {
+    color: oklch(0.84 0.11 70);
+}
+.tok-keyword {
+    color: oklch(0.78 0.13 320);
+}
+.tok-boolean {
+    color: oklch(0.8 0.13 30);
+}
+.tok-function {
+    color: oklch(0.82 0.11 235);
+}
+/* …thème clair : on assombrit pour le contraste */
+:root:not([data-theme='dark']) .tok-string {
+    color: oklch(0.46 0.15 150);
+}
+:root:not([data-theme='dark']) .tok-number {
+    color: oklch(0.5 0.14 55);
+}
+:root:not([data-theme='dark']) .tok-keyword {
+    color: oklch(0.5 0.19 320);
+}
+:root:not([data-theme='dark']) .tok-boolean {
+    color: oklch(0.52 0.18 30);
+}
+:root:not([data-theme='dark']) .tok-function {
+    color: oklch(0.46 0.15 250);
+}
+
+/* ----------------------------------------------------------------------------
+ * Accessibilité : respecte le souhait de mouvement réduit. N'affecte que les
+ * animations CSS (les transitions Svelte fly/fade sont pilotées en JS).
+ * ---------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
