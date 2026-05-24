@@ -1,0 +1,628 @@
+"""Tools « built-in » exécutés en-process (pas dans un conteneur Docker).
+
+Sur le modèle de ``delegate_to_node`` (cf. chat_loop), ces tools sont déclarés
+au LLM comme n'importe quel function-call, mais leur exécution est gérée
+directement par l'orchestrator :
+
+- ``web_search``   : recherche web rapide (SearXNG) — connaissance temps réel.
+- ``show_visual``  : affiche une image / carte / fait à l'écran (overlay animé + inline).
+- ``run_desktop_action`` : action bureau primitive (lancer une app, ouvrir une URL).
+- ``run_macro``    : exécute une macro desktop enregistrée (« soirée Minecraft »).
+- ``define_macro`` : enregistre une nouvelle macro (validation HITL).
+- ``list_macros``  : liste les macros connues de l'utilisateur.
+
+Les tools desktop (run_desktop_action / run_macro / define_macro) passent par le
+pont :mod:`spouet.desktop.bridge` et ne sont exposés que si un client desktop
+(app Tauri) est connecté — c'est la persona qui rend l'IA *capability-aware*.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from spouet.core.logging import get_logger
+from spouet.db.models import Conversation, DesktopMacro
+from spouet.desktop import bridge, registry
+from spouet.realtime.hub import publish, user_channel
+from spouet.tools.approval import request_approval, wait_for_decision
+from spouet.websearch import search as websearch_search
+
+logger = get_logger(__name__)
+
+# Tools toujours disponibles (n'exigent pas de client desktop).
+WEB_SEARCH_SLUG = "web_search"
+SHOW_VISUAL_SLUG = "show_visual"
+LIST_MACROS_SLUG = "list_macros"
+# Tools exigeant un client desktop connecté.
+RUN_DESKTOP_ACTION_SLUG = "run_desktop_action"
+RUN_MACRO_SLUG = "run_macro"
+DEFINE_MACRO_SLUG = "define_macro"
+
+_ALWAYS = {WEB_SEARCH_SLUG, SHOW_VISUAL_SLUG, LIST_MACROS_SLUG}
+_DESKTOP_GATED = {RUN_DESKTOP_ACTION_SLUG, RUN_MACRO_SLUG, DEFINE_MACRO_SLUG}
+BUILTIN_SLUGS = _ALWAYS | _DESKTOP_GATED
+
+# Actions primitives autorisées dans une étape de macro / action directe.
+ALLOWED_STEP_ACTIONS = ("launch_app", "open_url")
+ALLOWED_WINDOW_MODES = ("normal", "maximized", "fullscreen")
+MACRO_APPROVAL_TIMEOUT_S = 180
+
+
+# ---------------------------------------------------------------------------
+# Définitions exposées au LLM
+# ---------------------------------------------------------------------------
+
+_DEF_WEB_SEARCH: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": WEB_SEARCH_SLUG,
+        "description": (
+            "Recherche des informations à jour sur Internet (counters de jeux, "
+            "actualités, prix, définitions, documentation…). Utilise-le DÈS QUE "
+            "la réponse dépend d'infos récentes ou que tu n'es pas certain. "
+            "Mets kind='images' pour trouver une image (que tu pourras ensuite "
+            "afficher avec show_visual)."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {"type": "string", "description": "Requête de recherche"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["web", "images"],
+                    "description": "web (défaut) ou images",
+                },
+            },
+        },
+    },
+}
+
+_DEF_SHOW_VISUAL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": SHOW_VISUAL_SLUG,
+        "description": (
+            "Affiche un visuel à l'écran de l'utilisateur (overlay animé) : une "
+            "image (ex. la photo d'un counterpick trouvée via web_search), une "
+            "carte d'info, ou un fait court. Idéal en complément d'une réponse "
+            "vocale."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["image", "card", "fact"]},
+                "url": {"type": "string", "description": "URL de l'image (kind=image/card)"},
+                "title": {"type": "string"},
+                "text": {"type": "string", "description": "Texte de la carte / du fait"},
+                "duration_ms": {
+                    "type": "integer",
+                    "description": "Durée d'affichage en ms (défaut 7000)",
+                },
+            },
+        },
+    },
+}
+
+_DEF_LIST_MACROS: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": LIST_MACROS_SLUG,
+        "description": "Liste les macros desktop enregistrées par l'utilisateur.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+_STEP_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["action"],
+    "properties": {
+        "action": {"type": "string", "enum": list(ALLOWED_STEP_ACTIONS)},
+        "app": {"type": "string", "description": "Nom de l'application (action launch_app)"},
+        "url": {"type": "string", "description": "URL à ouvrir (action open_url)"},
+        "monitor": {
+            "type": "integer",
+            "description": "Numéro d'écran (1 = principal, 2 = secondaire…)",
+        },
+        "mode": {"type": "string", "enum": list(ALLOWED_WINDOW_MODES)},
+    },
+}
+
+_DEF_RUN_DESKTOP_ACTION: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": RUN_DESKTOP_ACTION_SLUG,
+        "description": (
+            "Exécute UNE action bureau sur le PC de l'utilisateur : lancer une "
+            "application (launch_app + app) ou ouvrir une URL (open_url + url), "
+            "éventuellement sur un écran donné. Pour une séquence récurrente, "
+            "préfère define_macro puis run_macro."
+        ),
+        "parameters": _STEP_SCHEMA,
+    },
+}
+
+_DEF_RUN_MACRO: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": RUN_MACRO_SLUG,
+        "description": (
+            "Exécute une macro desktop enregistrée par son nom (ex. « soirée "
+            "Minecraft »). Si la macro est inconnue, le résultat l'indique : "
+            "demande alors à l'utilisateur ce qu'il veut, puis enregistre-la "
+            "avec define_macro."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string", "description": "Nom de la macro"}},
+        },
+    },
+}
+
+_DEF_DEFINE_MACRO: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": DEFINE_MACRO_SLUG,
+        "description": (
+            "Enregistre une nouvelle macro desktop (séquence d'actions bureau) "
+            "après que l'utilisateur a décrit ce qu'il veut. La macro est "
+            "soumise à validation de l'utilisateur avant d'être sauvegardée. "
+            "Chaque étape est une action launch_app (app) ou open_url (url), "
+            "avec un monitor optionnel (1 = principal)."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["name", "steps"],
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "steps": {"type": "array", "items": _STEP_SCHEMA, "minItems": 1},
+            },
+        },
+    },
+}
+
+
+def tool_defs(*, desktop_connected: bool) -> list[dict[str, Any]]:
+    """Définitions des built-in tools à exposer au LLM pour ce tour.
+
+    Les tools de pilotage PC ne sont exposés que si un client desktop est
+    connecté (capability-aware). web_search / show_visual / list_macros sont
+    toujours disponibles.
+    """
+    defs = [_DEF_WEB_SEARCH, _DEF_SHOW_VISUAL, _DEF_LIST_MACROS]
+    if desktop_connected:
+        defs += [_DEF_RUN_DESKTOP_ACTION, _DEF_RUN_MACRO, _DEF_DEFINE_MACRO]
+    return defs
+
+
+def is_builtin(slug: str | None) -> bool:
+    return slug in BUILTIN_SLUGS
+
+
+# ---------------------------------------------------------------------------
+# Exécution
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BuiltinOutcome:
+    """Résultat d'un built-in tool.
+
+    ``content`` est le dict réinjecté en message role=tool. ``events`` sont des
+    events SSE supplémentaires que la boucle de chat doit yield (ex. ``visual``
+    pour l'affichage inline, ``desktop_step`` pour la progression d'une macro).
+    """
+
+    tool_name: str
+    content: dict[str, Any]
+    events: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def execute(
+    db: AsyncSession,
+    *,
+    conversation: Conversation,
+    tool_call: dict[str, Any],
+    channel: str,
+) -> BuiltinOutcome:
+    fn = tool_call.get("function") or {}
+    slug = fn.get("name") or ""
+    args = fn.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+
+    try:
+        if slug == WEB_SEARCH_SLUG:
+            return await _h_web_search(args)
+        if slug == SHOW_VISUAL_SLUG:
+            return await _h_show_visual(conversation, args, channel)
+        if slug == LIST_MACROS_SLUG:
+            return await _h_list_macros(db, conversation)
+        if slug == RUN_DESKTOP_ACTION_SLUG:
+            return await _h_run_desktop_action(conversation, args, channel)
+        if slug == RUN_MACRO_SLUG:
+            return await _h_run_macro(db, conversation, args, channel)
+        if slug == DEFINE_MACRO_SLUG:
+            return await _h_define_macro(db, conversation, args, channel)
+    except Exception as e:  # noqa: BLE001 — un built-in ne doit jamais tuer le tour
+        logger.warning("builtin.failed", slug=slug, error=str(e))
+        return BuiltinOutcome(slug, {"status": "error", "error": str(e)})
+
+    return BuiltinOutcome(slug, {"status": "error", "error": f"unknown builtin '{slug}'"})
+
+
+# ---------------------------------------------------------------------------
+# Handlers
+# ---------------------------------------------------------------------------
+
+
+async def _h_web_search(args: dict[str, Any]) -> BuiltinOutcome:
+    query = str(args.get("query") or "").strip()
+    kind = args.get("kind") if args.get("kind") in ("web", "images") else "web"
+    if not query:
+        return BuiltinOutcome(WEB_SEARCH_SLUG, {"status": "error", "error": "query manquante"})
+    resp = await websearch_search(query, kind=kind, count=6)
+    results = [
+        {
+            "title": r.title,
+            "url": r.url,
+            "snippet": r.snippet,
+            **({"image": r.image} if r.image else {}),
+        }
+        for r in resp.results
+    ]
+    content: dict[str, Any] = {
+        "status": "ok",
+        "query": resp.query,
+        "kind": resp.kind,
+        "answer": resp.answer,
+        "results": results,
+    }
+    if not results and not resp.answer:
+        content["status"] = "empty"
+        content["note"] = "aucun résultat (SearXNG indisponible ou requête sans résultat)"
+    return BuiltinOutcome(WEB_SEARCH_SLUG, content)
+
+
+async def _h_show_visual(
+    conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    kind = args.get("kind") if args.get("kind") in ("image", "card", "fact") else "card"
+    visual: dict[str, Any] = {
+        "kind": kind,
+        "url": _safe_url(args.get("url")),
+        "title": (str(args.get("title") or "")).strip() or None,
+        "text": (str(args.get("text") or "")).strip() or None,
+        "duration_ms": _clamp_duration(args.get("duration_ms")),
+    }
+    if kind in ("image", "card") and not visual["url"] and not visual["text"]:
+        return BuiltinOutcome(
+            SHOW_VISUAL_SLUG, {"status": "error", "error": "url ou text requis"}
+        )
+    # Overlay (toute l'app, via canal user) + companion inline (canal conv).
+    await publish(user_channel(conversation.user_id), "visual", visual)
+    await publish(channel, "visual", visual)
+    return BuiltinOutcome(
+        SHOW_VISUAL_SLUG,
+        {"status": "shown", "visual": visual},
+        events=[{"event": "visual", "data": visual}],
+    )
+
+
+async def _h_list_macros(db: AsyncSession, conversation: Conversation) -> BuiltinOutcome:
+    macros = await _user_macros(db, conversation.user_id)
+    return BuiltinOutcome(
+        LIST_MACROS_SLUG,
+        {
+            "status": "ok",
+            "macros": [
+                {"name": m.name, "description": m.description, "steps": len(m.steps_json)}
+                for m in macros
+            ],
+        },
+    )
+
+
+async def _h_run_desktop_action(
+    conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    step, errs = _validate_step(args)
+    if errs:
+        return BuiltinOutcome(
+            RUN_DESKTOP_ACTION_SLUG, {"status": "invalid", "errors": errs}
+        )
+    gate = await _gate_step(conversation.user_id, step)
+    if gate is not None:
+        return BuiltinOutcome(RUN_DESKTOP_ACTION_SLUG, gate)
+    result = await _exec_step(conversation.user_id, step)
+    return BuiltinOutcome(RUN_DESKTOP_ACTION_SLUG, {"status": "ok", "result": result})
+
+
+async def _h_run_macro(
+    db: AsyncSession, conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return BuiltinOutcome(RUN_MACRO_SLUG, {"status": "error", "error": "name manquant"})
+    macro = await _resolve_macro(db, conversation.user_id, name)
+    if macro is None:
+        return BuiltinOutcome(
+            RUN_MACRO_SLUG,
+            {
+                "status": "unknown_macro",
+                "message": (
+                    f"La macro « {name} » n'existe pas encore. Demande à "
+                    f"l'utilisateur ce qu'il veut, puis enregistre-la via define_macro."
+                ),
+            },
+        )
+
+    events: list[dict[str, Any]] = []
+    step_results: list[dict[str, Any]] = []
+    ok = True
+    for idx, raw_step in enumerate(macro.steps_json):
+        step, _ = _validate_step(raw_step)  # déjà validé à la création
+        result = await _exec_step(conversation.user_id, step)
+        status = result.get("status", "ok")
+        if status not in ("ok", "shown"):
+            ok = False
+        entry = {"step": idx + 1, "action": step, "result": result}
+        step_results.append(entry)
+        ev = {"event": "desktop_step", "data": entry}
+        events.append(ev)
+        await publish(channel, "desktop_step", entry)
+
+    return BuiltinOutcome(
+        RUN_MACRO_SLUG,
+        {
+            "status": "ok" if ok else "partial",
+            "macro": macro.name,
+            "steps": step_results,
+        },
+        events=events,
+    )
+
+
+async def _h_define_macro(
+    db: AsyncSession, conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    name = str(args.get("name") or "").strip()
+    description = str(args.get("description") or "").strip()
+    raw_steps = args.get("steps")
+    if not name or not isinstance(raw_steps, list) or not raw_steps:
+        return BuiltinOutcome(
+            DEFINE_MACRO_SLUG, {"status": "error", "error": "name et steps (non vide) requis"}
+        )
+
+    cleaned: list[dict[str, Any]] = []
+    for i, raw in enumerate(raw_steps):
+        step, errs = _validate_step(raw if isinstance(raw, dict) else {})
+        if errs:
+            return BuiltinOutcome(
+                DEFINE_MACRO_SLUG,
+                {
+                    "status": "invalid_step",
+                    "step": i + 1,
+                    "errors": errs,
+                    "message": "Reformule cette étape (action non réalisable).",
+                },
+            )
+        cleaned.append(step)
+
+    # Validation HITL : on montre les étapes à l'utilisateur avant de sauvegarder.
+    rid = await request_approval(
+        {
+            "kind": "define_macro",
+            "name": name,
+            "description": description,
+            "steps": cleaned,
+            "conversation_id": str(conversation.id),
+        }
+    )
+    await publish(
+        channel,
+        "approval_required",
+        {"request_id": rid, "kind": "define_macro", "name": name, "steps": cleaned},
+    )
+    decision = await wait_for_decision(rid, timeout_s=MACRO_APPROVAL_TIMEOUT_S)
+    if decision != "approved":
+        return BuiltinOutcome(
+            DEFINE_MACRO_SLUG,
+            {"status": "rejected" if decision == "rejected" else "timeout"},
+        )
+
+    slug = _slugify(name)
+    existing = await db.scalar(
+        select(DesktopMacro).where(
+            DesktopMacro.user_id == conversation.user_id, DesktopMacro.slug == slug
+        )
+    )
+    if existing is not None:
+        existing.name = name
+        existing.description = description
+        existing.steps_json = cleaned
+    else:
+        db.add(
+            DesktopMacro(
+                user_id=conversation.user_id,
+                slug=slug,
+                name=name,
+                description=description,
+                steps_json=cleaned,
+            )
+        )
+    await db.commit()
+    return BuiltinOutcome(
+        DEFINE_MACRO_SLUG,
+        {"status": "saved", "name": name, "slug": slug, "steps": cleaned},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _user_macros(db: AsyncSession, user_id: UUID) -> list[DesktopMacro]:
+    return list(
+        (
+            await db.execute(
+                select(DesktopMacro)
+                .where(DesktopMacro.user_id == user_id)
+                .order_by(DesktopMacro.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _resolve_macro(
+    db: AsyncSession, user_id: UUID, name: str
+) -> DesktopMacro | None:
+    slug = _slugify(name)
+    macro = await db.scalar(
+        select(DesktopMacro).where(
+            DesktopMacro.user_id == user_id, DesktopMacro.slug == slug
+        )
+    )
+    if macro is not None:
+        return macro
+    # Repli : correspondance floue sur le nom (insensible à la casse / aux accents).
+    needle = _norm(name)
+    for m in await _user_macros(db, user_id):
+        if needle and (needle in _norm(m.name) or _norm(m.name) in needle):
+            return m
+    return None
+
+
+def _validate_step(raw: Any) -> tuple[dict[str, Any], list[str]]:
+    """Nettoie + valide une étape. Retourne (step_nettoyée, erreurs)."""
+    errs: list[str] = []
+    if not isinstance(raw, dict):
+        return {}, ["étape invalide (objet attendu)"]
+    action = str(raw.get("action") or "").strip()
+    if action not in ALLOWED_STEP_ACTIONS:
+        return {}, [f"action inconnue '{action}' (autorisé: {', '.join(ALLOWED_STEP_ACTIONS)})"]
+
+    step: dict[str, Any] = {"action": action}
+
+    if action == "launch_app":
+        app = str(raw.get("app") or "").strip()
+        if not app:
+            errs.append("launch_app requiert 'app'")
+        else:
+            step["app"] = app
+    elif action == "open_url":
+        url = _safe_url(raw.get("url"))
+        if not url:
+            errs.append("open_url requiert une 'url' http(s) valide")
+        else:
+            step["url"] = url
+
+    if raw.get("monitor") is not None:
+        try:
+            mon = int(raw["monitor"])
+            if mon >= 1:
+                step["monitor"] = mon
+        except (TypeError, ValueError):
+            errs.append("monitor doit être un entier ≥ 1")
+
+    mode = raw.get("mode")
+    if mode is not None:
+        if mode in ALLOWED_WINDOW_MODES:
+            step["mode"] = mode
+        else:
+            errs.append(f"mode invalide (autorisé: {', '.join(ALLOWED_WINDOW_MODES)})")
+
+    return step, errs
+
+
+async def _gate_step(user_id: UUID, step: dict[str, Any]) -> dict[str, Any] | None:
+    """Garde-fou sécurité avant exécution. Retourne un dict d'erreur ou None.
+
+    Posture choisie : l'IA ne lance que des applications **détectées** sur le PC
+    de l'utilisateur. Le client Tauri reste l'autorité finale, mais on filtre ici
+    pour un message clair que l'IA peut relayer (→ reformulation).
+    """
+    if step.get("action") != "launch_app":
+        return None
+    caps = await registry.get_caps(user_id)
+    known = registry.known_app_names(caps)
+    if not known:
+        # Pas de liste d'apps (client pas encore prêt) : on laisse passer, le
+        # client validera de son côté.
+        return None
+    app = step.get("app", "")
+    if not _app_matches(app, known):
+        return {
+            "status": "app_not_found",
+            "message": (
+                f"L'application « {app} » n'est pas détectée sur ton PC. "
+                "Dis-moi le nom exact ou une autre application."
+            ),
+            "known_examples": sorted(known)[:15],
+        }
+    return None
+
+
+async def _exec_step(user_id: UUID, step: dict[str, Any]) -> dict[str, Any]:
+    """Envoie une étape au client desktop et attend son résultat."""
+    rid = await bridge.request_action(user_id, step)
+    return await bridge.wait_for_result(rid)
+
+
+def _app_matches(app: str, known: list[str]) -> bool:
+    a = _norm(app)
+    if not a:
+        return False
+    return any(a in _norm(k) or _norm(k) in a for k in known)
+
+
+def _safe_url(value: Any) -> str | None:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    if s.startswith(("http://", "https://")):
+        return s
+    # Tolère « youtube.com » → https://youtube.com
+    if re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", s, re.IGNORECASE):
+        return "https://" + s
+    return None
+
+
+def _clamp_duration(value: Any) -> int:
+    try:
+        d = int(value)
+    except (TypeError, ValueError):
+        return 7000
+    return max(1000, min(d, 30000))
+
+
+def _slugify(name: str) -> str:
+    s = _norm(name)
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return (s or "macro")[:64]
+
+
+def _norm(s: str) -> str:
+    """Minuscule + sans accents, pour comparaisons souples."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKD", str(s or "").lower())
+    return "".join(c for c in s if not unicodedata.combining(c)).strip()

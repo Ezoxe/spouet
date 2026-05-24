@@ -23,6 +23,8 @@ from spouet.nodes.agent_client import (
 )
 from spouet.nodes.client import OllamaError, chat_stream
 from spouet.nodes.router import NoSuitableNodeError, pick_node
+from spouet.desktop import registry as desktop_registry
+from spouet.orchestrator import builtin_tools
 from spouet.orchestrator.context import build_extra_system, build_messages
 from spouet.orchestrator.persona import build_persona_prompt
 from spouet.realtime.hub import conv_channel, publish, workspace_channel
@@ -273,13 +275,25 @@ async def stream_assistant_reply(
         for tc in tool_calls_out:
             yield {"event": "tool_calls", "data": tc}
             await publish(channel, "tool_call", tc)
-            tool_msg = await _execute_tool_call(
-                db,
-                conversation=conversation,
-                tool_call=tc,
-                tools_by_slug=tools_by_slug,
-                channel=channel,
-            )
+            fn_name = (tc.get("function") or {}).get("name")
+            if builtin_tools.is_builtin(fn_name):
+                # Built-in (in-process) : web_search, show_visual, macros desktop.
+                outcome = await builtin_tools.execute(
+                    db, conversation=conversation, tool_call=tc, channel=channel
+                )
+                for ev in outcome.events:
+                    yield ev
+                tool_msg = await _persist_tool_message(
+                    db, conversation, outcome.tool_name, outcome.content
+                )
+            else:
+                tool_msg = await _execute_tool_call(
+                    db,
+                    conversation=conversation,
+                    tool_call=tc,
+                    tools_by_slug=tools_by_slug,
+                    channel=channel,
+                )
             if tool_msg is not None:
                 yield {
                     "event": "tool_result",
@@ -325,6 +339,14 @@ async def _load_active_tools(
     # Manager → ajouter delegate_to_node
     if conversation is not None and conversation.workspace_role == "manager":
         payload.append(_DELEGATE_TOOL_DEF)
+
+    # Built-in tools (web_search, show_visual, macros desktop…) — exécutés
+    # en-process, pas en Docker. Capability-aware : les tools de pilotage PC ne
+    # sont exposés que si un client desktop (app Tauri) est connecté.
+    desktop_connected = False
+    if conversation is not None:
+        desktop_connected = await desktop_registry.is_connected(conversation.user_id)
+    payload.extend(builtin_tools.tool_defs(desktop_connected=desktop_connected))
 
     return (payload if payload else None), {t.slug: t for t in rows}
 
