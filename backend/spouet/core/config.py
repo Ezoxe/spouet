@@ -99,6 +99,16 @@ class Settings(BaseSettings):
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = ""
 
+    # Recherche web (SearXNG self-hosted). Service interne docker-compose, jamais
+    # exposé au LAN. Appelé in-process (httpx async) pour la latence minimale —
+    # pas via un tool Docker. Vide / désactivé = pas de connaissance web.
+    websearch_enabled: bool = True
+    searxng_url: str = "http://searxng:8080"
+    websearch_timeout_s: int = 6
+    # Durée de cache Redis d'une recherche (s). Les counters / news bougent peu
+    # à cette échelle ; le cache rend le 2ᵉ appel quasi-instantané.
+    websearch_cache_ttl_s: int = 600
+
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10
