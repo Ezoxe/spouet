@@ -131,7 +131,9 @@ async def sync_account(db: AsyncSession, account: MailAccount) -> dict[str, Any]
                 body = await llm.draft_reply(db, model=model, account=account, message=row)
                 if body.strip():
                     subj = fm.subject or "(sans objet)"
-                    if not subj.lower().startswith("re"):
+                    # startswith("re:") et non "re" : sinon « Reservation… » serait
+                    # pris pour une réponse existante et ne recevrait pas le préfixe.
+                    if not subj.lower().lstrip().startswith("re:"):
                         subj = f"Re: {subj}"
                     db.add(
                         MailDraft(

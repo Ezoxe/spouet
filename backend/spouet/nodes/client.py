@@ -150,6 +150,18 @@ async def chat_stream(
     }
     if tools:
         payload["tools"] = tools
+    if options:
+        # Options de génération au format Ollama (num_predict, temperature, top_p,
+        # top_k, seed, stop…). Sans ce mapping elles étaient SILENCIEUSEMENT
+        # ignorées : la classification mail tournait à la température serveur par
+        # défaut (JSON peu fiable) et la génération n'était pas bornée.
+        # num_predict → max_tokens (OpenAI) ; le reste est accepté tel quel par
+        # llama-server (top_k, repeat_penalty, min_p… en plus des champs OpenAI).
+        opts = dict(options)
+        num_predict = opts.pop("num_predict", None)
+        if num_predict is not None:
+            payload["max_tokens"] = num_predict
+        payload.update(opts)
 
     # Accumulation des tool_calls sur plusieurs chunks (OpenAI streaming incrémental)
     accumulated_tool_calls: dict[int, dict[str, Any]] = {}
