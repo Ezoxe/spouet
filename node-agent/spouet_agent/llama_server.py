@@ -194,19 +194,29 @@ class LlamaServer:
                 except Exception:
                     pass
 
-                # Métriques Prometheus
+                # Métriques Prometheus (endpoint activé via --metrics).
+                # llama-server préfixe toutes ses métriques par `llamacpp:`.
+                # Noms exacts : llamacpp:tokens_predicted_total (génération),
+                # llamacpp:prompt_tokens_total (prompt), llamacpp:predicted_tokens_seconds (débit).
                 try:
                     mr = await client.get(f"http://localhost:{self.port}/metrics")
                     if mr.status_code == 200:
                         for line in mr.text.splitlines():
-                            if line.startswith("#"):
+                            if line.startswith("#") or not line.strip():
                                 continue
-                            if "llama_tokens_generated_total" in line:
-                                gen_tokens = int(float(line.split()[-1]))
-                            elif "llama_prompt_tokens_total" in line:
-                                prompt_tokens = int(float(line.split()[-1]))
-                            elif "llama_generation_throughput" in line and tps is None:
-                                tps = float(line.split()[-1])
+                            parts = line.split()
+                            if len(parts) < 2:
+                                continue
+                            name, value = parts[0], parts[-1]
+                            try:
+                                if name == "llamacpp:tokens_predicted_total":
+                                    gen_tokens = int(float(value))
+                                elif name == "llamacpp:prompt_tokens_total":
+                                    prompt_tokens = int(float(value))
+                                elif name == "llamacpp:predicted_tokens_seconds":
+                                    tps = float(value)
+                            except ValueError:
+                                continue
                 except Exception:
                     pass
         except Exception:
@@ -249,6 +259,9 @@ class LlamaServer:
             "--batch-size", str(config.n_batch),
             "--ubatch-size", str(config.n_ubatch),
             "--parallel", str(config.n_parallel),
+            # Expose /metrics (Prometheus) — désactivé par défaut côté llama-server.
+            # Indispensable pour que get_stats() remonte tps/tokens au heartbeat.
+            "--metrics",
         ]
         # Flash attention : GPU uniquement — certains modèles (Gemma 4 MoE, etc.)
         # crashent avec --flash-attn sur CPU.
