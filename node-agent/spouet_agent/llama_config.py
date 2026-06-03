@@ -6,6 +6,7 @@ vérité hardware) et retourne une `LlamaConfig` prête à passer à llama-serve
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ class LlamaConfig:
     n_batch: int = 512
     n_ubatch: int = 512
     n_threads: int | None = None  # None = auto (llama.cpp calcule)
+    n_threads_batch: int | None = None  # None = identique à n_threads
     n_parallel: int = 1  # slots parallèles
 
 
@@ -65,6 +67,13 @@ def compute_optimal_config(
         # Laisse au moins 1 cœur à l'OS, et plafonne au seuil utile pour llama.cpp.
         n_threads = max(1, min(_MAX_CPU_THREADS, physical - 1 if physical > 2 else physical))
 
+        # Le prompt processing (compute-bound) profite de l'hyperthreading,
+        # contrairement à la génération token-par-token (memory-bound). On élargit
+        # donc le pool de threads du batch jusqu'aux cœurs logiques (plafonné),
+        # sans jamais descendre sous n_threads (défaut llama.cpp = identique).
+        logical = os.cpu_count() or n_threads
+        n_threads_batch = max(n_threads, min(_MAX_CPU_THREADS, logical))
+
         ram_mb = ram_total_mb or 8192  # fallback raisonnable (au lieu de 4 GB)
 
         # En CPU, le modèle est mappé en mémoire (mmap). Si la taille du modèle
@@ -104,6 +113,7 @@ def compute_optimal_config(
             n_batch=512,   # default llama.cpp — bon compromis throughput/mémoire
             n_ubatch=512,
             n_threads=n_threads,
+            n_threads_batch=n_threads_batch,
             n_parallel=1,
         )
 

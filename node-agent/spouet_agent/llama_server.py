@@ -269,6 +269,8 @@ class LlamaServer:
             cmd += ["--flash-attn", "on"]
         if config.n_threads is not None:
             cmd += ["--threads", str(config.n_threads)]
+        if config.n_threads_batch is not None:
+            cmd += ["--threads-batch", str(config.n_threads_batch)]
         return cmd
 
     async def _wait_ready(self, timeout: int) -> None:

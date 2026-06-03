@@ -292,6 +292,7 @@ class LlamaConfigPatch(BaseModel):
     n_batch: int | None = None
     n_ubatch: int | None = None
     n_threads: int | None = None
+    n_threads_batch: int | None = None
     n_parallel: int | None = None
 
 
@@ -311,6 +312,7 @@ async def patch_config(patch: LlamaConfigPatch) -> dict:
         n_batch=patch.n_batch if patch.n_batch is not None else current.n_batch,
         n_ubatch=patch.n_ubatch if patch.n_ubatch is not None else current.n_ubatch,
         n_threads=patch.n_threads if patch.n_threads is not None else current.n_threads,
+        n_threads_batch=patch.n_threads_batch if patch.n_threads_batch is not None else current.n_threads_batch,
         n_parallel=patch.n_parallel if patch.n_parallel is not None else current.n_parallel,
     )
     asyncio.create_task(_restart_task(updated))
