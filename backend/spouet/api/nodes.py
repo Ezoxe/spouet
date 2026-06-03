@@ -654,17 +654,24 @@ async def get_cluster_aggregate(
     online = sum(1 for n in nodes_rows if n.is_online())
     total_current_tps = sum((n.llama_tps or 0.0) for n in nodes_rows if n.is_online())
 
-    # Total tokens générés sur la fenêtre : max - min de la métrique cumulative.
+    # Total tokens générés sur la fenêtre : pour chaque node, delta du compteur
+    # cumulatif (MAX - MIN) sur la fenêtre, puis somme sur les nodes. Le GROUP BY
+    # node_id est indispensable — sommer le compteur cumulatif de tous les nodes
+    # à chaque point puis soustraire le minimum global (SUM - MIN) n'a aucun sens.
     src = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
-    tokens_row = (
-        await db.execute(
-            select(
-                func.coalesce(
-                    func.sum(src.llama_gen_tokens_total) - func.min(src.llama_gen_tokens_total),
-                    0,
-                )
-            ).where(src.time >= cutoff)
+    per_node = (
+        select(
+            (
+                func.max(src.llama_gen_tokens_total)
+                - func.min(src.llama_gen_tokens_total)
+            ).label("delta")
         )
+        .where(src.time >= cutoff)
+        .group_by(src.node_id)
+        .subquery()
+    )
+    tokens_row = (
+        await db.execute(select(func.coalesce(func.sum(per_node.c.delta), 0)))
     ).scalar()
     return {
         "range": range,
