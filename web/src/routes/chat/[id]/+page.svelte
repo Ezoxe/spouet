@@ -323,7 +323,8 @@
     }
 
     onMount(() => {
-        load();
+        // Le chargement initial est géré par le $effect ci-dessous (qui s'exécute
+        // aussi au montage en lisant convId) — ne pas le dupliquer ici.
         const handler = (e: KeyboardEvent) => {
             // Ctrl+/ : focus composer
             if (e.ctrlKey && e.key === '/') {
@@ -354,9 +355,14 @@
     });
 
     $effect(() => {
-        // Si l'ID change (navigation interne), recharge
+        // Chargement initial + rechargement quand l'ID change (navigation interne).
+        // On coupe d'abord un éventuel stream encore en cours sur la conversation
+        // précédente, sinon ses tokens viendraient polluer la nouvelle conv.
         convId;
-        untrack(() => load());
+        untrack(() => {
+            abortController?.abort();
+            load();
+        });
     });
 
     // Stats agrégées pour le footer
