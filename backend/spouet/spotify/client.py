@@ -103,8 +103,20 @@ async def _access_token(db: AsyncSession, user_id: UUID) -> str:
     token = resp.get("access_token")
     if not token:
         raise SpotifyError("Rafraîchissement du token Spotify échoué.")
-    await _cache_access(user_id, token, resp.get("expires_in", 3600))
+    # Spotify peut renvoyer un refresh_token tournant : store_tokens persiste le
+    # nouveau s'il est présent (sinon l'ancien finit invalide → déconnexion) et
+    # met l'access_token en cache.
+    await store_tokens(db, user_id, resp)
     return token
+
+
+async def _invalidate_access(user_id: UUID) -> None:
+    """Oublie l'access_token caché → le prochain _access_token forcera un refresh."""
+    cli = _redis()
+    try:
+        await cli.delete(f"spotify_access:{user_id}")
+    finally:
+        await cli.aclose()
 
 
 async def _request(
@@ -116,13 +128,24 @@ async def _request(
     params: dict[str, Any] | None = None,
     json_body: Any | None = None,
 ) -> httpx.Response:
-    token = await _access_token(db, user_id)
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
+    async def _send(token: str) -> httpx.Response:
         async with httpx.AsyncClient(timeout=15) as client:
             return await client.request(
-                method, f"{API}{path}", headers=headers, params=params, json=json_body
+                method,
+                f"{API}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                params=params,
+                json=json_body,
             )
+
+    try:
+        r = await _send(await _access_token(db, user_id))
+        if r.status_code == 401:
+            # access_token caché rejeté (révoqué / désynchronisé avant son TTL) :
+            # on l'oublie, on force un refresh et on réessaie une seule fois.
+            await _invalidate_access(user_id)
+            r = await _send(await _access_token(db, user_id))
+        return r
     except httpx.HTTPError as e:
         raise SpotifyError(f"Spotify injoignable: {e}") from e
 
