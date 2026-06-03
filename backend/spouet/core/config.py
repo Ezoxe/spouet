@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     # est toujours purgée à 24h. Plafond hard à 30j même si configuré plus.
     metrics_retention_days: int = 7
 
+    @field_validator("metrics_retention_days")
+    @classmethod
+    def _clamp_retention(cls, v: int) -> int:
+        # Plancher 1j, plafond 30j (cf. docstring) : évite qu'une valeur absurde
+        # laisse node_metrics_1min grossir indéfiniment et saturer le disque.
+        return max(1, min(30, v))
+
     # Chemins serveur (utilisés par les wizards de connectors)
     connectors_registry_dir: str = "/opt/spouet/connectors/registry"
 
