@@ -224,14 +224,25 @@ async def stream_assistant_reply(
                     tool_calls_out.extend(tcs)
 
                 if chunk.get("done"):
-                    assistant_msg.tokens_in = chunk.get("prompt_eval_count")
-                    # `eval_count` peut être 0 (rare bug llama-server) — distinguer
-                    # explicitement 0/None pour éviter l'effet `0 or tokens_out`
-                    # qui écraserait un comptage côté serveur à 0 par notre local.
-                    eval_count = chunk.get("eval_count")
-                    assistant_msg.tokens_out = eval_count if eval_count is not None else tokens_out
-                    assistant_msg.finish_reason = chunk.get("done_reason") or "stop"
-                    break
+                    # llama-server émet d'abord le chunk `finish_reason`, puis —
+                    # grâce à stream_options.include_usage — un dernier chunk ne
+                    # portant que `usage`. On capture les compteurs au fil de l'eau
+                    # SANS `break`, sinon ce chunk final (et donc prompt_eval_count)
+                    # serait perdu. Le flux se clôt de lui-même sur `[DONE]`.
+                    # `eval_count`/`prompt_eval_count` peuvent valoir 0 : on teste
+                    # `is not None` pour ne pas écraser une valeur serveur légitime.
+                    if chunk.get("prompt_eval_count") is not None:
+                        assistant_msg.tokens_in = chunk.get("prompt_eval_count")
+                    if chunk.get("eval_count") is not None:
+                        assistant_msg.tokens_out = chunk.get("eval_count")
+                    if chunk.get("done_reason"):
+                        assistant_msg.finish_reason = chunk.get("done_reason")
+            # Flux épuisé. Fallbacks si le serveur n'a pas fourni les compteurs
+            # (option include_usage non supportée) ou le finish_reason.
+            if assistant_msg.tokens_out is None:
+                assistant_msg.tokens_out = tokens_out
+            if assistant_msg.finish_reason is None:
+                assistant_msg.finish_reason = "stop"
             assistant_msg.latency_ms = int((time.monotonic() - started) * 1000)
             if tool_calls_out:
                 assistant_msg.content_json = {"tool_calls": tool_calls_out}

@@ -142,6 +142,11 @@ async def chat_stream(
         "model": model,
         "messages": messages,
         "stream": True,
+        # Demande le bloc `usage` (prompt/completion tokens). En streaming OpenAI,
+        # il n'est sinon jamais émis → tokens_in restait toujours None. llama-server
+        # le renvoie dans un dernier chunk dédié (choices=[]). Un serveur qui ne
+        # supporte pas l'option l'ignore simplement (fallback comptage local).
+        "stream_options": {"include_usage": True},
     }
     if tools:
         payload["tools"] = tools
@@ -196,13 +201,24 @@ def _normalize_chunk(
 ) -> dict[str, Any] | None:
     """Convertit un chunk SSE OpenAI vers le format interne Ollama-like."""
     choices = chunk.get("choices", [])
+    usage: dict[str, Any] = chunk.get("usage") or {}
     if not choices:
+        # Dernier chunk de stream_options.include_usage : aucun delta, seulement
+        # les compteurs de tokens. On le propage comme un événement `done` léger
+        # afin que la boucle de chat enregistre prompt_eval_count / eval_count.
+        if usage:
+            return {
+                "message": {"role": "assistant", "content": "", "tool_calls": None},
+                "done": True,
+                "done_reason": None,
+                "prompt_eval_count": usage.get("prompt_tokens"),
+                "eval_count": usage.get("completion_tokens"),
+            }
         return None
 
     choice = choices[0]
     delta = choice.get("delta", {})
     finish_reason: str | None = choice.get("finish_reason")
-    usage: dict[str, Any] = chunk.get("usage") or {}
 
     content = delta.get("content") or ""
 
