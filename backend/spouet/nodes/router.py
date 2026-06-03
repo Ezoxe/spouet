@@ -37,6 +37,10 @@ class NodeChoice:
     port: int
     agent_port: int | None
     needs_load: bool
+    # Taille de contexte llama.cpp du node (None si inconnue / pas encore chargé).
+    # Permet à l'orchestrator de dimensionner la troncature d'historique sur le
+    # vrai n_ctx du modèle plutôt qu'un budget fixe.
+    n_ctx: int | None = None
 
 
 async def pick_node(
@@ -126,6 +130,11 @@ async def pick_node(
         port=node.port,
         agent_port=node.agent_port,
         needs_load=not is_loaded(node, mdl),
+        # Pertinent surtout pour un node « hot » (modèle déjà chargé) : la valeur
+        # reflète alors exactement le n_ctx en cours. Pour un cold-start elle peut
+        # être absente / dater du modèle précédent → build_messages retombe sur
+        # son défaut prudent.
+        n_ctx=node.llama_n_ctx if is_loaded(node, mdl) else None,
     )
 
 

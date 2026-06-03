@@ -191,7 +191,7 @@ async def stream_assistant_reply(
                 if wctx:
                     extra_system = f"{extra_system}\n\n{wctx}" if extra_system else wctx
         messages = await build_messages(
-            db, conversation=conversation, extra_system=extra_system
+            db, conversation=conversation, extra_system=extra_system, ctx_tokens=choice.n_ctx
         )
         accumulated = ""
         tokens_out = 0

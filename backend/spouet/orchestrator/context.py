@@ -59,14 +59,21 @@ async def build_messages(
     *,
     conversation: Conversation,
     extra_system: str | None = None,
-    ctx_tokens: int = DEFAULT_CTX_TOKENS,
+    ctx_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
     """Construit la liste de messages OpenAI-style envoyée à `/api/chat`.
 
     Ordre :
       1. system prompt de la conversation (si défini) + injections RAG/memory
       2. historique tronqué (les plus récents en priorité)
+
+    `ctx_tokens` : taille de contexte du modèle ciblé. Passée par l'orchestrator
+    depuis le n_ctx réel du node retenu, elle dimensionne la troncature au plus
+    juste — exploite un grand contexte (gros GPU) et évite de dépasser un petit
+    (CPU). `None` → défaut prudent (`DEFAULT_CTX_TOKENS`).
     """
+    if ctx_tokens is None or ctx_tokens <= 0:
+        ctx_tokens = DEFAULT_CTX_TOKENS
     rows = list(
         (
             await db.execute(
