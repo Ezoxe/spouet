@@ -12,9 +12,10 @@ import httpx
 import typer
 import uvicorn
 
-from spouet_agent import __version__
+from spouet_agent import __version__, image_gen
 from spouet_agent.agent_api import app as control_app
 from spouet_agent.agent_api import init as init_control
+from spouet_agent.image_api import app as image_app
 from spouet_agent.capabilities import NodeCapabilities, probe_capabilities
 from spouet_agent.gpu import gpu_info_from_capabilities, probe_gpu
 from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
@@ -33,6 +34,7 @@ def _lan_ip() -> str:
 
 AGENT_API_PORT = 8765
 LLAMA_SERVER_PORT = 8080
+IMAGE_API_PORT = 8083
 
 app = typer.Typer(help="Spouet node agent — llama.cpp lifecycle + heartbeat.")
 
@@ -78,13 +80,17 @@ def run(
     host: Annotated[str | None, typer.Option("--host", help="IP routable depuis le backend (défaut: hostname)")] = None,
     llama_port: Annotated[int, typer.Option("--llama-port", help="Port de llama-server")] = LLAMA_SERVER_PORT,
     agent_port: Annotated[int, typer.Option("--agent-port", help="Port de l'API de contrôle")] = AGENT_API_PORT,
+    image_port: Annotated[int, typer.Option("--image-port", help="Port de l'API de génération d'images")] = IMAGE_API_PORT,
+    image_model: Annotated[str | None, typer.Option("--image-model", help="Modèle d'images par défaut (repo HF)")] = None,
+    image_preload: Annotated[bool, typer.Option("--image-preload", help="Charger le modèle d'images au démarrage")] = False,
+    no_images: Annotated[bool, typer.Option("--no-images", help="Désactive la capacité image même si l'extra est installé")] = False,
     interval: Annotated[int, typer.Option("--interval", min=5, max=300)] = 10,
     tags: Annotated[list[str] | None, typer.Option("--tag", help="Tags du node (répétable)")] = None,
     install_dir: Annotated[str, typer.Option("--install-dir", help="Répertoire d'installation Spouet")] = "/opt/spouet",
     models_dir: Annotated[str | None, typer.Option("--models-dir", envvar="LLAMA_MODELS_DIR")] = None,
     autoload: Annotated[str | None, typer.Option("--autoload", help="Modèle GGUF à charger au démarrage (nom de fichier)")] = None,
 ) -> None:
-    """Boucle infinie : heartbeat + API de contrôle llama.cpp."""
+    """Boucle infinie : heartbeat + API de contrôle llama.cpp (+ images si extra)."""
     asyncio.run(
         _run(
             backend=backend.rstrip("/"),
@@ -93,6 +99,10 @@ def run(
             host=host or _lan_ip(),
             llama_port=llama_port,
             agent_port=agent_port,
+            image_port=image_port,
+            image_model=image_model,
+            image_preload=image_preload,
+            no_images=no_images,
             interval=interval,
             tags=list(tags or []),
             install_dir=Path(install_dir),
@@ -110,6 +120,10 @@ async def _run(
     host: str,
     llama_port: int,
     agent_port: int,
+    image_port: int,
+    image_model: str | None,
+    image_preload: bool,
+    no_images: bool,
     interval: int,
     tags: list[str],
     install_dir: Path,
@@ -117,6 +131,24 @@ async def _run(
     autoload: str | None,
 ) -> None:
     models_dir.mkdir(parents=True, exist_ok=True)
+
+    # Capacité image : seulement si l'extra (torch/diffusers) est installé et non
+    # désactivé. C'est le node (machine GPU) qui exécute la génération.
+    images_enabled = (not no_images) and image_gen.images_available()
+    if image_model:
+        image_gen.set_configured(image_model)
+    if images_enabled:
+        typer.echo(
+            f"[spouet-agent] images activées (device={image_gen.device()}, "
+            f"modèle={image_gen.reported_model() or image_gen.default_model()}, port={image_port})"
+        )
+        if image_preload:
+            try:
+                await asyncio.to_thread(image_gen.load, image_model)
+            except Exception as e:  # noqa: BLE001
+                typer.echo(f"[spouet-agent] préchargement image échoué: {e}", err=True)
+    elif not no_images:
+        typer.echo("[spouet-agent] images désactivées (extra non installé : spouet-agent[images])")
 
     # Localise llama-server
     llama_bin = find_llama_server(install_dir)
@@ -216,10 +248,14 @@ async def _run(
             models_dir=models_dir,
             gpu_info_ref=[gpu],
             capabilities=caps,
+            images_enabled=images_enabled,
+            image_port=image_port,
         ),
     ]
     if llama_bin is not None:
         tasks.append(_update_loop(server))
+    if images_enabled:
+        tasks.append(_serve_image_api(image_port))
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
@@ -236,6 +272,12 @@ async def _update_loop(server: LlamaServer) -> None:
 
 async def _serve_control_api(port: int) -> None:
     config = uvicorn.Config(control_app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
+async def _serve_image_api(port: int) -> None:
+    config = uvicorn.Config(image_app, host="0.0.0.0", port=port, log_level="warning")
     server = uvicorn.Server(config)
     await server.serve()
 
@@ -283,6 +325,8 @@ async def _heartbeat_loop(
     models_dir: Path,
     gpu_info_ref: list,
     capabilities: NodeCapabilities | None = None,
+    images_enabled: bool = False,
+    image_port: int = IMAGE_API_PORT,
 ) -> None:
     headers = {"Authorization": f"Bearer {token}"}
     typer.echo(f"[spouet-agent] heartbeat → {backend}/api/nodes/heartbeat as '{name}'")
@@ -373,6 +417,9 @@ async def _heartbeat_loop(
                     "tags": tags,
                     "models": models_payload,
                     "capabilities": caps_payload,
+                    "image_enabled": images_enabled,
+                    "image_port": image_port if images_enabled else None,
+                    "image_model": image_gen.reported_model() if images_enabled else None,
                     "cpu_pct": cpu_pct,
                     "net_rx_kbps": net_rx_kbps,
                     "net_tx_kbps": net_tx_kbps,

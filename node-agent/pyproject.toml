@@ -1,6 +1,6 @@
 [project]
 name = "spouet-node-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Heartbeat + control agent for llama.cpp-server machines (sends hardware stats and manages llama.cpp lifecycle)"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,6 +10,21 @@ dependencies = [
     "uvicorn>=0.30",
     "huggingface-hub>=0.24",
     "psutil>=6.0",
+]
+
+[project.optional-dependencies]
+# Génération d'images sur le node (machine GPU). Lourd (torch) : à installer
+# uniquement sur les nodes qui doivent générer des images, via
+# `uv pip install -e '.[images]'` ou `pip install 'spouet-node-agent[images]'`.
+images = [
+    "torch>=2.2",
+    "diffusers>=0.31",
+    "transformers>=4.44",
+    "accelerate>=0.34",
+    "safetensors>=0.4",
+    "pillow>=10.0",
+    "sentencepiece>=0.2",
+    "protobuf>=4.25",
 ]
 
 [project.scripts]
