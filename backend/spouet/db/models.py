@@ -304,6 +304,46 @@ class DesktopMacro(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# Images générées
+# ---------------------------------------------------------------------------
+
+
+class GeneratedImage(Base, TimestampMixin):
+    """Image produite par le microservice image-engine (diffusers).
+
+    Les octets PNG sont stockés sur disque (volume `images_dir`) ; cette table ne
+    garde que les métadonnées + le chemin relatif du fichier. Servie via
+    l'endpoint authentifié /api/images/{id}/file. Optionnellement rattachée à une
+    conversation (génération via le tool `generate_image`).
+    """
+
+    __tablename__ = "generated_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Chemin du fichier PNG *relatif* à images_dir (ex. "<uuid>.png").
+    file_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    seed: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Paramètres de génération (steps, guidance, model, device…) pour rejouer/auditer.
+    params_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 

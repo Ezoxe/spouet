@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     # Taille max d'un upload audio à transcrire (octets). 25 Mo ~= plusieurs min.
     voice_max_audio_bytes: int = 25 * 1024 * 1024
 
+    # Génération d'images (microservice image-engine : diffusers / Stable Diffusion).
+    # Service interne docker-compose, jamais exposé au LAN. Le backend ne fait que
+    # proxifier (auth côté API) et stocke les PNG générés dans images_dir.
+    images_enabled: bool = True
+    image_engine_url: str = "http://image-engine:8002"
+    # Génération lente (surtout CPU) : timeout large.
+    image_timeout_s: int = 180
+    # Répertoire (volume) où sont écrits les PNG générés, servis ensuite via
+    # l'endpoint authentifié /api/images/{id}/file.
+    images_dir: str = "/data/images"
+    # Garde-fous d'usage (taille générée + quota par utilisateur).
+    image_max_dimension: int = 1024
+    image_max_per_user: int = 500
+
     # Spotify (OAuth Authorization Code — contrôle de lecture, Premium requis).
     # Créer une app sur https://developer.spotify.com/dashboard et y déclarer le
     # redirect_uri (ex https://spouet.local/api/spotify/callback).
