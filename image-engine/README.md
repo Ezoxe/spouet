@@ -43,6 +43,21 @@ Le premier appel télécharge les poids dans le volume `/data/hf` (persistant).
 | `MODELS_PRELOAD`       | `1`                | Précharge le modèle au démarrage. |
 | `HF_HOME`              | `/data/hf`         | Cache des poids HF. |
 
+## Permissions du volume
+
+Le conteneur tourne en **uid 1000** (non-root). Le bind-mount `./data/image-models:/data`
+doit donc appartenir à uid 1000, sinon le téléchargement des poids échoue avec
+`PermissionError: [Errno 13] Permission denied: '/data/hf'`.
+
+`install.sh` s'en charge. Pour un `docker compose up` manuel sur une install
+existante :
+
+```bash
+cd deploy
+sudo chown -R 1000:1000 data/image-models
+docker compose restart image-engine
+```
+
 ## GPU NVIDIA
 
 Décommenter la section `deploy.resources.reservations.devices` (ou `gpus: all`)

@@ -72,6 +72,9 @@ services:
       MODELS_PRELOAD: ${SPOUET_IMAGE_PRELOAD:-1}
     volumes:
       # Cache des poids HF (premier démarrage = téléchargement du modèle).
+      # Le conteneur tourne en uid 1000 : le dossier hôte doit lui appartenir,
+      # sinon PermissionError sur /data/hf. install.sh le pré-crée ; en `up`
+      # manuel : `mkdir -p data/image-models && chown -R 1000:1000 data/image-models`.
       - ./data/image-models:/data
     expose:
       - "8002"

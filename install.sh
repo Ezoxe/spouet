@@ -289,6 +289,15 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Build + up
 # ---------------------------------------------------------------------------
+# Les microservices voice-engine / image-engine tournent en utilisateur non-root
+# (uid 1000) et écrivent leurs modèles dans un bind-mount `./data/...:/data`. Si
+# le dossier hôte est créé par Docker au `up`, il appartient à root:root et le
+# conteneur ne peut pas y écrire (PermissionError sur /data/hf). On les pré-crée
+# donc avec le bon propriétaire.
+log "Préparation des volumes de modèles (uid 1000)…"
+mkdir -p data/voice data/image-models
+chown -R 1000:1000 data/voice data/image-models 2>/dev/null || true
+
 log "docker compose build…"
 docker compose build
 
