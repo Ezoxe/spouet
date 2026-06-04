@@ -19,6 +19,7 @@ from spouet.api import (
     conversations,
     desktop,
     health,
+    images,
     jobs,
     mail,
     memory,
@@ -87,6 +88,7 @@ app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 app.include_router(desktop.router, prefix="/api/desktop", tags=["desktop"])
 app.include_router(visual.router, prefix="/api/visual", tags=["visual"])
+app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(
     prompt_templates.router, prefix="/api/prompt-templates", tags=["prompt-templates"]
 )
