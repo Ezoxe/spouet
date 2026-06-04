@@ -56,38 +56,10 @@ services:
       retries: 10
       start_period: 90s
 
-  # Génération d'images self-hosted (diffusers / Stable Diffusion).
-  # Non exposé au LAN (pas de `ports`) : seul le backend l'appelle en interne
-  # (spouet.images.client). Device auto-détecté (cuda si dispo, sinon cpu).
-  image-engine:
-    build:
-      context: ../image-engine
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      # Vide => auto (device détecté, modèle adapté). Cf. image-engine/README.md.
-      IMAGE_DEVICE: ${SPOUET_IMAGE_DEVICE:-}
-      IMAGE_MODEL: ${SPOUET_IMAGE_MODEL:-}
-      IMAGE_DTYPE: ${SPOUET_IMAGE_DTYPE:-}
-      MODELS_PRELOAD: ${SPOUET_IMAGE_PRELOAD:-1}
-    volumes:
-      # Cache des poids HF (premier démarrage = téléchargement du modèle).
-      # Le conteneur tourne en uid 1000 : le dossier hôte doit lui appartenir,
-      # sinon PermissionError sur /data/hf. install.sh le pré-crée ; en `up`
-      # manuel : `mkdir -p data/image-models && chown -R 1000:1000 data/image-models`.
-      - ./data/image-models:/data
-    expose:
-      - "8002"
-    # GPU NVIDIA (optionnel) : installer le NVIDIA Container Toolkit sur l'hôte
-    # puis décommenter pour exploiter le GPU (sinon CPU, lent).
-    # gpus: all
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:8002/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      # Généreux : le 1er démarrage télécharge les poids du modèle (plusieurs Go).
-      start_period: 300s
+  # NB : la génération d'images NE tourne PAS sur l'admin. Elle s'exécute sur les
+  # nodes (machines GPU) via spouet-agent[images] : le backend route vers
+  # http://{node.host}:{node.image_port}/generate. Le backend ne fait que stocker
+  # les PNG renvoyés dans ./data/images (servis via /api/images/{id}/file).
 
   # Recherche web self-hosted (méta-moteur SearXNG). Jamais exposé au LAN
   # (pas de `ports`) : seul le backend l'appelle en interne (spouet.websearch).
