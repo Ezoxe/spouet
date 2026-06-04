@@ -95,6 +95,11 @@ class Node(Base, TimestampMixin):
     llama_tokens_generated: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # NodeCapabilities sérialisé (compute_class, gpu_kind, llama_variant, warnings…)
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Génération d'images sur le node (extra spouet-agent[images]). Le backend
+    # route les demandes d'image vers http://{host}:{image_port}/generate.
+    image_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    image_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    image_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     models: Mapped[list[Model]] = relationship(
         back_populates="node", cascade="all, delete-orphan"

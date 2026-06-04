@@ -21,6 +21,7 @@ from spouet.db.models import GeneratedImage
 from spouet.images import client as image_client
 from spouet.images import storage
 from spouet.images.client import GenerateParams
+from spouet.nodes.router import NoSuitableNodeError, pick_image_node
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -75,21 +76,29 @@ class ImageOut(BaseModel):
 
 
 @router.get("/health")
-async def images_health(user: CurrentUser) -> dict:
-    """État du moteur d'images (panneau Santé système)."""
+async def images_health(user: CurrentUser, db: DbSession) -> dict:
+    """État de la génération d'images : disponibilité d'un node capable."""
     if not settings.images_enabled:
         return {"enabled": False, "ok": False}
     try:
-        info = await image_client.health()
-        return {"enabled": True, "ok": True, **info}
-    except image_client.ImageEngineError as e:
+        choice = await pick_image_node(db)
+    except NoSuitableNodeError as e:
         return {"enabled": True, "ok": False, "error": str(e)}
+    try:
+        info = await image_client.health(choice.base_url)
+        return {"enabled": True, "ok": True, "node": choice.name, **info}
+    except image_client.ImageEngineError as e:
+        return {"enabled": True, "ok": False, "node": choice.name, "error": str(e)}
 
 
 @router.post("/generate", response_model=ImageOut, status_code=status.HTTP_201_CREATED)
 async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession) -> ImageOut:
     if not settings.images_enabled:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Génération d'images désactivée")
+    try:
+        choice = await pick_image_node(db)
+    except NoSuitableNodeError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
     params = GenerateParams(
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
@@ -100,9 +109,9 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession) -> Ima
         seed=payload.seed,
     )
     try:
-        png = await image_client.generate(params)
+        png = await image_client.generate(choice.base_url, params)
     except image_client.ImageEngineError as e:
-        logger.warning("images.generate_failed", error=str(e))
+        logger.warning("images.generate_failed", error=str(e), node=choice.name)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e
 
     img = await storage.store(
@@ -112,12 +121,16 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession) -> Ima
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
         params={
-            k: v
-            for k, v in {
-                "steps": payload.steps,
-                "guidance_scale": payload.guidance_scale,
-            }.items()
-            if v is not None
+            "node": choice.name,
+            "model": choice.image_model,
+            **{
+                k: v
+                for k, v in {
+                    "steps": payload.steps,
+                    "guidance_scale": payload.guidance_scale,
+                }.items()
+                if v is not None
+            },
         },
         seed=payload.seed,
     )

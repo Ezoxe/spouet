@@ -92,15 +92,14 @@ class Settings(BaseSettings):
     # Taille max d'un upload audio à transcrire (octets). 25 Mo ~= plusieurs min.
     voice_max_audio_bytes: int = 25 * 1024 * 1024
 
-    # Génération d'images (microservice image-engine : diffusers / Stable Diffusion).
-    # Service interne docker-compose, jamais exposé au LAN. Le backend ne fait que
-    # proxifier (auth côté API) et stocke les PNG générés dans images_dir.
+    # Génération d'images (diffusers / Stable Diffusion). La génération tourne sur
+    # les NODES (machines GPU, extra spouet-agent[images]), pas sur l'admin : le
+    # backend route vers http://{node.host}:{node.image_port}/generate, puis stocke
+    # le PNG renvoyé dans images_dir (servi via /api/images/{id}/file, auth).
     images_enabled: bool = True
-    image_engine_url: str = "http://image-engine:8002"
     # Génération lente (surtout CPU) : timeout large.
     image_timeout_s: int = 180
-    # Répertoire (volume) où sont écrits les PNG générés, servis ensuite via
-    # l'endpoint authentifié /api/images/{id}/file.
+    # Répertoire (volume) où sont écrits les PNG générés.
     images_dir: str = "/data/images"
     # Garde-fous d'usage (taille générée + quota par utilisateur).
     image_max_dimension: int = 1024

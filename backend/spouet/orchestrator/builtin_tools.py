@@ -34,6 +34,7 @@ from spouet.desktop import bridge, registry
 from spouet.images import client as image_client
 from spouet.images import storage as image_storage
 from spouet.images.client import GenerateParams
+from spouet.nodes.router import NoSuitableNodeError, pick_image_node
 from spouet.realtime.hub import publish, user_channel
 from spouet.tools.approval import request_approval, wait_for_decision
 from spouet.websearch import search as websearch_search
@@ -384,6 +385,14 @@ async def _h_generate_image(
     if not prompt:
         return BuiltinOutcome(GENERATE_IMAGE_SLUG, {"status": "error", "error": "prompt manquant"})
 
+    try:
+        choice = await pick_image_node(db)
+    except NoSuitableNodeError as e:
+        return BuiltinOutcome(
+            GENERATE_IMAGE_SLUG,
+            {"status": "error", "error": str(e)},
+        )
+
     params = GenerateParams(
         prompt=prompt,
         negative_prompt=(str(args.get("negative_prompt") or "").strip() or None),
@@ -392,11 +401,11 @@ async def _h_generate_image(
         seed=_opt_int(args.get("seed")),
     )
     try:
-        png = await image_client.generate(params)
+        png = await image_client.generate(choice.base_url, params)
     except image_client.ImageEngineError as e:
         return BuiltinOutcome(
             GENERATE_IMAGE_SLUG,
-            {"status": "error", "error": f"moteur d'images indisponible: {e}"},
+            {"status": "error", "error": f"node image indisponible: {e}"},
         )
 
     img = await image_storage.store(
@@ -406,7 +415,7 @@ async def _h_generate_image(
         png=png,
         prompt=prompt,
         negative_prompt=params.negative_prompt,
-        params={},
+        params={"node": choice.name, "model": choice.image_model},
         seed=params.seed,
     )
     url = f"/api/images/{img.id}/file"

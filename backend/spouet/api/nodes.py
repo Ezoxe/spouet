@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.logging import get_logger
 from spouet.db.models import Model, Node, NodeMetric1Min, NodeMetricRaw
+from spouet.images import client as image_client
 from spouet.nodes.client import DIRECT_AGENT_MARKER
 from spouet.nodes.client import probe as probe_ollama
 from spouet.nodes.router import list_available_models
@@ -63,6 +64,10 @@ class HeartbeatRequest(BaseModel):
     models: list[HeartbeatModel] = Field(default_factory=list)
     # Capabilities calculées par node-agent.capabilities.probe_capabilities()
     capabilities: dict | None = None
+    # Génération d'images (agents ≥ 0.3.0 avec extra [images])
+    image_enabled: bool = False
+    image_port: int | None = Field(default=None, ge=1, le=65535)
+    image_model: str | None = None
     # Métriques système supplémentaires (agents ≥ 0.3.0)
     cpu_pct: float | None = Field(default=None, ge=0, le=100)
     net_rx_kbps: float | None = Field(default=None, ge=0)
@@ -112,6 +117,10 @@ class NodeOut(BaseModel):
     llama_tokens_generated: int | None
     # Capabilities matérielles (issues du heartbeat de spouet-agent ≥ 0.3.0)
     capabilities: dict | None = None
+    # Génération d'images sur ce node
+    image_enabled: bool = False
+    image_port: int | None = None
+    image_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +165,9 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     # (rétro-compat : on ne touche pas la valeur précédente si payload absent).
     if payload.capabilities is not None:
         node.capabilities = payload.capabilities
+    node.image_enabled = payload.image_enabled
+    node.image_port = payload.image_port
+    node.image_model = payload.image_model
 
     await db.flush()  # garantit node.id avant l'insert métrique
 
@@ -502,6 +514,77 @@ async def load_model(
         _raise_agent_unreachable(base, exc)
 
 
+# ---------------------------------------------------------------------------
+# Routes proxy → API image du node (génération d'images)
+# ---------------------------------------------------------------------------
+
+async def _image_url(db: DbSession, node_id: UUID) -> tuple[Node, str]:
+    """Retourne le node + l'URL de base de son API image."""
+    node = await db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    if not node.image_enabled or node.image_port is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Ce node n'expose pas la génération d'images "
+            "(installer spouet-agent[images] sur une machine GPU).",
+        )
+    return node, f"http://{node.host}:{node.image_port}"
+
+
+@router.get("/{node_id}/image/status")
+async def image_status(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
+    """État du moteur d'images du node (modèle actif, device, pull/load)."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.status(base)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
+class ImagePullRequest(BaseModel):
+    model: str = Field(min_length=1)
+    hf_token: str | None = None
+
+
+@router.post("/{node_id}/image/pull", status_code=status.HTTP_202_ACCEPTED)
+async def image_pull(
+    node_id: UUID, payload: ImagePullRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Démarre le téléchargement d'un modèle d'images sur le node."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.pull(base, payload.model, payload.hf_token)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
+@router.get("/{node_id}/image/pull/status")
+async def image_pull_status(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
+    """Progrès du dernier téléchargement de modèle d'images."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.pull_status(base)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
+class ImageLoadRequest(BaseModel):
+    model: str | None = None
+
+
+@router.post("/{node_id}/image/load")
+async def image_load(
+    node_id: UUID, payload: ImageLoadRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Met un modèle d'images en mémoire sur le node (le rend actif)."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.load(base, payload.model)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
 @router.get("/{node_id}/diag")
 async def get_node_diag(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
     """Agrège capabilities + 200 dernières lignes de log llama-server +
@@ -723,4 +806,7 @@ def _node_out(n: Node, models: list[Model]) -> NodeOut:
         llama_prompt_tokens_processed=n.llama_prompt_tokens_processed,
         llama_tokens_generated=n.llama_tokens_generated,
         capabilities=n.capabilities,
+        image_enabled=n.image_enabled,
+        image_port=n.image_port,
+        image_model=n.image_model,
     )

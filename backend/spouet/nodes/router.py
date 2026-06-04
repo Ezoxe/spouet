@@ -138,6 +138,63 @@ async def pick_node(
     )
 
 
+@dataclass
+class ImageNodeChoice:
+    node_id: UUID
+    name: str
+    host: str
+    image_port: int
+    image_model: str | None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.image_port}"
+
+
+async def pick_image_node(
+    db: AsyncSession,
+    *,
+    exclude_node_ids: set[UUID] | None = None,
+) -> ImageNodeChoice:
+    """Choisit un node capable de générer des images (least-loaded VRAM).
+
+    Critères : node ONLINE, `image_enabled`, `image_port` renseigné. Lève
+    NoSuitableNodeError si aucun candidat.
+    """
+    exclude = exclude_node_ids or set()
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.node_offline_after_s)
+    rows = (
+        await db.execute(
+            select(Node).where(
+                Node.image_enabled.is_(True),
+                Node.image_port.is_not(None),
+                Node.last_seen.is_not(None),
+                Node.last_seen >= threshold,
+            )
+        )
+    ).scalars().all()
+
+    candidates = [n for n in rows if n.id not in exclude]
+    if not candidates:
+        raise NoSuitableNodeError(
+            "Aucun node en ligne ne peut générer d'images "
+            "(extra spouet-agent[images] requis sur une machine GPU)."
+        )
+
+    def sort_key(node: Node) -> tuple[int, str]:
+        vram_used = node.vram_used_mb if node.vram_used_mb is not None else 1024
+        return (vram_used, node.name)
+
+    node = min(candidates, key=sort_key)
+    return ImageNodeChoice(
+        node_id=node.id,
+        name=node.name,
+        host=node.host,
+        image_port=node.image_port,  # type: ignore[arg-type]
+        image_model=node.image_model,
+    )
+
+
 async def list_available_models(db: AsyncSession) -> list[dict[str, object]]:
     """Liste agrégée : un modèle peut être présent sur plusieurs nodes."""
     threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.node_offline_after_s)
