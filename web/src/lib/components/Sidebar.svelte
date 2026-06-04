@@ -25,7 +25,8 @@
         PinOff,
         Mail,
         Music,
-        MonitorPlay
+        MonitorPlay,
+        ImagePlus
     } from 'lucide-svelte';
     import { conversations, type ConversationOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
@@ -39,6 +40,7 @@
     const items = [
         { href: '/', label: 'Tableau de bord', icon: Activity },
         { href: '/chat', label: 'Conversations', icon: MessageSquare },
+        { href: '/studio', label: 'Studio images', icon: ImagePlus },
         { href: '/workspaces', label: 'Workspaces', icon: LayoutPanelLeft },
         { href: '/nodes', label: 'Nodes', icon: Server },
         { href: '/tools', label: 'Tools', icon: Wrench },

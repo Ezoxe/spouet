@@ -2,7 +2,7 @@
     import { onDestroy } from 'svelte';
     import { scale, fade } from 'svelte/transition';
     import { X } from 'lucide-svelte';
-    import { proxiedImage } from '$lib/api';
+    import { loadVisualImage } from '$lib/api';
 
     type Visual = {
         kind: 'image' | 'card' | 'fact';
@@ -33,7 +33,7 @@
         if (timer) clearTimeout(timer);
         if (!v) return;
         if ((v.kind === 'image' || v.kind === 'card') && v.url) {
-            proxiedImage(v.url)
+            loadVisualImage(v.url)
                 .then((u) => {
                     objectUrl = u;
                     imgSrc = u;

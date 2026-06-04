@@ -538,6 +538,53 @@ export const memory = {
 };
 
 // ----------------------------------------------------------------------------
+// Génération d'images (microservice image-engine)
+// ----------------------------------------------------------------------------
+
+export interface ImageOut {
+    id: string;
+    prompt: string;
+    negative_prompt: string | null;
+    width: number;
+    height: number;
+    seed: number | null;
+    conversation_id: string | null;
+    params: Record<string, unknown>;
+    created_at: string;
+    url: string;
+}
+
+export interface ImageHealth {
+    enabled: boolean;
+    ok: boolean;
+    error?: string;
+    model?: string;
+    device?: string;
+    dtype?: string;
+    ready?: boolean;
+}
+
+export interface GenerateImageIn {
+    prompt: string;
+    negative_prompt?: string | null;
+    width?: number | null;
+    height?: number | null;
+    steps?: number | null;
+    guidance_scale?: number | null;
+    seed?: number | null;
+}
+
+export const images = {
+    health: () => api<ImageHealth>('/images/health'),
+    list: (limit = 60, offset = 0) =>
+        api<ImageOut[]>(`/images?limit=${limit}&offset=${offset}`),
+    count: () => api<{ count: number }>('/images/count'),
+    generate: (json: GenerateImageIn) =>
+        api<ImageOut>('/images/generate', { method: 'POST', json }),
+    delete: (id: string) => api<void>(`/images/${id}`, { method: 'DELETE' })
+};
+
+// ----------------------------------------------------------------------------
 // Voix (STT / TTS via le microservice voice-engine)
 // ----------------------------------------------------------------------------
 
@@ -812,6 +859,27 @@ export async function proxiedImage(url: string): Promise<string> {
     });
     if (!res.ok) throw new ApiError(res.status, null, `${res.status}`);
     return URL.createObjectURL(await res.blob());
+}
+
+/**
+ * Charge une image servie par le backend (chemin relatif /api/...) avec auth,
+ * sous forme de blob URL (un `<img src>` ne porte pas le header Authorization).
+ */
+export async function authedImage(path: string): Promise<string> {
+    const token = getToken();
+    const res = await fetch(`${BASE}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!res.ok) {
+        if (res.status === 401) handleUnauthorized();
+        throw new ApiError(res.status, null, `${res.status}`);
+    }
+    return URL.createObjectURL(await res.blob());
+}
+
+/** Charge un visuel : proxy pour les URLs externes, fetch authentifié pour nos chemins internes. */
+export function loadVisualImage(url: string): Promise<string> {
+    return /^https?:\/\//i.test(url) ? proxiedImage(url) : authedImage(url);
 }
 
 // ----------------------------------------------------------------------------
