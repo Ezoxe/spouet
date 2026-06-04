@@ -27,9 +27,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from spouet.core.config import settings
 from spouet.core.logging import get_logger
 from spouet.db.models import Conversation, DesktopMacro
 from spouet.desktop import bridge, registry
+from spouet.images import client as image_client
+from spouet.images import storage as image_storage
+from spouet.images.client import GenerateParams
 from spouet.realtime.hub import publish, user_channel
 from spouet.tools.approval import request_approval, wait_for_decision
 from spouet.websearch import search as websearch_search
@@ -40,14 +44,17 @@ logger = get_logger(__name__)
 WEB_SEARCH_SLUG = "web_search"
 SHOW_VISUAL_SLUG = "show_visual"
 LIST_MACROS_SLUG = "list_macros"
+# Tool conditionné à l'activation du moteur d'images (image-engine).
+GENERATE_IMAGE_SLUG = "generate_image"
 # Tools exigeant un client desktop connecté.
 RUN_DESKTOP_ACTION_SLUG = "run_desktop_action"
 RUN_MACRO_SLUG = "run_macro"
 DEFINE_MACRO_SLUG = "define_macro"
 
 _ALWAYS = {WEB_SEARCH_SLUG, SHOW_VISUAL_SLUG, LIST_MACROS_SLUG}
+_IMAGE_GATED = {GENERATE_IMAGE_SLUG}
 _DESKTOP_GATED = {RUN_DESKTOP_ACTION_SLUG, RUN_MACRO_SLUG, DEFINE_MACRO_SLUG}
-BUILTIN_SLUGS = _ALWAYS | _DESKTOP_GATED
+BUILTIN_SLUGS = _ALWAYS | _IMAGE_GATED | _DESKTOP_GATED
 
 # Actions primitives autorisées dans une étape de macro / action directe.
 ALLOWED_STEP_ACTIONS = ("launch_app", "open_url")
@@ -106,6 +113,42 @@ _DEF_SHOW_VISUAL: dict[str, Any] = {
                 "duration_ms": {
                     "type": "integer",
                     "description": "Durée d'affichage en ms (défaut 7000)",
+                },
+            },
+        },
+    },
+}
+
+_DEF_GENERATE_IMAGE: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": GENERATE_IMAGE_SLUG,
+        "description": (
+            "Génère une image à partir d'une description textuelle (modèle de "
+            "diffusion self-hosted). Utilise-le quand l'utilisateur demande de "
+            "créer / dessiner / imaginer une image, une illustration, un logo, un "
+            "fond d'écran, etc. L'image générée est automatiquement affichée à "
+            "l'utilisateur. Décris la scène en détail dans `prompt` (de préférence "
+            "en anglais pour la qualité), ce que tu veux éviter dans "
+            "`negative_prompt`."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["prompt"],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Description détaillée de l'image à générer.",
+                },
+                "negative_prompt": {
+                    "type": "string",
+                    "description": "Éléments à éviter (ex. 'blurry, low quality, text').",
+                },
+                "width": {"type": "integer", "description": "Largeur en px (multiple de 8)."},
+                "height": {"type": "integer", "description": "Hauteur en px (multiple de 8)."},
+                "seed": {
+                    "type": "integer",
+                    "description": "Graine pour reproduire un résultat (optionnel).",
                 },
             },
         },
@@ -192,14 +235,17 @@ _DEF_DEFINE_MACRO: dict[str, Any] = {
 }
 
 
-def tool_defs(*, desktop_connected: bool) -> list[dict[str, Any]]:
+def tool_defs(*, desktop_connected: bool, images_enabled: bool = False) -> list[dict[str, Any]]:
     """Définitions des built-in tools à exposer au LLM pour ce tour.
 
     Les tools de pilotage PC ne sont exposés que si un client desktop est
-    connecté (capability-aware). web_search / show_visual / list_macros sont
-    toujours disponibles.
+    connecté (capability-aware). ``generate_image`` n'est exposé que si le moteur
+    d'images est activé. web_search / show_visual / list_macros sont toujours
+    disponibles.
     """
     defs = [_DEF_WEB_SEARCH, _DEF_SHOW_VISUAL, _DEF_LIST_MACROS]
+    if images_enabled:
+        defs.append(_DEF_GENERATE_IMAGE)
     if desktop_connected:
         defs += [_DEF_RUN_DESKTOP_ACTION, _DEF_RUN_MACRO, _DEF_DEFINE_MACRO]
     return defs
@@ -251,6 +297,8 @@ async def execute(
             return await _h_web_search(args)
         if slug == SHOW_VISUAL_SLUG:
             return await _h_show_visual(conversation, args, channel)
+        if slug == GENERATE_IMAGE_SLUG:
+            return await _h_generate_image(db, conversation, args, channel)
         if slug == LIST_MACROS_SLUG:
             return await _h_list_macros(db, conversation)
         if slug == RUN_DESKTOP_ACTION_SLUG:
@@ -320,6 +368,68 @@ async def _h_show_visual(
     return BuiltinOutcome(
         SHOW_VISUAL_SLUG,
         {"status": "shown", "visual": visual},
+        events=[{"event": "visual", "data": visual}],
+    )
+
+
+async def _h_generate_image(
+    db: AsyncSession, conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    if not settings.images_enabled:
+        return BuiltinOutcome(
+            GENERATE_IMAGE_SLUG,
+            {"status": "error", "error": "La génération d'images est désactivée."},
+        )
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return BuiltinOutcome(GENERATE_IMAGE_SLUG, {"status": "error", "error": "prompt manquant"})
+
+    params = GenerateParams(
+        prompt=prompt,
+        negative_prompt=(str(args.get("negative_prompt") or "").strip() or None),
+        width=_opt_int(args.get("width")),
+        height=_opt_int(args.get("height")),
+        seed=_opt_int(args.get("seed")),
+    )
+    try:
+        png = await image_client.generate(params)
+    except image_client.ImageEngineError as e:
+        return BuiltinOutcome(
+            GENERATE_IMAGE_SLUG,
+            {"status": "error", "error": f"moteur d'images indisponible: {e}"},
+        )
+
+    img = await image_storage.store(
+        db,
+        user_id=conversation.user_id,
+        conversation_id=conversation.id,
+        png=png,
+        prompt=prompt,
+        negative_prompt=params.negative_prompt,
+        params={},
+        seed=params.seed,
+    )
+    url = f"/api/images/{img.id}/file"
+    visual: dict[str, Any] = {
+        "kind": "image",
+        "url": url,
+        "title": prompt[:120],
+        "text": None,
+        "duration_ms": 12000,
+    }
+    # Affichage : overlay (canal user) + companion inline (canal conv).
+    await publish(user_channel(conversation.user_id), "visual", visual)
+    await publish(channel, "visual", visual)
+    return BuiltinOutcome(
+        GENERATE_IMAGE_SLUG,
+        {
+            "status": "ok",
+            "image_id": str(img.id),
+            "url": url,
+            "width": img.width,
+            "height": img.height,
+            "note": "Image générée et affichée à l'utilisateur.",
+        },
         events=[{"event": "visual", "data": visual}],
     )
 
@@ -633,6 +743,15 @@ def _safe_url(value: Any) -> str | None:
     if re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", s, re.IGNORECASE):
         return "https://" + s
     return None
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _clamp_duration(value: Any) -> int:

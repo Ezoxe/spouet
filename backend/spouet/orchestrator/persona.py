@@ -94,6 +94,15 @@ async def _live_capabilities_block(db: AsyncSession, user_id: UUID | None) -> st
         "Tu peux ensuite afficher une image avec `show_visual` (kind='image')."
     ]
 
+    if settings.images_enabled:
+        parts.append(
+            "Génération d'images : appelle `generate_image` (prompt détaillé, de "
+            "préférence en anglais) dès que l'utilisateur veut créer / dessiner / "
+            "imaginer une image, une illustration, un logo, un fond d'écran. "
+            "L'image est automatiquement affichée — n'essaie pas de la décrire en "
+            "ASCII ni d'inventer une URL."
+        )
+
     caps = await desktop_registry.get_caps(user_id) if user_id else None
     if caps:
         monitors = caps.get("monitors") or []

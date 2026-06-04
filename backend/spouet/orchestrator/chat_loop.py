@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from spouet.core.config import settings
 from spouet.core.logging import get_logger
 from spouet.db.models import Conversation, Message, Node, Tool, ToolExecution
 from spouet.nodes.agent_client import (
@@ -357,7 +358,12 @@ async def _load_active_tools(
     desktop_connected = False
     if conversation is not None:
         desktop_connected = await desktop_registry.is_connected(conversation.user_id)
-    payload.extend(builtin_tools.tool_defs(desktop_connected=desktop_connected))
+    payload.extend(
+        builtin_tools.tool_defs(
+            desktop_connected=desktop_connected,
+            images_enabled=settings.images_enabled,
+        )
+    )
 
     return (payload if payload else None), {t.slug: t for t in rows}
 
