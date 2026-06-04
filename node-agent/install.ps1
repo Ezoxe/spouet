@@ -54,7 +54,10 @@ param(
     [string] $InstallDir  = "C:\spouet",
     [string] $RepoUrl     = "https://github.com/ezoxe/spouet.git",
     [string] $Branch      = "master",
-    [string] $ServiceName = "SpouetAgent"
+    [string] $ServiceName = "SpouetAgent",
+    [switch] $Images,
+    [int]    $ImagePort   = 8083,
+    [string] $ImageModel  = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -139,7 +142,12 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
 }
 
 Write-Step "uv sync (node-agent)..."
-& $UvPath sync --directory $AgentDir
+if ($Images) {
+    Write-Step "  -> extra [images] (torch/diffusers) : installation (peut etre longue)..."
+    & $UvPath sync --extra images --directory $AgentDir
+} else {
+    & $UvPath sync --directory $AgentDir
+}
 
 # ---------------------------------------------------------------------------
 # 4. NSSM (download si absent)
@@ -188,6 +196,13 @@ $svcArgs = @(
     "--install-dir", $InstallDir,
     "--models-dir",  $ModelsDir
 )
+if ($Images) {
+    $svcArgs += @("--image-port", "$ImagePort")
+    if ($ImageModel) { $svcArgs += @("--image-model", $ImageModel) }
+    Write-Step "Generation d'images activee (port $ImagePort)."
+} else {
+    $svcArgs += "--no-images"
+}
 & $NssmExe install $ServiceName $UvPath @svcArgs | Out-Null
 # Token + HF_HOME passent par l'environnement du service. NSSM accepte plusieurs
 # variables : on les pose toutes en un seul appel séparées par espaces (format

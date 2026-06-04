@@ -18,6 +18,10 @@
 #   LLAMA_PORT           Port llama-server       (def: 8080)
 #   AGENT_PORT           Port agent API          (def: 8765)
 #   SKIP_LLAMA           Si "1", ne (ré)installe pas llama.cpp (def: 0)
+#   IMAGES               Si "1", installe l'extra de génération d'images
+#                        (torch/diffusers, lourd — pour les nodes GPU) (def: 0)
+#   IMAGE_MODEL          Modèle d'images par défaut (repo HF, optionnel)
+#   IMAGE_PORT           Port de l'API image     (def: 8083)
 #   SPOUET_NON_INTERACTIVE (def: 0)
 
 set -euo pipefail
@@ -31,6 +35,9 @@ set -euo pipefail
 : "${LLAMA_PORT:=8080}"
 : "${AGENT_PORT:=8765}"
 : "${SKIP_LLAMA:=0}"
+: "${IMAGES:=0}"
+: "${IMAGE_MODEL:=}"
+: "${IMAGE_PORT:=8083}"
 : "${SPOUET_NON_INTERACTIVE:=0}"
 UNINSTALL=0
 
@@ -41,13 +48,16 @@ while [[ $# -gt 0 ]]; do
         --interval=*)  HEARTBEAT_INTERVAL="${1#*=}" ;;
         --llama-port=*) LLAMA_PORT="${1#*=}" ;;
         --agent-port=*) AGENT_PORT="${1#*=}" ;;
+        --image-port=*) IMAGE_PORT="${1#*=}" ;;
+        --image-model=*) IMAGE_MODEL="${1#*=}" ;;
+        --images)       IMAGES=1 ;;
         --dir=*)        SPOUET_INSTALL_DIR="${1#*=}" ;;
         --branch=*)     SPOUET_BRANCH="${1#*=}" ;;
         --repo=*)       SPOUET_REPO_URL="${1#*=}" ;;
         --skip-llama)   SKIP_LLAMA=1 ;;
         --non-interactive) SPOUET_NON_INTERACTIVE=1 ;;
         --uninstall)    UNINSTALL=1 ;;
-        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         *) echo "Argument inconnu: $1" >&2; exit 2 ;;
     esac
     shift
@@ -204,7 +214,14 @@ UV_CACHE="$SPOUET_INSTALL_DIR/.cache/uv"
 install -d -o spouet -g spouet -m 0755 "$UV_CACHE"
 
 log "uv sync (node-agent)…"
-sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync --directory "$SPOUET_INSTALL_DIR/node-agent"
+if [[ "$IMAGES" == "1" ]]; then
+    log "  → extra [images] (torch/diffusers) : installation (peut être longue)…"
+    sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync --extra images \
+        --directory "$SPOUET_INSTALL_DIR/node-agent"
+else
+    sudo -Hu spouet env UV_CACHE_DIR="$UV_CACHE" "$UV_BIN" sync \
+        --directory "$SPOUET_INSTALL_DIR/node-agent"
+fi
 
 # ---------------------------------------------------------------------------
 # llama.cpp-server (binaire précompilé depuis les releases GitHub)
@@ -409,6 +426,8 @@ SPOUET_BACKEND=$BACKEND
 SPOUET_AGENT_TOKEN=$TOKEN
 HEARTBEAT_INTERVAL=$HEARTBEAT_INTERVAL
 LLAMA_MODELS_DIR=$MODELS_DIR
+SPOUET_IMAGE_PORT=$IMAGE_PORT
+SPOUET_IMAGE_MODEL=$IMAGE_MODEL
 EOF
 chmod 0640 /etc/spouet/agent.env
 chown root:spouet /etc/spouet/agent.env
@@ -420,6 +439,15 @@ log "Installation du service systemd spouet-agent…"
 # Détecte l'IP LAN routable (celle de l'interface par défaut)
 LAN_IP=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(('8.8.8.8',80)); print(s.getsockname()[0]); s.close()" 2>/dev/null || hostname -I | awk '{print $1}')
 log "  → IP routable : $LAN_IP"
+
+# Arguments de génération d'images : actifs uniquement si l'extra a été installé.
+if [[ "$IMAGES" == "1" ]]; then
+    IMAGE_ARGS="--image-port $IMAGE_PORT"
+    [[ -n "$IMAGE_MODEL" ]] && IMAGE_ARGS="$IMAGE_ARGS --image-model $IMAGE_MODEL"
+    log "  → génération d'images activée (port $IMAGE_PORT${IMAGE_MODEL:+, modèle $IMAGE_MODEL})"
+else
+    IMAGE_ARGS="--no-images"
+fi
 cat > /etc/systemd/system/spouet-agent.service <<EOF
 [Unit]
 Description=Spouet node agent (llama.cpp lifecycle + heartbeat)
@@ -444,7 +472,8 @@ ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spoue
     --llama-port $LLAMA_PORT \\
     --agent-port $AGENT_PORT \\
     --install-dir $SPOUET_INSTALL_DIR \\
-    --models-dir $MODELS_DIR
+    --models-dir $MODELS_DIR \\
+    $IMAGE_ARGS
 Restart=always
 RestartSec=5
 
