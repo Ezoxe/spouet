@@ -56,6 +56,36 @@ services:
       retries: 10
       start_period: 90s
 
+  # Génération d'images self-hosted (diffusers / Stable Diffusion).
+  # Non exposé au LAN (pas de `ports`) : seul le backend l'appelle en interne
+  # (spouet.images.client). Device auto-détecté (cuda si dispo, sinon cpu).
+  image-engine:
+    build:
+      context: ../image-engine
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Vide => auto (device détecté, modèle adapté). Cf. image-engine/README.md.
+      IMAGE_DEVICE: ${SPOUET_IMAGE_DEVICE:-}
+      IMAGE_MODEL: ${SPOUET_IMAGE_MODEL:-}
+      IMAGE_DTYPE: ${SPOUET_IMAGE_DTYPE:-}
+      MODELS_PRELOAD: ${SPOUET_IMAGE_PRELOAD:-1}
+    volumes:
+      # Cache des poids HF (premier démarrage = téléchargement du modèle).
+      - ./data/image-models:/data
+    expose:
+      - "8002"
+    # GPU NVIDIA (optionnel) : installer le NVIDIA Container Toolkit sur l'hôte
+    # puis décommenter pour exploiter le GPU (sinon CPU, lent).
+    # gpus: all
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # Généreux : le 1er démarrage télécharge les poids du modèle (plusieurs Go).
+      start_period: 300s
+
   # Recherche web self-hosted (méta-moteur SearXNG). Jamais exposé au LAN
   # (pas de `ports`) : seul le backend l'appelle en interne (spouet.websearch).
   # La sortie JSON est activée dans deploy/searxng/settings.yml.
@@ -87,6 +117,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../tools:/app/tools:ro
+      # PNG générés par image-engine, servis via /api/images/{id}/file.
+      - ./data/images:/data/images
     ports:
       - "${SPOUET_BACKEND_PORT:-10002}:8000"
     command: ["uvicorn", "spouet.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -114,6 +146,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../tools:/app/tools:ro
+      # Les jobs planifiés peuvent générer des images (tool generate_image) :
+      # même volume que le backend pour que les PNG soient servis ensuite.
+      - ./data/images:/data/images
     command: ["celery", "-A", "spouet.workers", "worker", "--loglevel=info", "--concurrency=4"]
 
   beat:
