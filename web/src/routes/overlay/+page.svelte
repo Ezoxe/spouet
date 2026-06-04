@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { scale, fade } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { proxiedImage } from '$lib/api';
+    import { loadVisualImage } from '$lib/api';
 
     type Visual = {
         kind: 'image' | 'card' | 'fact';
@@ -45,7 +45,7 @@
 
         if ((v.kind === 'image' || v.kind === 'card') && v.url) {
             try {
-                objectUrl = await proxiedImage(v.url);
+                objectUrl = await loadVisualImage(v.url);
                 imgSrc = objectUrl;
             } catch {
                 imgSrc = v.url; // repli : chargement direct
