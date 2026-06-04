@@ -26,7 +26,7 @@ Le backend tourne sur Debian (docker-compose). Les autres surfaces sont distribu
 - **Desktop** : Tauri 2.0 (Rust shell + frontend Svelte réutilisé)
 - **Sandbox tools** : Docker SDK Python (`docker-py`), conteneur jetable par appel
 - **Voix** : microservice `voice-engine` (faster-whisper STT + Piper TTS), self-hosted, conteneur dédié
-- **Images** : microservice `image-engine` (diffusers / Stable Diffusion), self-hosted, conteneur dédié, device auto (GPU/CPU)
+- **Images** : génération sur les **nodes** (machines GPU) via `node-agent[images]` (diffusers / Stable Diffusion), device auto (GPU/CPU)
 - **Reverse proxy** : Caddy
 - **Package manager Python** : `uv`
 - **Package manager JS** : `pnpm`
@@ -78,11 +78,12 @@ docker compose down -v               # reset complet (DROP DATA)
 ### Node-agent (sur chaque machine Ollama)
 ```bash
 cd node-agent
-uv sync
+uv sync                              # + --extra images sur un node GPU pour la génération d'images
 SPOUET_AGENT_TOKEN=$TOKEN uv run spouet-agent run \
     --backend http://debian:8000 \
     --ollama  http://localhost:11434 \
     --interval 10
+    # + --image-port 8083 --image-model stabilityai/sdxl-turbo  (si extra images installé)
 ```
 
 ### Installeurs (prod, one-liner)
@@ -103,7 +104,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 - **Connectors persistants** : à la différence des tools (jetables), un connector est un conteneur Docker long-running (Discord, Telegram, IMAP…) qui rend l'IA joignable depuis l'extérieur. Cycle de vie géré par `connectors/manager.py` ; tâche Celery `monitor_connectors` (30s) auto-restart les conteneurs crashés. Format documenté dans `docs/connectors-authoring.md`.
 - **RAG** : embeddings via Ollama (`nomic-embed-text`), stockés dans PGVector (index `ivfflat`). Abstraction `VectorStore` permet de swap vers Qdrant plus tard.
 - **Voix (STT/TTS)** : microservice `voice-engine` (conteneur dédié, hors backend) embarque faster-whisper (reconnaissance) + Piper (synthèse FR). Le frontend capture le micro via `MediaRecorder` (fonctionne dans WebView2/Tauri, contrairement à la Web Speech API), POST `/api/voice/transcribe`, puis lit l'audio renvoyé par `/api/voice/speak`. Le backend (`voice/client.py`) ne fait que proxifier avec auth. Repli navigateur (`SpeechSynthesis`) si le service est indisponible. Le service n'est jamais exposé au LAN (pas de `ports`).
-- **Images (génération)** : microservice `image-engine` (conteneur dédié, hors backend, jamais exposé au LAN) embarque un pipeline `diffusers` (`AutoPipelineForText2Image`). Device **auto-détecté** au démarrage (`cuda` si GPU NVIDIA exploitable, sinon `cpu`, forçable par env) → modèle par défaut adapté (SDXL-Turbo sur GPU, SD-Turbo sur CPU). Le backend (`images/client.py`) ne fait que proxifier ; les PNG sont stockés sur disque (volume `images_dir`, partagé backend+worker) avec métadonnées en base (`generated_images`), servis via l'endpoint authentifié `/api/images/{id}/file` (quota par user qui élague les plus anciennes). Deux surfaces : la page `/studio` (UI manuelle + galerie) et le built-in `generate_image` que l'IA invoque en conversation (publie un event `visual` → overlay + inline, comme `show_visual`). Capability-aware : le tool n'est exposé au LLM que si `images_enabled`.
+- **Images (génération)** : la génération tourne **sur les nodes** (machines GPU), **pas sur l'admin** — exactement comme l'inférence LLM. Le `node-agent` embarque un module `image_gen` (diffusers `AutoPipelineForText2Image`, inférence en threadpool + verrou) exposé sur un **port image dédié** (défaut 8083) avec gestion explicite du modèle façon GGUF : `/pull` (téléchargement HF), `/load` (modèle actif), `/generate` (PNG). torch/diffusers sont un **extra optionnel** `spouet-agent[images]` : un node CPU sans l'extra n'expose pas la capacité. Le device est auto-détecté (`cuda`/`cpu`) → modèle par défaut adapté (SDXL-Turbo GPU, SD-Turbo CPU). Le heartbeat publie `image_enabled`/`image_port`/`image_model` ; `nodes/router.py::pick_image_node` choisit un node GPU least-loaded. Le backend route la génération vers `http://{node.host}:{node.image_port}/generate`, puis **stocke le PNG renvoyé** sur disque (`images_dir`, volume backend+worker) avec métadonnées en base (`generated_images`), servi via l'endpoint authentifié `/api/images/{id}/file` (quota par user). Deux surfaces : la page `/studio` (UI manuelle + galerie) et le built-in `generate_image` que l'IA invoque en conversation (publie un event `visual` → overlay + inline, comme `show_visual`). Le modèle d'images par node se pilote depuis la page détail node (pull/activation). Endpoints admin : `/api/nodes/{id}/image/{status,pull,pull/status,load}`.
 - **Mail** : module `mail/` (IMAP en lecture `readonly` + SMTP) piloté par la tâche Celery `sync_mail_accounts` (toutes les 3 min, verrou Redis anti-chevauchement). Chaque nouveau mail est classé par le LLM (spam / important / normal / newsletter / notification + score + `needs_reply` + résumé). Garde-fous **par conception** : les spams sont *déplacés* vers un dossier (jamais supprimés), et toute réponse est un brouillon `pending` qui n'est **envoyé que sur validation explicite** (`POST /api/mail/drafts/{id}/send`). Identifiants stockés au coffre (scope `mail:<account_id>`).
 - **Spotify** : module `spotify/` (OAuth Authorization Code + refresh). Le contrôle de lecture passe par `POST /api/spotify/control`, consommé à la fois par l'UI (`/spotify`) et par le tool `spotify` (réseau `internal`) que l'IA invoque pour lancer/piloter la musique. `refresh_token` au coffre (scope `spotify:<user_id>`), `access_token` caché en Redis. Premium + appareil actif requis (l'API Web pilote un appareil Connect existant, elle ne crée pas de lecteur).
 - **Pilotage du PC (desktop)** : contrairement aux tools (Docker côté serveur, qui ne peuvent pas toucher le bureau), les **actions desktop** (lancer une app, ouvrir une URL, cibler un écran) s'exécutent **côté client (app Tauri)**. L'orchestrator publie une demande `desktop_action` sur le canal `user:{id}` et **attend** le résultat (même pattern que l'approval HITL — `desktop/bridge.py`, miroir de `tools/approval.py`). Le client Tauri tient une connexion SSE persistante (`/sse/user`, agent `web/src/lib/realtime.ts`), exécute via des commandes Rust natives (`desktop/src-tauri/src/desktop_actions.rs` : `ShellExecuteExW` + placement de fenêtre best-effort par PID→HWND), puis POST le résultat sur `/api/desktop/actions/{id}/result`. Les capacités du poste (écrans, apps détectées) sont publiées via `/api/desktop/hello` et stockées en Redis (TTL court, `desktop/registry.py`) → la **persona devient capability-aware** (n'expose les tools de pilotage que si un client est connecté). Garde-fou : `launch_app` n'accepte que des **apps détectées**.
@@ -127,7 +128,7 @@ Les scripts à la racine et dans chaque surface sont la voie d'install canonique
 | `scheduler/` | Définitions Celery Beat dynamiques (DB-backed) |
 | `rag/` | Ingest, retriever PGVector, abstraction VectorStore |
 | `voice/` | Pont httpx vers le microservice voice-engine (STT/TTS) |
-| `images/` | Pont httpx vers image-engine (diffusers) + stockage disque des PNG générés |
+| `images/` | Pont httpx vers l'API image d'un node (génération sur node GPU) + stockage disque des PNG |
 | `mail/` | Boîtes IMAP/SMTP, tri IA, réponses validées en HITL |
 | `spotify/` | OAuth Spotify + contrôle de lecture (Connect) |
 | `desktop/` | Pont d'actions client (app Tauri) + registre de capacités (Redis) |
@@ -165,8 +166,8 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 - `SPOUET_SEARXNG_URL` (backend, défaut `http://searxng:8080`) / `SPOUET_WEBSEARCH_ENABLED` (défaut `true`) : recherche web. Le service `searxng` (docker-compose) embarque `deploy/searxng/settings.yml` qui **active la sortie JSON** (consommée par `websearch/client.py`) et désactive le limiteur. `SEARXNG_SECRET` (compose) = secret interne SearXNG. Jamais exposé au LAN.
 - `SPOUET_SPOTIFY_*` : cf. section Spotify ci-dessus.
 - `SPOUET_VOICE_ENABLED` (backend, défaut `true`) : coupe proprement les endpoints `/api/voice/*` et le check santé voix si la voix n'est pas déployée.
-- `SPOUET_IMAGES_ENABLED` (backend, défaut `true`) : coupe les endpoints `/api/images/*`, le tool `generate_image` et le bloc persona si la génération d'images n'est pas déployée. `SPOUET_IMAGE_ENGINE_URL` (défaut `http://image-engine:8002`), `SPOUET_IMAGE_TIMEOUT_S` (défaut 180), `SPOUET_IMAGES_DIR` (défaut `/data/images`), `SPOUET_IMAGE_MAX_PER_USER` (défaut 500, élague les plus anciennes).
-- `SPOUET_IMAGE_DEVICE` / `SPOUET_IMAGE_MODEL` / `SPOUET_IMAGE_DTYPE` / `SPOUET_IMAGE_PRELOAD` (service `image-engine`) : vide = auto (device `cuda`/`cpu` détecté, modèle adapté : SDXL-Turbo GPU / SD-Turbo CPU). Cf. `image-engine/README.md`. Premier démarrage = téléchargement des poids (volume `deploy/data/image-models`). GPU NVIDIA : décommenter `gpus: all` du service `image-engine`.
+- `SPOUET_IMAGES_ENABLED` (backend, défaut `true`) : coupe les endpoints `/api/images/*`, le tool `generate_image` et le bloc persona. `SPOUET_IMAGE_TIMEOUT_S` (défaut 180), `SPOUET_IMAGES_DIR` (défaut `/data/images`, volume backend+worker), `SPOUET_IMAGE_MAX_PER_USER` (défaut 500, élague les plus anciennes). La génération elle-même tourne sur les **nodes**, pas sur l'admin.
+- `IMAGES` / `IMAGE_MODEL` / `IMAGE_PORT` (installeur node-agent `install.sh`/`install.ps1`) : `IMAGES=1` (ou `--images` / `-Images`) installe l'extra `spouet-agent[images]` (torch/diffusers) sur le node GPU et active la génération. `IMAGE_DEVICE` / `IMAGE_MODEL` / `IMAGE_DTYPE` (env du node-agent) : vide = auto (device `cuda`/`cpu` détecté, modèle adapté : SDXL-Turbo GPU / SD-Turbo CPU). Le modèle se télécharge/active aussi depuis la page détail node de l'UI. Premier pull = téléchargement des poids (cache HF du node).
 - `SPOUET_SPOTIFY_CLIENT_ID` / `SPOUET_SPOTIFY_CLIENT_SECRET` / `SPOUET_SPOTIFY_REDIRECT_URI` (backend) : OAuth Spotify. App créée sur developer.spotify.com ; le `redirect_uri` doit correspondre exactement (ex. `https://spouet.local/api/spotify/callback`). Vide = intégration Spotify désactivée.
 
 ## Capabilities : source unique de vérité hardware
