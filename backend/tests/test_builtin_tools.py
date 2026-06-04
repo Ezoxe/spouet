@@ -22,6 +22,24 @@ def test_tool_defs_capability_aware():
     assert {"run_macro", "define_macro", "run_desktop_action"} <= names_on
 
 
+def test_tool_defs_generate_image_gated():
+    # generate_image n'apparaît que si le moteur d'images est activé.
+    off = {d["function"]["name"] for d in bt.tool_defs(desktop_connected=False)}
+    on = {
+        d["function"]["name"]
+        for d in bt.tool_defs(desktop_connected=False, images_enabled=True)
+    }
+    assert "generate_image" not in off
+    assert "generate_image" in on
+
+
+def test_opt_int():
+    assert bt._opt_int(None) is None
+    assert bt._opt_int("512") == 512
+    assert bt._opt_int(768) == 768
+    assert bt._opt_int("pas un nombre") is None
+
+
 def test_validate_step_launch_app():
     step, errs = bt._validate_step({"action": "launch_app", "app": "CurseForge", "monitor": 1})
     assert not errs
