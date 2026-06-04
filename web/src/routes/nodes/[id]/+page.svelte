@@ -39,6 +39,14 @@
     // Modèle à charger
     let loadingModel: string | null = $state(null);
 
+    // Génération d'images (sur le node)
+    let imageStatus: Record<string, unknown> | null = $state(null);
+    let imageModelInput = $state('');
+    let imagePulling = $state(false);
+    let imagePullStatus: Record<string, unknown> | null = $state(null);
+    let imagePolling: ReturnType<typeof setInterval> | null = null;
+    let imageLoading = $state(false);
+
     // Historique
     let histRange: MetricsRange = $state('1h');
     let histData: NodeMetricsOut | null = $state(null);
@@ -234,6 +242,70 @@
         }
     }
 
+    async function loadImageStatus() {
+        if (!nodeId || !node?.image_enabled) return;
+        try {
+            imageStatus = await nodesApi.imageStatus(nodeId);
+        } catch {
+            /* node image pas encore prêt */
+        }
+    }
+
+    async function startImagePull() {
+        const model = imageModelInput.trim();
+        if (!nodeId || !model) {
+            toast.error('Indique le repo HuggingFace du modèle (ex. stabilityai/sdxl-turbo).');
+            return;
+        }
+        imagePulling = true;
+        try {
+            await nodesApi.imagePull(nodeId, { model });
+            toast.success('Téléchargement du modèle d’images démarré…');
+            startPollingImagePull();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur inconnue');
+        } finally {
+            imagePulling = false;
+        }
+    }
+
+    function startPollingImagePull() {
+        if (imagePolling || !nodeId) return;
+        const id = nodeId;
+        imagePolling = setInterval(async () => {
+            try {
+                imagePullStatus = await nodesApi.imagePullStatus(id);
+                const st = imagePullStatus?.status;
+                if (st === 'done' || st === 'error') {
+                    clearInterval(imagePolling!);
+                    imagePolling = null;
+                    if (st === 'done') {
+                        toast.success(`Modèle téléchargé : ${imagePullStatus?.model}`);
+                        await loadImageStatus();
+                    } else {
+                        toast.error(`Échec : ${imagePullStatus?.error}`);
+                    }
+                    imagePullStatus = null;
+                }
+            } catch { /* ignore */ }
+        }, 2500);
+    }
+
+    async function loadImageModel() {
+        const model = imageModelInput.trim() || undefined;
+        if (!nodeId) return;
+        imageLoading = true;
+        try {
+            await nodesApi.imageLoad(nodeId, { model });
+            toast.success('Chargement du modèle d’images en cours…');
+            setTimeout(loadImageStatus, 1500);
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        } finally {
+            imageLoading = false;
+        }
+    }
+
     async function deleteModel(filename: string) {
         if (!nodeId || !confirm(`Supprimer ${filename} ?`)) return;
         try {
@@ -260,13 +332,17 @@
     }
 
     onMount(() => {
-        loadNode().then(() => loadLocalModels());
+        loadNode().then(() => {
+            loadLocalModels();
+            loadImageStatus();
+        });
         loadHistory('1h');
         // Rafraîchissement à 3s pour des graphiques fluides
         const i = setInterval(() => { loadNode(); }, 3000);
         return () => {
             clearInterval(i);
             if (polling) clearInterval(polling);
+            if (imagePolling) clearInterval(imagePolling);
         };
     });
 </script>
@@ -634,6 +710,79 @@
         {:else if !modelsLoading}
             <p class="text-xs text-neutral-600">
                 {node?.agent_port ? 'Aucun modèle GGUF installé.' : 'Installe spouet-agent ≥ 0.2.0 sur ce node pour gérer les modèles depuis l\'interface.'}
+            </p>
+        {/if}
+    </section>
+
+    <!-- Génération d'images (sur le node) -->
+    <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+        <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-neutral-400">
+            Génération d'images
+        </h2>
+        {#if node?.image_enabled}
+            <div class="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                <span class="rounded bg-emerald-900/40 px-2 py-0.5 text-[10px] text-emerald-300">
+                    activée
+                </span>
+                {#if imageStatus}
+                    <span class="text-neutral-500">device : {imageStatus.device as string}</span>
+                    {#if imageStatus.model}
+                        <span class="text-neutral-400">modèle actif : <span class="font-mono">{imageStatus.model as string}</span></span>
+                    {/if}
+                    {#if imageStatus.ready}
+                        <span class="rounded bg-emerald-900/40 px-1 py-0.5 text-[10px] text-emerald-300">prêt</span>
+                    {/if}
+                {:else if node.image_model}
+                    <span class="text-neutral-400">modèle : <span class="font-mono">{node.image_model}</span></span>
+                {/if}
+            </div>
+
+            <div class="rounded-lg border border-neutral-700 bg-neutral-950 p-3">
+                <p class="mb-2 text-xs text-neutral-400">
+                    Télécharge / active un modèle de diffusion depuis
+                    <a href="https://huggingface.co" target="_blank" class="underline">Hugging Face</a>
+                    (ex. <span class="font-mono">stabilityai/sdxl-turbo</span>,
+                    <span class="font-mono">stabilityai/sd-turbo</span>). Vide = modèle par défaut du node.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                    <input
+                        type="text"
+                        bind:value={imageModelInput}
+                        placeholder="stabilityai/sdxl-turbo"
+                        class="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 focus:border-cyan-500/50 focus:outline-none"
+                    />
+                    <button
+                        type="button"
+                        onclick={startImagePull}
+                        disabled={imagePulling}
+                        class="flex items-center gap-1.5 rounded bg-cyan-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+                    >
+                        {#if imagePulling}<Loader2 size={12} class="animate-spin" />{:else}<Download size={12} />{/if}
+                        Télécharger
+                    </button>
+                    <button
+                        type="button"
+                        onclick={loadImageModel}
+                        disabled={imageLoading}
+                        class="flex items-center gap-1.5 rounded border border-neutral-700 px-2.5 py-1 text-xs hover:bg-neutral-800 disabled:opacity-50"
+                        title="Mettre ce modèle en mémoire (le rendre actif)"
+                    >
+                        {#if imageLoading}<Loader2 size={12} class="animate-spin" />{:else}<Play size={12} />{/if}
+                        Activer
+                    </button>
+                </div>
+                {#if imagePullStatus}
+                    <p class="mt-2 text-xs text-cyan-300">
+                        Téléchargement en cours : {imagePullStatus.model as string}…
+                    </p>
+                {/if}
+            </div>
+        {:else}
+            <p class="text-xs text-neutral-600">
+                Ce node n'expose pas la génération d'images. Réinstalle le node-agent
+                avec l'extra images (machine GPU) :
+                <span class="font-mono">IMAGES=1 … install.sh</span>
+                ou <span class="font-mono">install.ps1 -Images</span>.
             </p>
         {/if}
     </section>

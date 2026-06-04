@@ -123,11 +123,11 @@
         >
             <span class="h-1.5 w-1.5 rounded-full {health.ok ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
             {#if !health.enabled}
-                Moteur désactivé
+                Génération désactivée
             {:else if health.ok}
-                {health.model} · {health.device}
+                {health.node ?? 'node'} · {health.model ?? health.device ?? 'prêt'}
             {:else}
-                Moteur injoignable
+                Aucun node image
             {/if}
         </div>
     {/if}

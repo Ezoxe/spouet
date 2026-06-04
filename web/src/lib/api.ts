@@ -226,6 +226,10 @@ export interface NodeOut {
     llama_prompt_tokens_processed: number | null;
     llama_tokens_generated: number | null;
     capabilities: NodeCapabilities | null;
+    // Génération d'images sur ce node (extra spouet-agent[images])
+    image_enabled: boolean;
+    image_port: number | null;
+    image_model: string | null;
 }
 
 export interface LocalModelOut {
@@ -441,7 +445,15 @@ export const nodes = {
         api<NodeMetricsOut>(`/nodes/${id}/metrics?range=${range}`),
     clusterAggregate: (range: MetricsRange = '24h') =>
         api<ClusterAggregate>(`/nodes/metrics/aggregate?range=${range}`),
-    diag: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/diag`)
+    diag: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/diag`),
+    // Génération d'images (sur le node)
+    imageStatus: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/image/status`),
+    imagePull: (id: string, json: { model: string; hf_token?: string }) =>
+        api<Record<string, unknown>>(`/nodes/${id}/image/pull`, { method: 'POST', json }),
+    imagePullStatus: (id: string) =>
+        api<Record<string, unknown>>(`/nodes/${id}/image/pull/status`),
+    imageLoad: (id: string, json: { model?: string }) =>
+        api<Record<string, unknown>>(`/nodes/${id}/image/load`, { method: 'POST', json })
 };
 
 export const conversations = {
@@ -558,10 +570,12 @@ export interface ImageHealth {
     enabled: boolean;
     ok: boolean;
     error?: string;
+    node?: string;
     model?: string;
     device?: string;
     dtype?: string;
     ready?: boolean;
+    available?: boolean;
 }
 
 export interface GenerateImageIn {
