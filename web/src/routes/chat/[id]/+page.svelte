@@ -632,6 +632,7 @@
 <Composer
     onready={(api) => (focusComposer = api.focus)}
     disabled={streaming || !selectedModel}
+    busy={streaming}
     placeholder={!selectedModel
         ? 'Aucun modèle disponible — voir bandeau ci-dessus.'
         : 'Écrivez votre message…'}

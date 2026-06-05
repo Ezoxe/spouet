@@ -250,6 +250,7 @@
                     </div>
                     <Composer
                         disabled={managerStreaming || !selectedModel}
+                        busy={managerStreaming}
                         placeholder={!selectedModel ? 'Aucun modèle disponible.' : 'Message au manager…'}
                         onsend={sendToManager}
                     />

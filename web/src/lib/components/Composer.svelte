@@ -5,12 +5,17 @@
 
     interface Props {
         disabled?: boolean;
+        /** Génération en cours : seul cet état affiche le spinner d'envoi.
+         *  `disabled` peut être vrai sans `busy` (ex. aucun modèle sélectionné)
+         *  → on ne montre PAS de spinner qui tournerait pour rien. */
+        busy?: boolean;
         placeholder?: string;
         onsend: (text: string) => void;
         onready?: (api: { focus: () => void }) => void;
     }
     let {
         disabled = false,
+        busy = false,
         placeholder = 'Écrivez votre message…',
         onsend,
         onready
@@ -215,7 +220,7 @@
                        disabled:opacity-30 disabled:hover:scale-100 disabled:shadow-none"
                 title="Envoyer (⏎)"
             >
-                {#if disabled}
+                {#if busy}
                     <Loader2 size={16} class="animate-spin" />
                 {:else}
                     <Send size={16} />
