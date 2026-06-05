@@ -120,6 +120,41 @@ async def image_nodes(user: CurrentUser, db: DbSession) -> list[dict]:
     ]
 
 
+@router.get("/models")
+async def downloaded_models(user: CurrentUser, db: DbSession) -> list[dict]:
+    """Modèles d'images téléchargés sur les nodes (agrégé, pour le studio)."""
+    threshold = _dt.now(_tz.utc) - _td(seconds=settings.node_offline_after_s)
+    rows = (
+        await db.execute(
+            _select(Node).where(
+                Node.image_enabled.is_(True),
+                Node.image_port.is_not(None),
+                Node.last_seen.is_not(None),
+                Node.last_seen >= threshold,
+            )
+        )
+    ).scalars().all()
+    agg: dict[str, dict] = {}
+    for n in rows:
+        base = f"http://{n.host}:{n.image_port}"
+        try:
+            models = await image_client.list_models(base)
+        except image_client.ImageEngineError:
+            continue
+        for m in models:
+            repo = str(m.get("repo") or "")
+            if not repo:
+                continue
+            entry = agg.setdefault(
+                repo, {"repo": repo, "size_bytes": 0, "nodes": [], "active": False}
+            )
+            entry["size_bytes"] = max(entry["size_bytes"], int(m.get("size_bytes") or 0))
+            entry["nodes"].append(n.name)
+            if m.get("active"):
+                entry["active"] = True
+    return sorted(agg.values(), key=lambda x: x["repo"])
+
+
 class SetModelIn(BaseModel):
     model: str = Field(min_length=1, max_length=255)
 

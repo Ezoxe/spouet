@@ -44,6 +44,7 @@
 
     // Choix du modèle
     let imageNodes = $state<ImageNodeOut[]>([]);
+    let downloadedModels = $state<{ repo: string; size_bytes: number; nodes: string[]; active: boolean }[]>([]);
     let model = $state('');
     let applyingModel = $state(false);
 
@@ -52,17 +53,20 @@
     let genTimer: ReturnType<typeof setInterval> | null = null;
 
     const modelOptions = $derived.by(() => {
-        const set = new Set<string>(MODEL_SUGGESTIONS);
+        const set = new Set<string>();
+        for (const m of downloadedModels) set.add(m.repo);
         if (health?.model) set.add(health.model);
         for (const n of imageNodes) if (n.model) set.add(n.model);
+        for (const s of MODEL_SUGGESTIONS) set.add(s);
         return [...set];
     });
 
     async function refresh() {
-        [health, gallery, imageNodes] = await Promise.all([
+        [health, gallery, imageNodes, downloadedModels] = await Promise.all([
             images.health().catch(() => null),
             images.list().catch(() => []),
-            images.nodes().catch(() => [])
+            images.nodes().catch(() => []),
+            images.downloadedModels().catch(() => [])
         ]);
         if (!model && health?.model) model = health.model;
     }
@@ -225,6 +229,26 @@
                 {model.trim() === health?.model ? 'Actif' : 'Activer'}
             </button>
         </div>
+
+        {#if downloadedModels.length > 0}
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                <span class="text-[10px] uppercase tracking-wider text-neutral-600">Téléchargés</span>
+                {#each downloadedModels as m (m.repo)}
+                    <button
+                        type="button"
+                        onclick={() => (model = m.repo)}
+                        class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition
+                               {model === m.repo
+                            ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-200'
+                            : 'border-[var(--color-border-subtle)] text-neutral-400 hover:text-neutral-200'}"
+                        title={`Sur : ${m.nodes.join(', ')}`}
+                    >
+                        <span class="font-mono">{m.repo}</span>
+                        {#if m.active}<span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>{/if}
+                    </button>
+                {/each}
+            </div>
+        {/if}
 
         <div class="mt-3 flex flex-wrap items-center gap-3">
             <div class="flex gap-1 rounded-lg border border-[var(--color-border-subtle)] p-0.5">

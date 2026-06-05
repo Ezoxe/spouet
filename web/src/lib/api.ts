@@ -611,6 +611,10 @@ export const images = {
         api<ImageOut>('/images/generate', { method: 'POST', json }),
     delete: (id: string) => api<void>(`/images/${id}`, { method: 'DELETE' }),
     nodes: () => api<ImageNodeOut[]>('/images/nodes'),
+    downloadedModels: () =>
+        api<{ repo: string; size_bytes: number; nodes: string[]; active: boolean }[]>(
+            '/images/models'
+        ),
     setModel: (model: string) =>
         api<Record<string, unknown>>('/images/model', { method: 'POST', json: { model } })
 };
