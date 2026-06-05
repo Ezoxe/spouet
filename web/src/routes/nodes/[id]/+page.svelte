@@ -44,6 +44,7 @@
     let imagePulling = $state(false);
     let imagePullStatus: Record<string, unknown> | null = $state(null);
     let imageLoading = $state(false);
+    let imageModelsList = $state<{ repo: string; size_bytes: number; active: boolean }[]>([]);
 
     // Historique
     let histRange: MetricsRange = $state('1h');
@@ -83,9 +84,22 @@
     // gros multi-séries). RAM/VRAM bornées au total matériel (échelle réaliste).
     interface MetricChart extends Series {}
 
+    // Parse défensif : un timestamp sans fuseau (ancien backend) est interprété
+    // comme UTC, pas comme heure locale, pour éviter tout décalage horaire.
+    function parseTime(s: string): number {
+        return /([zZ]|[+-]\d\d:?\d\d)$/.test(s) ? Date.parse(s) : Date.parse(s + 'Z');
+    }
+
+    // Fraîcheur : âge (s) du point le plus récent, pour signaler des données figées.
+    const dataAgeS = $derived.by(() => {
+        if (!histData || histData.series.length === 0) return null;
+        const last = histData.series[histData.series.length - 1];
+        return Math.round((Date.now() - parseTime(last.time)) / 1000);
+    });
+
     const metricCharts = $derived.by<MetricChart[]>(() => {
         if (!histData) return [];
-        const pts = histData.series.map((p) => ({ time: Date.parse(p.time), p }));
+        const pts = histData.series.map((p) => ({ time: parseTime(p.time), p }));
         const mk = (
             label: string,
             color: string,
@@ -224,6 +238,41 @@
             imageStatus = await nodesApi.imageStatus(nodeId);
         } catch {
             /* node image pas encore prêt */
+        }
+        loadImageModels();
+    }
+
+    async function loadImageModels() {
+        if (!nodeId || !node?.image_enabled) return;
+        try {
+            imageModelsList = await nodesApi.imageModels(nodeId);
+        } catch {
+            imageModelsList = [];
+        }
+    }
+
+    async function activateModel(repo: string) {
+        if (!nodeId) return;
+        imageLoading = true;
+        try {
+            await nodesApi.imageLoad(nodeId, { model: repo });
+            toast.success(`Activation de ${repo}…`);
+            setTimeout(loadImageStatus, 1500);
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        } finally {
+            imageLoading = false;
+        }
+    }
+
+    async function deleteImageModel(repo: string) {
+        if (!nodeId || !confirm(`Supprimer le modèle d'images « ${repo} » du node ?`)) return;
+        try {
+            await nodesApi.imageDeleteModel(nodeId, repo);
+            toast.success('Modèle supprimé.');
+            await loadImageModels();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Suppression impossible');
         }
     }
 
@@ -410,10 +459,17 @@
                 <h2 class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-neutral-400">
                     <Activity size={12} />
                     Métriques
-                    <span class="flex items-center gap-1.5 text-[10px] normal-case text-neutral-500">
-                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        live
-                    </span>
+                    {#if dataAgeS != null && dataAgeS <= 30}
+                        <span class="flex items-center gap-1.5 text-[10px] normal-case text-emerald-400">
+                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            live · il y a {dataAgeS}s
+                        </span>
+                    {:else if dataAgeS != null}
+                        <span class="flex items-center gap-1.5 text-[10px] normal-case text-amber-400" title="Le node n'envoie plus de heartbeat — vérifie l'agent (journalctl -u spouet-agent -f)">
+                            <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                            figé · dernière donnée il y a {dataAgeS > 3600 ? Math.round(dataAgeS / 3600) + 'h' : Math.round(dataAgeS / 60) + 'min'}
+                        </span>
+                    {/if}
                     {#if histData?.source === '1min'}
                         <span class="rounded bg-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-500">1-min</span>
                     {/if}
@@ -496,6 +552,14 @@
                     <span class="font-mono tabular-nums">{node.llama_prompt_tokens_processed?.toLocaleString() ?? '—'}</span>
                 </div>
             </div>
+
+            {#if !node.llama_running}
+                <p class="mt-2 rounded border border-neutral-800 bg-neutral-950/50 px-2.5 py-1.5 text-[11px] text-neutral-500">
+                    llama-server n'est pas démarré sur ce node (aucun modèle GGUF chargé) — les
+                    statistiques restent vides. Charge un modèle dans « Modèles GGUF locaux » ci-dessous
+                    pour le rendre actif.
+                </p>
+            {/if}
 
             {#if showConfig}
                 <div class="mt-4 border-t border-neutral-800 pt-4">
@@ -751,6 +815,53 @@
                             {/if}
                         </div>
                     </div>
+                {/if}
+            </div>
+
+            <!-- Modèles d'images téléchargés sur le node -->
+            <div class="mt-3">
+                <p class="mb-1.5 text-[10px] uppercase tracking-wider text-neutral-500">
+                    Modèles téléchargés ({imageModelsList.length})
+                </p>
+                {#if imageModelsList.length === 0}
+                    <p class="text-xs text-neutral-600">Aucun modèle d'images en cache sur ce node.</p>
+                {:else}
+                    <ul class="space-y-1.5">
+                        {#each imageModelsList as m (m.repo)}
+                            <li class="flex items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
+                                <div class="min-w-0">
+                                    <p class="truncate font-mono text-xs">{m.repo}</p>
+                                    <p class="text-[11px] text-neutral-500">
+                                        {fmtSize(m.size_bytes)}
+                                        {#if m.active}
+                                            <span class="ml-2 rounded bg-emerald-900/40 px-1 py-0.5 text-[10px] text-emerald-300">actif</span>
+                                        {/if}
+                                    </p>
+                                </div>
+                                <div class="ml-2 flex items-center gap-1.5">
+                                    {#if !m.active}
+                                        <button
+                                            type="button"
+                                            onclick={() => activateModel(m.repo)}
+                                            disabled={imageLoading}
+                                            class="flex items-center gap-1 rounded border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800 disabled:opacity-50"
+                                            title="Activer ce modèle"
+                                        >
+                                            <Play size={11} />
+                                        </button>
+                                    {/if}
+                                    <button
+                                        type="button"
+                                        onclick={() => deleteImageModel(m.repo)}
+                                        class="rounded border border-neutral-800 p-1 text-neutral-500 hover:bg-red-950 hover:text-red-300"
+                                        title="Supprimer du node (libère l'espace)"
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                </div>
+                            </li>
+                        {/each}
+                    </ul>
                 {/if}
             </div>
         {:else}

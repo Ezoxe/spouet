@@ -453,7 +453,14 @@ export const nodes = {
     imagePullStatus: (id: string) =>
         api<Record<string, unknown>>(`/nodes/${id}/image/pull/status`),
     imageLoad: (id: string, json: { model?: string }) =>
-        api<Record<string, unknown>>(`/nodes/${id}/image/load`, { method: 'POST', json })
+        api<Record<string, unknown>>(`/nodes/${id}/image/load`, { method: 'POST', json }),
+    imageModels: (id: string) =>
+        api<{ repo: string; size_bytes: number; active: boolean }[]>(`/nodes/${id}/image/models`),
+    imageDeleteModel: (id: string, model: string) =>
+        api<Record<string, unknown>>(`/nodes/${id}/image/models/delete`, {
+            method: 'POST',
+            json: { model }
+        })
 };
 
 export const conversations = {
