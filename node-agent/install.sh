@@ -134,6 +134,47 @@ prompt() {
     [[ -n "$answer" ]] && printf -v "$var" '%s' "$answer"
 }
 
+# Réinstall : on relit le backend + token déjà configurés et on les CONSERVE par
+# défaut (l'utilisateur peut choisir de les changer). Les valeurs passées en
+# env/flag (BACKEND=, TOKEN=) restent prioritaires et court-circuitent la question.
+ENV_FILE=/etc/spouet/agent.env
+EXISTING_BACKEND=""
+EXISTING_TOKEN=""
+if [[ -f "$ENV_FILE" ]]; then
+    EXISTING_BACKEND=$(sed -n 's/^SPOUET_BACKEND=//p' "$ENV_FILE" | head -1)
+    EXISTING_TOKEN=$(sed -n 's/^SPOUET_AGENT_TOKEN=//p' "$ENV_FILE" | head -1)
+fi
+
+if [[ -z "$BACKEND" && -n "$EXISTING_BACKEND" ]]; then
+    if [[ "$SPOUET_NON_INTERACTIVE" == "1" ]]; then
+        BACKEND="$EXISTING_BACKEND"
+    else
+        ans=""
+        read -rp "[spouet-agent] Backend actuel : $EXISTING_BACKEND — conserver ? [Y/n] " ans </dev/tty || true
+        if [[ "${ans,,}" == "n" ]]; then
+            read -rp "[spouet-agent] Nouvelle URL backend : " BACKEND </dev/tty || true
+        else
+            BACKEND="$EXISTING_BACKEND"
+        fi
+    fi
+fi
+
+if [[ -z "$TOKEN" && -n "$EXISTING_TOKEN" ]]; then
+    if [[ "$SPOUET_NON_INTERACTIVE" == "1" ]]; then
+        TOKEN="$EXISTING_TOKEN"
+    else
+        masked="****${EXISTING_TOKEN: -4}"
+        ans=""
+        read -rp "[spouet-agent] Token actuel : $masked — conserver ? [Y/n] " ans </dev/tty || true
+        if [[ "${ans,,}" == "n" ]]; then
+            read -rp "[spouet-agent] Nouveau token : " TOKEN </dev/tty || true
+        else
+            TOKEN="$EXISTING_TOKEN"
+        fi
+    fi
+fi
+
+# Première install (rien d'existant) : on demande.
 prompt BACKEND "URL du backend Spouet (ex: https://spouet.local)"
 prompt TOKEN   "Token agent (créé par spouet-admin create-token)"
 
