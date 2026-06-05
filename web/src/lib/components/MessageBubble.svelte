@@ -4,7 +4,7 @@
     import { User, Bot, Wrench, Cog, Info, Copy, Pencil, RefreshCw, Check, X } from 'lucide-svelte';
     import type { MessageOut } from '$lib/api';
     import MessageDetails from './MessageDetails.svelte';
-    import AiOrb from './AiOrb.svelte';
+    import AiFace from './AiFace.svelte';
     import ThinkingIndicator from './ThinkingIndicator.svelte';
     import Markdown from './Markdown.svelte';
     import { toast } from '$lib/toast.svelte';
@@ -80,6 +80,12 @@
         );
     });
 
+    // État du visage de l'assistant : réflexion (avant le 1er token), écriture
+    // (tokens en cours), repos (réponse figée).
+    const faceState = $derived(
+        !streaming ? 'idle' : message.content ? 'writing' : 'thinking'
+    );
+
     const meta = $derived.by(() => {
         switch (message.role) {
             case 'user':
@@ -126,7 +132,7 @@
 <div class="group flex flex-col gap-1 {meta.align}" in:fly={{ y: 8, duration: 220, easing: quintOut }}>
     <div class="flex items-center gap-1.5 text-xs text-neutral-500">
         {#if message.role === 'assistant'}
-            <AiOrb size={15} state={streaming ? 'thinking' : 'idle'} />
+            <AiFace size={17} state={faceState} />
         {:else}
             <meta.Icon size={12} />
         {/if}

@@ -3,7 +3,7 @@
     import { fly } from 'svelte/transition';
     import { Loader2, KeyRound } from 'lucide-svelte';
     import { auth, setToken } from '$lib/api';
-    import AiOrb from '$lib/components/AiOrb.svelte';
+    import Logo from '$lib/components/Logo.svelte';
 
     let token = $state('');
     let loading = $state(false);
@@ -35,7 +35,7 @@
         in:fly={{ y: 12, duration: 320 }}
     >
         <div class="flex flex-col items-center gap-4 text-center">
-            <AiOrb size={72} state="idle" />
+            <Logo size={72} glow animated />
             <div>
                 <h1 class="text-xl font-semibold tracking-tight">Bienvenue sur Spouet</h1>
                 <p class="mt-1 text-xs text-neutral-400">Connectez-vous avec votre token API</p>

@@ -11,6 +11,7 @@
     } from '$lib/api';
     import { Send, X, AudioLines, Sparkles } from 'lucide-svelte';
     import AiOrb from '$lib/components/AiOrb.svelte';
+    import AiFace from '$lib/components/AiFace.svelte';
     import Markdown from '$lib/components/Markdown.svelte';
     import ThinkingIndicator from '$lib/components/ThinkingIndicator.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
@@ -232,7 +233,14 @@
                 <div class="mb-2" in:fly={{ y: 4, duration: 150 }}>
                     <p class="flex items-center gap-1.5 text-[10px] uppercase text-neutral-600">
                         {#if m.role === 'assistant'}
-                            <AiOrb size={12} state={streaming && i === messages.length - 1 ? 'thinking' : 'idle'} />
+                            <AiFace
+                                size={14}
+                                state={streaming && i === messages.length - 1
+                                    ? m.content
+                                        ? 'writing'
+                                        : 'thinking'
+                                    : 'idle'}
+                            />
                         {/if}
                         {m.role}
                     </p>

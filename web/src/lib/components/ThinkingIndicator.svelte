@@ -1,10 +1,10 @@
 <script lang="ts">
     /**
-     * Indicateur de « réflexion » de l'assistant : orbe en mode thinking,
-     * libellé à dégradé balayé, et points qui rebondissent. Affiché avant le
-     * premier token ou pendant le chargement d'un modèle.
+     * Indicateur de « réflexion » de l'assistant : visage en mode thinking
+     * (bulle « ? »), libellé à dégradé balayé, et points qui rebondissent.
+     * Affiché avant le premier token ou pendant le chargement d'un modèle.
      */
-    import AiOrb from './AiOrb.svelte';
+    import AiFace from './AiFace.svelte';
 
     interface Props {
         label?: string;
@@ -14,7 +14,7 @@
 </script>
 
 <div class="ti">
-    <AiOrb size={24} state="thinking" />
+    <AiFace size={26} state="thinking" />
     <span class="ti-body">
         <span class="ti-line">
             <span class="ti-text ai-shimmer-text">{label}</span>
