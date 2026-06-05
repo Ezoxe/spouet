@@ -779,10 +779,10 @@
             </div>
         {:else}
             <p class="text-xs text-neutral-600">
-                Ce node n'expose pas la génération d'images. Réinstalle le node-agent
-                avec l'extra images (machine GPU) :
-                <span class="font-mono">IMAGES=1 … install.sh</span>
-                ou <span class="font-mono">install.ps1 -Images</span>.
+                Ce node n'expose pas la génération d'images. Mets à jour le node-agent
+                (<span class="font-mono">bash install.sh</span>) — la génération d'images
+                est incluse par défaut. Pour la désactiver :
+                <span class="font-mono">--no-images</span>.
             </p>
         {/if}
     </section>

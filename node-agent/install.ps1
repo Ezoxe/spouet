@@ -55,10 +55,13 @@ param(
     [string] $RepoUrl     = "https://github.com/ezoxe/spouet.git",
     [string] $Branch      = "master",
     [string] $ServiceName = "SpouetAgent",
-    [switch] $Images,
+    [switch] $NoImages,
     [int]    $ImagePort   = 8083,
     [string] $ImageModel  = ""
 )
+
+# Génération d'images activée par défaut ; -NoImages pour la désactiver.
+$Images = -not $NoImages
 
 $ErrorActionPreference = "Stop"
 

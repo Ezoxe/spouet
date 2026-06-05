@@ -18,9 +18,10 @@
 #   LLAMA_PORT           Port llama-server       (def: 8080)
 #   AGENT_PORT           Port agent API          (def: 8765)
 #   SKIP_LLAMA           Si "1", ne (ré)installe pas llama.cpp (def: 0)
-#   IMAGES               Si "1", installe l'extra de génération d'images
-#                        (torch/diffusers, lourd — pour les nodes GPU) (def: 0)
-#   IMAGE_MODEL          Modèle d'images par défaut (repo HF, optionnel)
+#   IMAGES               Génération d'images (torch/diffusers) (def: 1).
+#                        Mets IMAGES=0 ou --no-images pour désactiver.
+#   IMAGE_MODEL          Modèle d'images par défaut (repo HF). Optionnel :
+#                        normalement on choisit/télécharge le modèle depuis l'UI.
 #   IMAGE_PORT           Port de l'API image     (def: 8083)
 #   SPOUET_NON_INTERACTIVE (def: 0)
 
@@ -35,7 +36,7 @@ set -euo pipefail
 : "${LLAMA_PORT:=8080}"
 : "${AGENT_PORT:=8765}"
 : "${SKIP_LLAMA:=0}"
-: "${IMAGES:=0}"
+: "${IMAGES:=1}"
 : "${IMAGE_MODEL:=}"
 : "${IMAGE_PORT:=8083}"
 : "${SPOUET_NON_INTERACTIVE:=0}"
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         --image-port=*) IMAGE_PORT="${1#*=}" ;;
         --image-model=*) IMAGE_MODEL="${1#*=}" ;;
         --images)       IMAGES=1 ;;
+        --no-images)    IMAGES=0 ;;
         --dir=*)        SPOUET_INSTALL_DIR="${1#*=}" ;;
         --branch=*)     SPOUET_BRANCH="${1#*=}" ;;
         --repo=*)       SPOUET_REPO_URL="${1#*=}" ;;
