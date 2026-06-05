@@ -289,14 +289,14 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Build + up
 # ---------------------------------------------------------------------------
-# Le microservice voice-engine tourne en utilisateur non-root (uid 1000) et écrit
-# ses modèles dans un bind-mount `./data/voice:/data`. Si le dossier hôte est créé
-# par Docker au `up`, il appartient à root:root et le conteneur ne peut pas y
-# écrire (PermissionError sur /data/hf). On le pré-crée avec le bon propriétaire.
-# (La génération d'images tourne sur les nodes, pas ici — rien à préparer côté admin.)
-log "Préparation du volume de modèles voix (uid 1000)…"
-mkdir -p data/voice
-chown -R 1000:1000 data/voice 2>/dev/null || true
+# Les conteneurs backend/worker/voice-engine tournent en utilisateur non-root
+# (uid 1000) et écrivent dans des bind-mounts (`./data/voice`, `./data/images`).
+# Si le dossier hôte est créé par Docker au `up`, il appartient à root:root et le
+# conteneur ne peut pas y écrire (PermissionError). On les pré-crée avec le bon
+# propriétaire. (data/images = PNG générés sur les nodes puis stockés ici.)
+log "Préparation des volumes (uid 1000)…"
+mkdir -p data/voice data/images
+chown -R 1000:1000 data/voice data/images 2>/dev/null || true
 
 log "docker compose build…"
 docker compose build
