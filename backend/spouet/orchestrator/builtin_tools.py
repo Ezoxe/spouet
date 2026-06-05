@@ -395,6 +395,7 @@ async def _h_generate_image(
 
     params = GenerateParams(
         prompt=prompt,
+        model=choice.image_model,
         negative_prompt=(str(args.get("negative_prompt") or "").strip() or None),
         width=_opt_int(args.get("width")),
         height=_opt_int(args.get("height")),

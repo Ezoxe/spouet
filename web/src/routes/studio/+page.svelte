@@ -107,6 +107,7 @@
         try {
             const payload: GenerateImageIn = {
                 prompt: p,
+                model: model.trim() || null,
                 negative_prompt: negative.trim() || null,
                 width: size.w,
                 height: size.h
@@ -223,10 +224,10 @@
                 disabled={applyingModel || !model.trim() || model.trim() === health?.model}
                 class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)]
                        px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-white/5 disabled:opacity-40"
-                title="Charger ce modèle sur le node (le télécharge si besoin)"
+                title="Préchauffer ce modèle en mémoire sur le node (optionnel : la génération le charge déjà à la demande)"
             >
                 {#if applyingModel}<Sparkles size={13} class="animate-pulse" />{:else}<Check size={13} />{/if}
-                {model.trim() === health?.model ? 'Actif' : 'Activer'}
+                {model.trim() === health?.model ? 'En mémoire' : 'Préchauffer'}
             </button>
         </div>
 

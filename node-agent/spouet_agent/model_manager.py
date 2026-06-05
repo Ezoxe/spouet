@@ -128,3 +128,43 @@ def _download_sync(hf_repo: str, filename: str, dest_dir: Path, hf_token: str | 
 def delete_model(model_path: Path) -> None:
     if model_path.exists() and model_path.suffix == ".gguf":
         model_path.unlink()
+
+
+async def check_gguf(
+    hf_repo: str, filename: str, hf_token: str | None = None
+) -> dict:
+    """Pré-vérifie qu'un fichier GGUF est téléchargeable + chargeable par llama.cpp.
+
+    llama.cpp ne charge que des fichiers `.gguf`. On confirme aussi que le fichier
+    existe bien dans le repo HF (nom exact) avant de lancer le téléchargement.
+    `compatible=None` => indéterminé (repo introuvable / réseau).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _check_gguf_sync, hf_repo, filename, hf_token)
+
+
+def _check_gguf_sync(hf_repo: str, filename: str, hf_token: str | None) -> dict:
+    name = (filename or "").strip()
+    if not name.lower().endswith(".gguf"):
+        return {
+            "compatible": False,
+            "filename": filename,
+            "reason": "Le fichier n'est pas un .gguf — llama.cpp ne charge que des modèles GGUF.",
+        }
+    try:
+        from huggingface_hub import HfApi  # type: ignore[import-untyped]
+
+        info = HfApi().repo_info(repo_id=hf_repo, files_metadata=False, token=hf_token or None)
+        files = {s.rfilename for s in (info.siblings or [])}
+    except Exception as e:  # noqa: BLE001 — réseau / repo absent => indéterminé
+        return {"compatible": None, "filename": filename, "reason": f"Repo introuvable ou indisponible : {e}"}
+
+    if name in files or any(f.rsplit("/", 1)[-1] == name for f in files):
+        return {"compatible": True, "filename": filename, "reason": "Fichier GGUF présent dans le repo."}
+    gguf = sorted(f for f in files if f.lower().endswith(".gguf"))
+    hint = f" Fichiers GGUF disponibles : {', '.join(gguf[:6])}" if gguf else ""
+    return {
+        "compatible": False,
+        "filename": filename,
+        "reason": f"Fichier « {filename} » absent du repo.{hint}",
+    }

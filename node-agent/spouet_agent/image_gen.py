@@ -237,6 +237,51 @@ def list_models() -> list[dict[str, Any]]:
     return out
 
 
+def _is_cached(repo: str) -> bool:
+    """True si les poids du modèle `repo` sont déjà présents dans le cache du node."""
+    return _model_cache_dir(repo).exists()
+
+
+def check_compatibility(repo: str, hf_token: str | None = None) -> dict[str, Any]:
+    """Pré-vérifie qu'un repo HF est chargeable par le moteur d'images (diffusers).
+
+    `AutoPipelineForText2Image.from_pretrained` attend un dépôt **diffusers**
+    (multi-dossiers `unet/`, `vae/`… décrits par `model_index.json`). Un
+    checkpoint mono-fichier (un seul `.safetensors`/`.ckpt`, façon Civitai)
+    n'est PAS chargeable tel quel → on le signale avant de télécharger des Go
+    inutilement. `compatible=None` => indéterminé (repo introuvable / réseau).
+    """
+    try:
+        from huggingface_hub import HfApi
+
+        info = HfApi().repo_info(repo_id=repo, files_metadata=False, token=hf_token or None)
+        files = {s.rfilename for s in (info.siblings or [])}
+    except Exception as e:  # noqa: BLE001 — réseau / repo absent => indéterminé
+        return {"compatible": None, "model": repo, "reason": f"Repo introuvable ou indisponible : {e}"}
+
+    if "model_index.json" in files:
+        return {
+            "compatible": True,
+            "model": repo,
+            "reason": "Pipeline diffusers détecté (model_index.json présent).",
+        }
+    if any(f.endswith((".safetensors", ".ckpt", ".bin")) for f in files):
+        return {
+            "compatible": False,
+            "model": repo,
+            "reason": (
+                "Checkpoint mono-fichier (pas de model_index.json) : non chargeable par "
+                "AutoPipelineForText2Image. Choisis un dépôt « diffusers » (dossiers "
+                "unet/vae/text_encoder…), ex. stabilityai/sdxl-turbo."
+            ),
+        }
+    return {
+        "compatible": False,
+        "model": repo,
+        "reason": "Aucun poids de diffusion reconnu (model_index.json absent).",
+    }
+
+
 def delete_model(repo: str) -> None:
     """Supprime complètement un modèle d'images du cache du node."""
     if _current_model == repo:
@@ -337,6 +382,7 @@ def _clamp_dim(value: int | None) -> int:
 def generate(
     prompt: str,
     *,
+    model: str | None = None,
     negative_prompt: str | None = None,
     width: int | None = None,
     height: int | None = None,
@@ -344,13 +390,16 @@ def generate(
     guidance_scale: float | None = None,
     seed: int | None = None,
 ) -> bytes:
-    """Génère une image et renvoie ses octets PNG. À lancer en threadpool."""
+    """Génère une image et renvoie ses octets PNG. À lancer en threadpool.
+
+    Si `model` est fourni et diffère du modèle en mémoire, on bascule dessus
+    (génération déterministe : le modèle demandé est celui réellement utilisé) —
+    mais uniquement vers un modèle DÉJÀ téléchargé, pour ne jamais déclencher un
+    download de plusieurs Go au milieu d'une génération.
+    """
     import torch
 
-    if _pipe is None:
-        load()
-    pipe = _pipe
-    assert pipe is not None
+    target = (model or "").strip() or None
 
     w = _clamp_dim(width)
     h = _clamp_dim(height)
@@ -385,6 +434,19 @@ def generate(
         kwargs["generator"] = generator
 
     with _infer_lock:
+        # Sélection déterministe du modèle (sous le verrou d'inférence pour
+        # éviter tout swap en plein vol).
+        if target and target != _current_model:
+            if not _is_cached(target):
+                raise RuntimeError(
+                    f"Le modèle d'images '{target}' n'est pas téléchargé sur ce node "
+                    "(télécharge-le d'abord depuis la page du node)."
+                )
+            load(target)
+        elif _pipe is None:
+            load()
+        pipe = _pipe
+        assert pipe is not None
         result = pipe(**kwargs)
     image = result.images[0]
     buf = io.BytesIO()

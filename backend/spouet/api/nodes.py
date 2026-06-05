@@ -480,6 +480,22 @@ async def pull_model(
         _raise_agent_unreachable(base, exc)
 
 
+@router.post("/{node_id}/local-models/check")
+async def check_local_model(
+    node_id: UUID, payload: ModelPullRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Pré-vérifie qu'un fichier GGUF est compatible llama.cpp avant de le télécharger."""
+    _, base = await _agent_url(db, node_id)
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            r = await client.post(f"{base}/models/check", json=payload.model_dump())
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
 @router.get("/{node_id}/local-models/pull/status")
 async def pull_status(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
     """Progrès du dernier téléchargement."""
@@ -555,6 +571,18 @@ async def image_pull(
     _, base = await _image_url(db, node_id)
     try:
         return await image_client.pull(base, payload.model, payload.hf_token)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
+@router.post("/{node_id}/image/pull/check")
+async def image_pull_check(
+    node_id: UUID, payload: ImagePullRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Pré-vérifie qu'un repo HF est chargeable par le moteur d'images (avant pull)."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.pull_check(base, payload.model, payload.hf_token)
     except image_client.ImageEngineError as exc:
         _raise_agent_unreachable(base, exc)
 

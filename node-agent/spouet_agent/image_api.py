@@ -75,6 +75,19 @@ async def pull_status() -> dict[str, Any]:
     return image_gen.pull_status()
 
 
+class CheckRequest(BaseModel):
+    model: str = Field(min_length=1)
+    hf_token: str | None = None
+
+
+@app.post("/pull/check")
+async def pull_check(req: CheckRequest) -> dict[str, Any]:
+    """Pré-vérifie qu'un repo HF est chargeable par le moteur d'images (avant pull)."""
+    if not image_gen.images_available():
+        raise HTTPException(503, "extra image non installé sur ce node (spouet-agent[images])")
+    return await run_in_threadpool(image_gen.check_compatibility, req.model, req.hf_token)
+
+
 @app.get("/models")
 async def list_models() -> list[dict[str, Any]]:
     return await run_in_threadpool(image_gen.list_models)
@@ -132,6 +145,7 @@ async def load_status() -> dict[str, Any]:
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
+    model: str | None = None
     negative_prompt: str | None = Field(default=None, max_length=2000)
     width: int | None = Field(default=None, ge=64, le=2048)
     height: int | None = Field(default=None, ge=64, le=2048)
@@ -148,6 +162,7 @@ async def generate(req: GenerateRequest) -> Response:
         png = await run_in_threadpool(
             image_gen.generate,
             req.prompt,
+            model=req.model,
             negative_prompt=req.negative_prompt,
             width=req.width,
             height=req.height,

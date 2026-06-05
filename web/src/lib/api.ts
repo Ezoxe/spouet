@@ -241,6 +241,15 @@ export interface LocalModelOut {
     supports_tools: boolean;
 }
 
+// Pré-vérification de compatibilité d'un modèle avant téléchargement.
+// compatible: true = OK, false = incompatible, null = indéterminé (réseau/repo).
+export interface ModelCheckOut {
+    compatible: boolean | null;
+    reason: string;
+    model?: string;
+    filename?: string;
+}
+
 export interface LlamaConfigPatch {
     n_ctx?: number;
     n_gpu_layers?: number;
@@ -436,6 +445,8 @@ export const nodes = {
     patchLlamaConfig: (id: string, json: LlamaConfigPatch) =>
         api<Record<string, unknown>>(`/nodes/${id}/llama-config`, { method: 'PATCH', json }),
     localModels: (id: string) => api<LocalModelOut[]>(`/nodes/${id}/local-models`),
+    checkModel: (id: string, json: { hf_repo: string; filename: string; hf_token?: string }) =>
+        api<ModelCheckOut>(`/nodes/${id}/local-models/check`, { method: 'POST', json }),
     pullModel: (id: string, json: { hf_repo: string; filename: string; hf_token?: string }) =>
         api<Record<string, unknown>>(`/nodes/${id}/local-models/pull`, { method: 'POST', json }),
     pullStatus: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/local-models/pull/status`),
@@ -450,6 +461,8 @@ export const nodes = {
     diag: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/diag`),
     // Génération d'images (sur le node)
     imageStatus: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/image/status`),
+    imagePullCheck: (id: string, json: { model: string; hf_token?: string }) =>
+        api<ModelCheckOut>(`/nodes/${id}/image/pull/check`, { method: 'POST', json }),
     imagePull: (id: string, json: { model: string; hf_token?: string }) =>
         api<Record<string, unknown>>(`/nodes/${id}/image/pull`, { method: 'POST', json }),
     imagePullStatus: (id: string) =>
@@ -589,6 +602,7 @@ export interface ImageHealth {
 
 export interface GenerateImageIn {
     prompt: string;
+    model?: string | null;
     negative_prompt?: string | null;
     width?: number | null;
     height?: number | null;

@@ -150,6 +150,20 @@ async def download_status() -> dict:
     return _download_status
 
 
+class CheckRequest(BaseModel):
+    hf_repo: str
+    filename: str
+    hf_token: str | None = None
+
+
+@app.post("/models/check")
+async def check_model(req: CheckRequest) -> dict:
+    """Pré-vérifie qu'un fichier GGUF est compatible/téléchargeable (avant pull)."""
+    from spouet_agent.model_manager import check_gguf
+
+    return await check_gguf(req.hf_repo, req.filename, req.hf_token)
+
+
 async def _download_task(hf_repo: str, filename: str, hf_token: str | None) -> None:
     global _download_status
     from spouet_agent.model_manager import download_model

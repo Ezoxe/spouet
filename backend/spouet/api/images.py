@@ -38,6 +38,7 @@ logger = get_logger(__name__)
 
 class GenerateIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
+    model: str | None = Field(default=None, max_length=255)
     negative_prompt: str | None = Field(default=None, max_length=2000)
     width: int | None = Field(default=None, ge=64, le=2048)
     height: int | None = Field(default=None, ge=64, le=2048)
@@ -183,8 +184,12 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession) -> Ima
         choice = await pick_image_node(db)
     except NoSuitableNodeError as e:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
+    # Le modèle demandé prime (génération déterministe) ; à défaut, le modèle
+    # configuré du node.
+    used_model = (payload.model or "").strip() or choice.image_model
     params = GenerateParams(
         prompt=payload.prompt,
+        model=used_model,
         negative_prompt=payload.negative_prompt,
         width=payload.width,
         height=payload.height,
@@ -206,7 +211,7 @@ async def generate(payload: GenerateIn, user: CurrentUser, db: DbSession) -> Ima
         negative_prompt=payload.negative_prompt,
         params={
             "node": choice.name,
-            "model": choice.image_model,
+            "model": used_model,
             **{
                 k: v
                 for k, v in {

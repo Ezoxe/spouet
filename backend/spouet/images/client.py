@@ -25,6 +25,7 @@ class ImageEngineError(RuntimeError):
 @dataclass(frozen=True)
 class GenerateParams:
     prompt: str
+    model: str | None = None
     negative_prompt: str | None = None
     width: int | None = None
     height: int | None = None
@@ -34,7 +35,7 @@ class GenerateParams:
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"prompt": self.prompt}
-        for key in ("negative_prompt", "width", "height", "steps", "guidance_scale", "seed"):
+        for key in ("model", "negative_prompt", "width", "height", "steps", "guidance_scale", "seed"):
             val = getattr(self, key)
             if val is not None:
                 payload[key] = val
@@ -108,6 +109,20 @@ async def pull_status(base_url: str) -> dict[str, Any]:
         resp.raise_for_status()
     except httpx.HTTPError as e:
         raise ImageEngineError(f"node image injoignable: {e}") from e
+    return resp.json()
+
+
+async def pull_check(base_url: str, model: str, hf_token: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"model": model}
+    if hf_token:
+        payload["hf_token"] = hf_token
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(f"{_norm(base_url)}/pull/check", json=payload)
+    except httpx.HTTPError as e:
+        raise ImageEngineError(f"node image injoignable: {e}") from e
+    if resp.status_code >= 400:
+        raise ImageEngineError(f"check {resp.status_code}: {resp.text[:200]}")
     return resp.json()
 
 

@@ -180,6 +180,30 @@
         }
     }
 
+    // Pré-vérifie la compatibilité d'un modèle avant de lancer le téléchargement.
+    // Retourne true si on peut continuer (compatible ou indéterminé confirmé par
+    // l'utilisateur), false si on bloque.
+    async function confirmCompatible(
+        check: () => Promise<{ compatible: boolean | null; reason: string }>
+    ): Promise<boolean> {
+        try {
+            const res = await check();
+            if (res.compatible === false) {
+                toast.error(`Modèle incompatible : ${res.reason}`);
+                return false;
+            }
+            if (res.compatible === null) {
+                return confirm(
+                    `Compatibilité indéterminée : ${res.reason}\n\nTélécharger quand même ?`
+                );
+            }
+            return true;
+        } catch {
+            // Le check lui-même a échoué (node injoignable) : on laisse l'utilisateur décider.
+            return confirm('Impossible de vérifier la compatibilité. Télécharger quand même ?');
+        }
+    }
+
     async function startPull() {
         if (!nodeId || !pullForm.hf_repo || !pullForm.filename) {
             toast.error('Renseigne le repo HuggingFace et le nom du fichier.');
@@ -189,6 +213,9 @@
         const filename = pullForm.filename;
         pulling = true;
         try {
+            if (!(await confirmCompatible(() => nodesApi.checkModel(id, pullForm)))) {
+                return;
+            }
             await nodesApi.pullModel(id, pullForm);
             toast.success('Téléchargement démarré…');
             showPullForm = false;
@@ -287,6 +314,9 @@
         const id = nodeId;
         imagePulling = true;
         try {
+            if (!(await confirmCompatible(() => nodesApi.imagePullCheck(id, { model })))) {
+                return;
+            }
             await nodesApi.imagePull(id, { model });
             toast.success('Téléchargement du modèle d’images démarré…');
             downloads.track({
