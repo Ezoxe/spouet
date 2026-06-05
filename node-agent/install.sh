@@ -441,11 +441,17 @@ LAN_IP=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_D
 log "  → IP routable : $LAN_IP"
 
 # Arguments de génération d'images : actifs uniquement si l'extra a été installé.
+# IMPORTANT : `uv run` resynchronise l'environnement sur les deps par défaut et
+# RETIRE les extras. Il faut donc relancer le service avec `--extra images`,
+# sinon torch/diffusers disparaissent au démarrage et le node ne déclare pas la
+# capacité image (image_enabled=false dans le heartbeat).
 if [[ "$IMAGES" == "1" ]]; then
+    UV_RUN_EXTRA="--extra images"
     IMAGE_ARGS="--image-port $IMAGE_PORT"
     [[ -n "$IMAGE_MODEL" ]] && IMAGE_ARGS="$IMAGE_ARGS --image-model $IMAGE_MODEL"
     log "  → génération d'images activée (port $IMAGE_PORT${IMAGE_MODEL:+, modèle $IMAGE_MODEL})"
 else
+    UV_RUN_EXTRA=""
     IMAGE_ARGS="--no-images"
 fi
 cat > /etc/systemd/system/spouet-agent.service <<EOF
@@ -464,7 +470,7 @@ Environment=HF_HOME=$SPOUET_INSTALL_DIR/.cache/huggingface
 Environment=HOME=$SPOUET_INSTALL_DIR
 EnvironmentFile=/etc/spouet/agent.env
 WorkingDirectory=$SPOUET_INSTALL_DIR/node-agent
-ExecStart=/usr/local/bin/uv run --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent run \\
+ExecStart=/usr/local/bin/uv run $UV_RUN_EXTRA --directory $SPOUET_INSTALL_DIR/node-agent spouet-agent run \\
     --backend    \${SPOUET_BACKEND} \\
     --token      \${SPOUET_AGENT_TOKEN} \\
     --host       $LAN_IP \\

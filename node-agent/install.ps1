@@ -187,8 +187,13 @@ if ($existing) {
 Write-Step "Création du service $ServiceName..."
 $ModelsDir = Join-Path $InstallDir "models"
 New-Item -ItemType Directory -Force -Path $ModelsDir | Out-Null
-$svcArgs = @(
-    "run", "--directory", $AgentDir, "spouet-agent", "run",
+# IMPORTANT : `uv run` resynchronise l'env sur les deps par defaut et RETIRE les
+# extras. On relance donc le service avec `--extra images`, sinon torch/diffusers
+# disparaissent au demarrage (image_enabled=false dans le heartbeat).
+$svcArgs = @("run")
+if ($Images) { $svcArgs += @("--extra", "images") }
+$svcArgs += @(
+    "--directory", $AgentDir, "spouet-agent", "run",
     "--backend",     $Backend,
     "--interval",    "$Interval",
     "--llama-port",  "$LlamaPort",
