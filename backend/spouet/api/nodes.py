@@ -737,6 +737,9 @@ async def get_node_metrics(
         "node_id": str(node_id),
         "range": range,
         "source": "raw" if model_cls is NodeMetricRaw else "1min",
+        # Heure serveur : permet au client de calculer la fraîcheur des données
+        # sans dépendre de l'horloge (potentiellement fausse) du navigateur.
+        "now": _iso_utc(datetime.now(UTC)),
         "series": [
             {
                 "time": _iso_utc(r.time),

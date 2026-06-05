@@ -90,11 +90,13 @@
         return /([zZ]|[+-]\d\d:?\d\d)$/.test(s) ? Date.parse(s) : Date.parse(s + 'Z');
     }
 
-    // Fraîcheur : âge (s) du point le plus récent, pour signaler des données figées.
+    // Fraîcheur : âge (s) du point le plus récent, calculé contre l'heure SERVEUR
+    // (histData.now) et non l'horloge du navigateur (qui peut être déréglée).
     const dataAgeS = $derived.by(() => {
         if (!histData || histData.series.length === 0) return null;
         const last = histData.series[histData.series.length - 1];
-        return Math.round((Date.now() - parseTime(last.time)) / 1000);
+        const ref = histData.now ? parseTime(histData.now) : Date.now();
+        return Math.max(0, Math.round((ref - parseTime(last.time)) / 1000));
     });
 
     const metricCharts = $derived.by<MetricChart[]>(() => {

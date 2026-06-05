@@ -409,6 +409,8 @@ export interface NodeMetricsOut {
     node_id: string;
     range: MetricsRange;
     source: 'raw' | '1min';
+    /** Heure serveur (ISO UTC) au moment de la réponse — pour calculer la fraîcheur. */
+    now?: string;
     series: MetricsPoint[];
 }
 
