@@ -75,6 +75,21 @@ async def pull_status() -> dict[str, Any]:
     return image_gen.pull_status()
 
 
+@app.get("/models")
+async def list_models() -> list[dict[str, Any]]:
+    return await run_in_threadpool(image_gen.list_models)
+
+
+class DeleteModelRequest(BaseModel):
+    model: str = Field(min_length=1)
+
+
+@app.post("/models/delete")
+async def delete_model(req: DeleteModelRequest) -> dict[str, str]:
+    await run_in_threadpool(image_gen.delete_model, req.model)
+    return {"status": "deleted", "model": req.model}
+
+
 # ---------------------------------------------------------------------------
 # Load (mise en mémoire du modèle actif)
 # ---------------------------------------------------------------------------

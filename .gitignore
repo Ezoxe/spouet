@@ -48,6 +48,13 @@ deploy/postgres-data/
 deploy/redis-data/
 deploy/caddy-data/
 
+# Node-agent runtime (install dir = racine du dépôt sur le node, /opt/spouet) :
+# modèles GGUF, cache HuggingFace (modèles d'images), binaires llama.cpp.
+# DOIVENT être ignorés, sinon `git clean -fdq` (réinstall) les efface → re-téléchargement en boucle.
+/models/
+/.cache/
+/bin/
+
 # Build artefacts
 web/build/
 web/.svelte-kit/

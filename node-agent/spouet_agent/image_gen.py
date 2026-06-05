@@ -15,8 +15,10 @@ from __future__ import annotations
 import io
 import logging
 import os
+import shutil
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("spouet_agent.image_gen")
@@ -103,7 +105,7 @@ def pull_status() -> dict[str, Any]:
             total = _pull_progress["total"]
         st["downloaded_mb"] = round(done / 1e6, 1)
         st["total_mb"] = round(total / 1e6, 1) if total else None
-        st["percent"] = round(done / total * 100, 1) if total else None
+        st["percent"] = round(min(100.0, done / total * 100), 1) if total else None
         if _pull_started_at:
             st["elapsed_s"] = round(time.time() - _pull_started_at, 1)
     return st
@@ -124,58 +126,124 @@ def status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# Compteur d'octets partagé pour la barre de progression (alimenté par le tqdm
-# custom passé à snapshot_download, lu par pull_status()).
+# Progression du téléchargement : on MESURE la taille réelle du dossier de cache
+# du modèle (octets sur disque) face à la taille totale du repo (API HF). C'est
+# fiable et homogène en unités — contrairement aux barres tqdm qui mélangent
+# « N fichiers » et « N octets ».
+_IGNORE = ("*.ckpt", "*.pt", "*.onnx", "*.msgpack")
+_IGNORE_SUFFIXES = (".ckpt", ".pt", ".onnx", ".msgpack")
+
 _pull_progress = {"downloaded": 0, "total": 0}
 _pull_progress_lock = threading.Lock()
 _pull_started_at: float = 0.0
 
 
-def _progress_tqdm_class():  # type: ignore[no-untyped-def]
-    """Sous-classe tqdm qui agrège octets téléchargés / total sur tous les fichiers."""
-    from tqdm.auto import tqdm as _base
+def _hub_dir() -> Path:
+    from huggingface_hub.constants import HF_HUB_CACHE
 
-    class _ProgressTqdm(_base):  # type: ignore[misc]
-        def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
-            super().__init__(*a, **k)
-            with _pull_progress_lock:
-                if self.total:
-                    _pull_progress["total"] += int(self.total)
+    return Path(HF_HUB_CACHE)
 
-        def update(self, n=1):  # type: ignore[no-untyped-def]
-            with _pull_progress_lock:
-                _pull_progress["downloaded"] += int(n or 0)
-            return super().update(n)
 
-    return _ProgressTqdm
+def _model_cache_dir(repo: str) -> Path:
+    return _hub_dir() / ("models--" + repo.replace("/", "--"))
+
+
+def _dir_size(path: Path) -> int:
+    """Somme des fichiers réels (hors symlinks) sous `path`."""
+    total = 0
+    if not path.exists():
+        return 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                if not os.path.islink(fp):
+                    total += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total
+
+
+def _repo_total_bytes(repo: str, token: str | None) -> int:
+    try:
+        from huggingface_hub import HfApi
+
+        info = HfApi().repo_info(repo_id=repo, files_metadata=True, token=token or None)
+        return sum(
+            int(s.size or 0)
+            for s in (info.siblings or [])
+            if s.size and not s.rfilename.endswith(_IGNORE_SUFFIXES)
+        )
+    except Exception:  # noqa: BLE001 — total inconnu => barre indéterminée
+        return 0
 
 
 def pull(model: str, hf_token: str | None = None) -> None:
     """Télécharge (bloquant) les poids HF de `model` dans le cache du node.
 
-    À lancer en threadpool. Met à jour `_pull_status` (octets + %) au fil de l'eau.
+    À lancer en threadpool. Un thread moniteur mesure la taille du cache pour
+    alimenter `_pull_status` (octets + %) au fil de l'eau.
     """
     global _pull_status, _pull_started_at
     from huggingface_hub import snapshot_download
 
+    total = _repo_total_bytes(model, hf_token)
+    cache_dir = _model_cache_dir(model)
     with _pull_progress_lock:
-        _pull_progress["downloaded"] = 0
-        _pull_progress["total"] = 0
+        _pull_progress["downloaded"] = _dir_size(cache_dir)
+        _pull_progress["total"] = total
     _pull_started_at = time.time()
     _pull_status = {"status": "downloading", "model": model, "started_at": _pull_started_at}
+
+    stop = threading.Event()
+
+    def _monitor() -> None:
+        while not stop.is_set():
+            cur = _dir_size(cache_dir)
+            with _pull_progress_lock:
+                _pull_progress["downloaded"] = cur
+            stop.wait(1.0)
+
+    mon = threading.Thread(target=_monitor, daemon=True)
+    mon.start()
     try:
         snapshot_download(
             repo_id=model,
             token=hf_token or None,
-            # Évite les doublons de poids : on prend les safetensors + configs.
-            ignore_patterns=["*.ckpt", "*.pt", "*.onnx", "*.msgpack"],
-            tqdm_class=_progress_tqdm_class(),
+            ignore_patterns=list(_IGNORE),
         )
         _pull_status = {"status": "done", "model": model}
     except Exception as e:  # noqa: BLE001
         logger.exception("pull failed for %s", model)
         _pull_status = {"status": "error", "model": model, "error": str(e)}
         raise
+    finally:
+        stop.set()
+
+
+def list_models() -> list[dict[str, Any]]:
+    """Modèles d'images présents dans le cache HF du node."""
+    hub = _hub_dir()
+    out: list[dict[str, Any]] = []
+    if not hub.exists():
+        return out
+    for d in hub.iterdir():
+        if d.is_dir() and d.name.startswith("models--"):
+            repo = d.name[len("models--") :].replace("--", "/")
+            blobs = d / "blobs"
+            size = _dir_size(blobs if blobs.exists() else d)
+            out.append({"repo": repo, "size_bytes": size, "active": repo == _current_model})
+    out.sort(key=lambda x: x["repo"])
+    return out
+
+
+def delete_model(repo: str) -> None:
+    """Supprime complètement un modèle d'images du cache du node."""
+    if _current_model == repo:
+        unload()
+    d = _model_cache_dir(repo)
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

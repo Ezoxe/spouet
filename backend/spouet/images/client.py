@@ -111,6 +111,27 @@ async def pull_status(base_url: str) -> dict[str, Any]:
     return resp.json()
 
 
+async def list_models(base_url: str) -> list[dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{_norm(base_url)}/models")
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise ImageEngineError(f"node image injoignable: {e}") from e
+    return resp.json()
+
+
+async def delete_model(base_url: str, model: str) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{_norm(base_url)}/models/delete", json={"model": model})
+    except httpx.HTTPError as e:
+        raise ImageEngineError(f"node image injoignable: {e}") from e
+    if resp.status_code >= 400:
+        raise ImageEngineError(f"delete {resp.status_code}: {resp.text[:200]}")
+    return resp.json()
+
+
 async def load(base_url: str, model: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {}
     if model:

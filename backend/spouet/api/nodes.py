@@ -585,6 +585,28 @@ async def image_load(
         _raise_agent_unreachable(base, exc)
 
 
+@router.get("/{node_id}/image/models")
+async def image_models(node_id: UUID, _: CurrentUser, db: DbSession) -> list[dict]:  # type: ignore[type-arg]
+    """Modèles d'images téléchargés sur le node (cache HF)."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.list_models(base)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
+@router.post("/{node_id}/image/models/delete")
+async def image_delete_model(
+    node_id: UUID, payload: ImagePullRequest, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Supprime un modèle d'images du node (libère l'espace disque)."""
+    _, base = await _image_url(db, node_id)
+    try:
+        return await image_client.delete_model(base, payload.model)
+    except image_client.ImageEngineError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
 @router.get("/{node_id}/diag")
 async def get_node_diag(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  # type: ignore[type-arg]
     """Agrège capabilities + 200 dernières lignes de log llama-server +
