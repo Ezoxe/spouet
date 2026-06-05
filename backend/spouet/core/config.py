@@ -97,8 +97,9 @@ class Settings(BaseSettings):
     # backend route vers http://{node.host}:{node.image_port}/generate, puis stocke
     # le PNG renvoyé dans images_dir (servi via /api/images/{id}/file, auth).
     images_enabled: bool = True
-    # Génération lente (surtout CPU) : timeout large.
-    image_timeout_s: int = 180
+    # Génération lente (surtout CPU, ou 1er appel qui charge le modèle) : timeout
+    # large sur la lecture. La connexion, elle, doit répondre vite.
+    image_timeout_s: int = 600
     # Répertoire (volume) où sont écrits les PNG générés.
     images_dir: str = "/data/images"
     # Garde-fous d'usage (taille générée + quota par utilisateur).

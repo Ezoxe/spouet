@@ -14,10 +14,14 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+from sqlalchemy import select as _select
+
 from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.config import settings
 from spouet.core.logging import get_logger
-from spouet.db.models import GeneratedImage
+from spouet.db.models import GeneratedImage, Node
 from spouet.images import client as image_client
 from spouet.images import storage
 from spouet.images.client import GenerateParams
@@ -89,6 +93,51 @@ async def images_health(user: CurrentUser, db: DbSession) -> dict:
         return {"enabled": True, "ok": True, "node": choice.name, **info}
     except image_client.ImageEngineError as e:
         return {"enabled": True, "ok": False, "node": choice.name, "error": str(e)}
+
+
+@router.get("/nodes")
+async def image_nodes(user: CurrentUser, db: DbSession) -> list[dict]:
+    """Nodes capables de générer des images (pour le sélecteur du studio)."""
+    threshold = _dt.now(_tz.utc) - _td(seconds=settings.node_offline_after_s)
+    rows = (
+        await db.execute(
+            _select(Node).where(
+                Node.image_enabled.is_(True),
+                Node.image_port.is_not(None),
+                Node.last_seen.is_not(None),
+                Node.last_seen >= threshold,
+            )
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": str(n.id),
+            "name": n.name,
+            "model": n.image_model,
+            "gpu_model": n.gpu_model,
+        }
+        for n in rows
+    ]
+
+
+class SetModelIn(BaseModel):
+    model: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/model")
+async def set_model(payload: SetModelIn, user: CurrentUser, db: DbSession) -> dict:
+    """Charge un modèle d'images sur le node sélectionné (le rend actif)."""
+    if not settings.images_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Génération d'images désactivée")
+    try:
+        choice = await pick_image_node(db)
+    except NoSuitableNodeError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
+    try:
+        res = await image_client.load(choice.base_url, payload.model)
+    except image_client.ImageEngineError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e
+    return {"node": choice.name, **res}
 
 
 @router.post("/generate", response_model=ImageOut, status_code=status.HTTP_201_CREATED)

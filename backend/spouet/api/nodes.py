@@ -667,6 +667,18 @@ _RANGE_TO_SECONDS = {
 }
 
 
+def _iso_utc(dt: datetime) -> str:
+    """ISO 8601 explicitement en UTC avec suffixe 'Z'.
+
+    Les timestamps sont stockés en UTC (`datetime.now(UTC)`). On garantit un
+    instant non ambigu pour le client (sinon une datetime naïve serait
+    interprétée en heure locale du navigateur → décalage de plusieurs heures).
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 @router.get("/{node_id}/metrics")
 async def get_node_metrics(
     node_id: UUID,
@@ -705,7 +717,7 @@ async def get_node_metrics(
         "source": "raw" if model_cls is NodeMetricRaw else "1min",
         "series": [
             {
-                "time": r.time.isoformat(),
+                "time": _iso_utc(r.time),
                 "cpu_pct": r.cpu_pct,
                 "ram_used_mb": r.ram_used_mb,
                 "vram_used_mb": r.vram_used_mb,

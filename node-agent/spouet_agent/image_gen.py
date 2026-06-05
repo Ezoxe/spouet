@@ -96,7 +96,17 @@ def is_loaded() -> bool:
 
 
 def pull_status() -> dict[str, Any]:
-    return dict(_pull_status)
+    st = dict(_pull_status)
+    if st.get("status") == "downloading":
+        with _pull_progress_lock:
+            done = _pull_progress["downloaded"]
+            total = _pull_progress["total"]
+        st["downloaded_mb"] = round(done / 1e6, 1)
+        st["total_mb"] = round(total / 1e6, 1) if total else None
+        st["percent"] = round(done / total * 100, 1) if total else None
+        if _pull_started_at:
+            st["elapsed_s"] = round(time.time() - _pull_started_at, 1)
+    return st
 
 
 def status() -> dict[str, Any]:
@@ -114,21 +124,52 @@ def status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# Compteur d'octets partagé pour la barre de progression (alimenté par le tqdm
+# custom passé à snapshot_download, lu par pull_status()).
+_pull_progress = {"downloaded": 0, "total": 0}
+_pull_progress_lock = threading.Lock()
+_pull_started_at: float = 0.0
+
+
+def _progress_tqdm_class():  # type: ignore[no-untyped-def]
+    """Sous-classe tqdm qui agrège octets téléchargés / total sur tous les fichiers."""
+    from tqdm.auto import tqdm as _base
+
+    class _ProgressTqdm(_base):  # type: ignore[misc]
+        def __init__(self, *a, **k):  # type: ignore[no-untyped-def]
+            super().__init__(*a, **k)
+            with _pull_progress_lock:
+                if self.total:
+                    _pull_progress["total"] += int(self.total)
+
+        def update(self, n=1):  # type: ignore[no-untyped-def]
+            with _pull_progress_lock:
+                _pull_progress["downloaded"] += int(n or 0)
+            return super().update(n)
+
+    return _ProgressTqdm
+
+
 def pull(model: str, hf_token: str | None = None) -> None:
     """Télécharge (bloquant) les poids HF de `model` dans le cache du node.
 
-    À lancer en threadpool. Met à jour `_pull_status` au fil de l'eau.
+    À lancer en threadpool. Met à jour `_pull_status` (octets + %) au fil de l'eau.
     """
-    global _pull_status
+    global _pull_status, _pull_started_at
     from huggingface_hub import snapshot_download
 
-    _pull_status = {"status": "downloading", "model": model, "started_at": time.time()}
+    with _pull_progress_lock:
+        _pull_progress["downloaded"] = 0
+        _pull_progress["total"] = 0
+    _pull_started_at = time.time()
+    _pull_status = {"status": "downloading", "model": model, "started_at": _pull_started_at}
     try:
         snapshot_download(
             repo_id=model,
             token=hf_token or None,
             # Évite les doublons de poids : on prend les safetensors + configs.
             ignore_patterns=["*.ckpt", "*.pt", "*.onnx", "*.msgpack"],
+            tqdm_class=_progress_tqdm_class(),
         )
         _pull_status = {"status": "done", "model": model}
     except Exception as e:  # noqa: BLE001

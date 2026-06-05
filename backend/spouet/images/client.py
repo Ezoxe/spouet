@@ -45,10 +45,17 @@ def _norm(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
+def _gen_timeout() -> httpx.Timeout:
+    # Connexion rapide (le node doit répondre vite si joignable), mais lecture
+    # longue : une génération CPU — ou un 1er appel qui charge le modèle — peut
+    # durer plusieurs minutes sans que le node soit « injoignable ».
+    return httpx.Timeout(settings.image_timeout_s, connect=10.0)
+
+
 async def generate(base_url: str, params: GenerateParams) -> bytes:
     """Demande une image au node et renvoie ses octets PNG."""
     try:
-        async with httpx.AsyncClient(timeout=settings.image_timeout_s) as client:
+        async with httpx.AsyncClient(timeout=_gen_timeout()) as client:
             resp = await client.post(f"{_norm(base_url)}/generate", json=params.to_payload())
     except httpx.HTTPError as e:
         raise ImageEngineError(f"node image injoignable: {e}") from e
