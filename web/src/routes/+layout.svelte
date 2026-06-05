@@ -10,6 +10,7 @@
     import { toast } from '$lib/toast.svelte';
     import Sidebar from '$lib/components/Sidebar.svelte';
     import Toaster from '$lib/components/Toaster.svelte';
+    import DownloadsOverlay from '$lib/components/DownloadsOverlay.svelte';
 
     let { children } = $props();
     let ready = $state(false);
@@ -51,6 +52,7 @@
 </script>
 
 <Toaster />
+<DownloadsOverlay />
 
 {#if !ready && !isLogin && !isBare}
     <div class="grid min-h-screen place-items-center text-neutral-500" in:fade>…</div>

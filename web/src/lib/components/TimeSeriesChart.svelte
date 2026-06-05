@@ -17,19 +17,28 @@
         points: { time: number; value: number | null }[];
         unit?: string;
         precision?: number;
+        // Bornes d'échelle Y explicites (sinon auto min/max de la série).
+        min?: number;
+        max?: number;
     }
 
     let {
         series,
         width = 800,
         height = 200,
-        timeFormat = 'auto'
+        timeFormat = 'auto',
+        showLegend = true
     }: {
         series: Series[];
         width?: number;
         height?: number;
         timeFormat?: 'auto' | 'hh:mm' | 'date';
+        showLegend?: boolean;
     } = $props();
+
+    // Tous les libellés temporels sont rendus en heure de Paris, quelle que soit
+    // la timezone du navigateur (les timestamps backend sont en UTC).
+    const TZ = 'Europe/Paris';
 
     const M = { top: 12, right: 12, bottom: 22, left: 12 };
 
@@ -56,10 +65,12 @@
 
     function boundsFor(s: Series): { lo: number; hi: number } {
         const vals = s.points.map((p) => p.value).filter((v): v is number => v !== null);
-        if (vals.length === 0) return { lo: 0, hi: 1 };
-        const lo = Math.min(...vals);
-        const hi = Math.max(...vals);
-        return hi - lo < 1e-9 ? { lo, hi: lo + 1 } : { lo, hi };
+        let lo = s.min ?? (vals.length ? Math.min(...vals) : 0);
+        let hi = s.max ?? (vals.length ? Math.max(...vals) : 1);
+        // Petite marge en haut quand l'échelle est auto, pour ne pas coller au bord.
+        if (s.max === undefined && vals.length) hi = hi + (hi - lo) * 0.1;
+        if (hi - lo < 1e-9) hi = lo + 1;
+        return { lo, hi };
     }
 
     function yFor(s: Series, v: number): number {
@@ -112,16 +123,16 @@
     function xTickLabel(t: number): string {
         const d = new Date(t);
         if (timeFormat === 'date') {
-            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', timeZone: TZ });
         }
         if (timeFormat === 'hh:mm') {
-            return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
         }
         const span = xMax - xMin;
         if (span > 1.5 * 24 * 3600 * 1000) {
-            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', timeZone: TZ });
         }
-        return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: TZ });
     }
 
     const ticks = $derived.by(() => {
@@ -189,7 +200,9 @@
             day: '2-digit',
             month: '2-digit',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            second: '2-digit',
+            timeZone: TZ
         });
     }
 </script>
@@ -306,6 +319,7 @@
             {/if}
         </div>
 
+        {#if showLegend}
         <ul class="flex flex-wrap gap-x-3 gap-y-1 text-xs">
             {#each series as s}
                 {@const lv = lastValue(s)}
@@ -331,5 +345,6 @@
                 </li>
             {/each}
         </ul>
+        {/if}
     {/if}
 </div>

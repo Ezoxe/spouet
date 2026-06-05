@@ -8,11 +8,11 @@
         ApiError
     } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
+    import { downloads } from '$lib/downloads.svelte';
     import {
         Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap, Activity
     } from 'lucide-svelte';
     import { goto } from '$app/navigation';
-    import Sparkline from '$lib/components/Sparkline.svelte';
     import CapabilitiesCard from '$lib/components/CapabilitiesCard.svelte';
     import TimeSeriesChart, { type Series } from '$lib/components/TimeSeriesChart.svelte';
     import type { MetricsRange, NodeMetricsOut } from '$lib/api';
@@ -24,7 +24,6 @@
     let loading = $state(true);
     let modelsLoading = $state(false);
     let pullStatus: Record<string, unknown> | null = $state(null);
-    let polling: ReturnType<typeof setInterval> | null = null;
 
     // Formulaire pull
     let showPullForm = $state(false);
@@ -44,7 +43,6 @@
     let imageModelInput = $state('');
     let imagePulling = $state(false);
     let imagePullStatus: Record<string, unknown> | null = $state(null);
-    let imagePolling: ReturnType<typeof setInterval> | null = null;
     let imageLoading = $state(false);
 
     // Historique
@@ -68,86 +66,64 @@
         }
     }
 
-    async function loadHistory(range: MetricsRange): Promise<void> {
+    async function loadHistory(range: MetricsRange, silent = false): Promise<void> {
         if (!nodeId) return;
-        histLoading = true;
+        if (!silent) histLoading = true;
         histRange = range;
         try {
             histData = await nodesApi.metrics(nodeId, range);
         } catch {
-            histData = null;
+            if (!silent) histData = null;
         } finally {
-            histLoading = false;
+            if (!silent) histLoading = false;
         }
     }
 
-    const histSeries = $derived.by<Series[]>(() => {
+    // Un graphique INDÉPENDANT par métrique (échelle propre, plus lisible qu'un
+    // gros multi-séries). RAM/VRAM bornées au total matériel (échelle réaliste).
+    interface MetricChart extends Series {}
+
+    const metricCharts = $derived.by<MetricChart[]>(() => {
         if (!histData) return [];
         const pts = histData.series.map((p) => ({ time: Date.parse(p.time), p }));
-        return [
-            {
-                label: 'CPU',
-                color: 'rgb(96 165 250)',
-                unit: ' %',
-                points: pts.map(({ time, p }) => ({ time, value: p.cpu_pct }))
-            },
-            {
-                label: 'RAM',
-                color: 'rgb(168 85 247)',
-                unit: ' MB',
-                precision: 0,
-                points: pts.map(({ time, p }) => ({ time, value: p.ram_used_mb }))
-            },
-            {
-                label: 'VRAM',
-                color: 'rgb(34 211 238)',
-                unit: ' MB',
-                precision: 0,
-                points: pts.map(({ time, p }) => ({ time, value: p.vram_used_mb }))
-            },
-            {
-                label: 'TPS',
-                color: 'rgb(16 185 129)',
-                unit: ' tok/s',
-                points: pts.map(({ time, p }) => ({ time, value: p.llama_tps }))
-            },
-            {
-                label: 'Slots',
-                color: 'rgb(251 191 36)',
-                points: pts.map(({ time, p }) => ({ time, value: p.llama_slots_active }))
-            },
-            {
-                label: 'Net ↓',
-                color: 'rgb(244 114 182)',
-                unit: ' kbps',
-                points: pts.map(({ time, p }) => ({ time, value: p.net_rx_kbps }))
-            }
+        const mk = (
+            label: string,
+            color: string,
+            unit: string,
+            precision: number,
+            get: (p: (typeof pts)[number]['p']) => number | null,
+            min?: number,
+            max?: number
+        ): MetricChart => ({
+            label,
+            color,
+            unit,
+            precision,
+            min,
+            max,
+            points: pts.map(({ time, p }) => ({ time, value: get(p) }))
+        });
+        const ramMax = node?.ram_total_mb ?? undefined;
+        const vramMax = node?.vram_total_mb ?? undefined;
+        const charts: MetricChart[] = [
+            mk('CPU', 'rgb(96 165 250)', ' %', 0, (p) => p.cpu_pct, 0, 100),
+            mk('RAM', 'rgb(168 85 247)', ' MB', 0, (p) => p.ram_used_mb, 0, ramMax)
         ];
+        if (vramMax) charts.push(mk('VRAM', 'rgb(34 211 238)', ' MB', 0, (p) => p.vram_used_mb, 0, vramMax));
+        charts.push(
+            mk('Débit (tok/s)', 'rgb(16 185 129)', '', 1, (p) => p.llama_tps, 0),
+            mk('Slots actifs', 'rgb(251 191 36)', '', 0, (p) => p.llama_slots_active, 0),
+            mk('Réseau ↓', 'rgb(244 114 182)', ' kbps', 0, (p) => p.net_rx_kbps, 0)
+        );
+        return charts;
     });
 
-    // ---------- Buffers in-memory pour les graphiques temps réel ----------
-    const MAX_POINTS = 60;
-    type Sample = { ts: number; value: number };
-
-    let ramUsedHist = $state<Sample[]>([]);
-    let tpsHist = $state<Sample[]>([]);
-    let slotsHist = $state<Sample[]>([]);
-    let vramPctHist = $state<Sample[]>([]);
-
-    function pushSample(arr: Sample[], v: number | null | undefined): Sample[] {
-        if (v == null || !Number.isFinite(Number(v))) return arr;
-        const next = [...arr, { ts: Date.now(), value: Number(v) }];
-        return next.length > MAX_POINTS ? next.slice(-MAX_POINTS) : next;
-    }
-
-    function refreshSeries(n: NodeOut): void {
-        ramUsedHist = pushSample(ramUsedHist, n.ram_used_mb);
-        tpsHist = pushSample(tpsHist, n.llama_tps);
-        slotsHist = pushSample(slotsHist, n.llama_slots_active);
-
-        if (n.vram_total_mb && n.vram_used_mb != null) {
-            vramPctHist = pushSample(vramPctHist, (n.vram_used_mb / n.vram_total_mb) * 100);
+    function lastVal(c: MetricChart): string {
+        for (let i = c.points.length - 1; i >= 0; i--) {
+            const v = c.points[i].value;
+            if (v != null) return v.toFixed(c.precision ?? 0) + (c.unit ?? '');
         }
+        return '—';
     }
 
     function fmtSize(bytes: number): string {
@@ -165,7 +141,6 @@
                     configForm.n_ctx = node.llama_n_ctx;
                     configForm.n_gpu_layers = node.llama_n_gpu_layers ?? -1;
                 }
-                refreshSeries(node);
             }
         } catch (e) {
             // 404 si le node a été supprimé entre deux ticks
@@ -194,38 +169,39 @@
             toast.error('Renseigne le repo HuggingFace et le nom du fichier.');
             return;
         }
+        const id = nodeId;
+        const filename = pullForm.filename;
         pulling = true;
         try {
-            await nodesApi.pullModel(nodeId, pullForm);
+            await nodesApi.pullModel(id, pullForm);
             toast.success('Téléchargement démarré…');
             showPullForm = false;
-            startPollingPullStatus();
+            downloads.track({
+                key: `gguf-${id}-${filename}`,
+                label: filename,
+                sublabel: node?.name ? `GGUF · ${node.name}` : 'GGUF',
+                poll: async () => {
+                    const st = await nodesApi.pullStatus(id);
+                    pullStatus = st;
+                    const status =
+                        st?.status === 'done' ? 'done' : st?.status === 'error' ? 'error' : 'downloading';
+                    if (status === 'done') {
+                        await loadLocalModels();
+                        pullStatus = null;
+                    }
+                    if (status === 'error') pullStatus = null;
+                    return {
+                        status,
+                        percent: null,
+                        detail: status === 'error' ? String(st?.error ?? 'échec') : undefined
+                    };
+                }
+            });
         } catch (e) {
             toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur inconnue');
         } finally {
             pulling = false;
         }
-    }
-
-    function startPollingPullStatus() {
-        if (polling || !nodeId) return;
-        const id = nodeId;
-        polling = setInterval(async () => {
-            try {
-                pullStatus = await nodesApi.pullStatus(id);
-                if (pullStatus?.status === 'done' || pullStatus?.status === 'error') {
-                    clearInterval(polling!);
-                    polling = null;
-                    if (pullStatus?.status === 'done') {
-                        toast.success(`Modèle téléchargé : ${pullStatus.filename}`);
-                        await loadLocalModels();
-                    } else {
-                        toast.error(`Échec : ${pullStatus?.error}`);
-                    }
-                    pullStatus = null;
-                }
-            } catch { /* ignore */ }
-        }, 2000);
     }
 
     async function loadModel(filename: string) {
@@ -257,38 +233,44 @@
             toast.error('Indique le repo HuggingFace du modèle (ex. stabilityai/sdxl-turbo).');
             return;
         }
+        const id = nodeId;
         imagePulling = true;
         try {
-            await nodesApi.imagePull(nodeId, { model });
+            await nodesApi.imagePull(id, { model });
             toast.success('Téléchargement du modèle d’images démarré…');
-            startPollingImagePull();
+            downloads.track({
+                key: `img-${id}-${model}`,
+                label: model,
+                sublabel: node?.name ? `Image · ${node.name}` : 'Image',
+                poll: async () => {
+                    const st = await nodesApi.imagePullStatus(id);
+                    imagePullStatus = st;
+                    const status =
+                        st?.status === 'done' ? 'done' : st?.status === 'error' ? 'error' : 'downloading';
+                    if (status === 'done') {
+                        await loadImageStatus();
+                        imagePullStatus = null;
+                    }
+                    if (status === 'error') imagePullStatus = null;
+                    const dl = typeof st?.downloaded_mb === 'number' ? st.downloaded_mb : null;
+                    const tot = typeof st?.total_mb === 'number' ? st.total_mb : null;
+                    return {
+                        status,
+                        percent: typeof st?.percent === 'number' ? st.percent : null,
+                        detail:
+                            status === 'error'
+                                ? String(st?.error ?? 'échec')
+                                : dl != null
+                                  ? `${dl >= 1000 ? (dl / 1000).toFixed(1) + ' GB' : dl + ' MB'}${tot ? ' / ' + (tot >= 1000 ? (tot / 1000).toFixed(1) + ' GB' : tot + ' MB') : ''}`
+                                  : undefined
+                    };
+                }
+            });
         } catch (e) {
             toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur inconnue');
         } finally {
             imagePulling = false;
         }
-    }
-
-    function startPollingImagePull() {
-        if (imagePolling || !nodeId) return;
-        const id = nodeId;
-        imagePolling = setInterval(async () => {
-            try {
-                imagePullStatus = await nodesApi.imagePullStatus(id);
-                const st = imagePullStatus?.status;
-                if (st === 'done' || st === 'error') {
-                    clearInterval(imagePolling!);
-                    imagePolling = null;
-                    if (st === 'done') {
-                        toast.success(`Modèle téléchargé : ${imagePullStatus?.model}`);
-                        await loadImageStatus();
-                    } else {
-                        toast.error(`Échec : ${imagePullStatus?.error}`);
-                    }
-                    imagePullStatus = null;
-                }
-            } catch { /* ignore */ }
-        }, 2500);
     }
 
     async function loadImageModel() {
@@ -337,12 +319,13 @@
             loadImageStatus();
         });
         loadHistory('1h');
-        // Rafraîchissement à 3s pour des graphiques fluides
+        // Node (stats instantanées) toutes les 3s ; métriques (graphiques) en
+        // direct toutes les 5s, en silencieux pour ne pas faire clignoter l'UI.
         const i = setInterval(() => { loadNode(); }, 3000);
+        const h = setInterval(() => { loadHistory(histRange, true); }, 5000);
         return () => {
             clearInterval(i);
-            if (polling) clearInterval(polling);
-            if (imagePolling) clearInterval(imagePolling);
+            clearInterval(h);
         };
     });
 </script>
@@ -421,11 +404,16 @@
         <!-- Capabilities (compute_class, gpu_kind, llama_variant, warnings) -->
         <CapabilitiesCard caps={node.capabilities} agentVersion={node.agent_version} />
 
-        <!-- Historique : pièce centrale, interactif -->
+        <!-- Métriques : un petit graphique indépendant par élément, rafraîchi en direct -->
         <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div class="mb-2 flex items-center justify-between">
+            <div class="mb-3 flex items-center justify-between">
                 <h2 class="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-neutral-400">
-                    Historique
+                    <Activity size={12} />
+                    Métriques
+                    <span class="flex items-center gap-1.5 text-[10px] normal-case text-neutral-500">
+                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        live
+                    </span>
                     {#if histData?.source === '1min'}
                         <span class="rounded bg-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-500">1-min</span>
                     {/if}
@@ -440,63 +428,32 @@
                     {/each}
                 </div>
             </div>
-            {#if histLoading}
+            {#if histLoading && !histData}
                 <div class="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-8 text-center text-xs text-neutral-500">
                     Chargement…
                 </div>
+            {:else if metricCharts.length === 0}
+                <div class="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-8 text-center text-xs text-neutral-500">
+                    Aucune donnée sur cette plage.
+                </div>
             {:else}
-                <TimeSeriesChart series={histSeries} timeFormat={histRange === '7d' ? 'date' : 'hh:mm'} />
+                <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {#each metricCharts as c (c.label)}
+                        <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
+                            <div class="mb-1 flex items-baseline justify-between">
+                                <span class="text-[10px] uppercase tracking-wider text-neutral-500">{c.label}</span>
+                                <span class="font-mono text-sm tabular-nums text-neutral-200">{lastVal(c)}</span>
+                            </div>
+                            <TimeSeriesChart
+                                series={[c]}
+                                height={90}
+                                showLegend={false}
+                                timeFormat={histRange === '7d' ? 'date' : 'hh:mm'}
+                            />
+                        </div>
+                    {/each}
+                </div>
             {/if}
-        </section>
-
-        <!-- Activité temps réel : 4 sparklines compacts -->
-        <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
-            <div class="mb-2 flex items-center justify-between">
-                <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-neutral-400">
-                    <Activity size={12} />
-                    Temps réel
-                </h2>
-                <span class="flex items-center gap-1.5 text-[10px] text-neutral-500">
-                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    live · {MAX_POINTS} pts
-                </span>
-            </div>
-            <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <Sparkline
-                    label="VRAM %"
-                    points={vramPctHist.map((p) => p.value)}
-                    max={100}
-                    min={0}
-                    unit="%"
-                    stroke="rgb(96 165 250)"
-                    fill="rgb(96 165 250)"
-                />
-                <Sparkline
-                    label="RAM"
-                    points={ramUsedHist.map((p) => p.value)}
-                    max={node.ram_total_mb ?? undefined}
-                    min={0}
-                    unit="MB"
-                    stroke="rgb(168 85 247)"
-                    fill="rgb(168 85 247)"
-                />
-                <Sparkline
-                    label="TPS"
-                    points={tpsHist.map((p) => p.value)}
-                    min={0}
-                    unit="tok/s"
-                    precision={1}
-                    stroke="rgb(16 185 129)"
-                    fill="rgb(16 185 129)"
-                />
-                <Sparkline
-                    label="Slots"
-                    points={slotsHist.map((p) => p.value)}
-                    min={0}
-                    stroke="rgb(251 191 36)"
-                    fill="rgb(251 191 36)"
-                />
-            </div>
         </section>
 
         <!-- Stats llama.cpp : bandeau dense -->
@@ -772,9 +729,28 @@
                     </button>
                 </div>
                 {#if imagePullStatus}
-                    <p class="mt-2 text-xs text-cyan-300">
-                        Téléchargement en cours : {imagePullStatus.model as string}…
-                    </p>
+                    {@const pct = typeof imagePullStatus.percent === 'number' ? imagePullStatus.percent : null}
+                    {@const dl = typeof imagePullStatus.downloaded_mb === 'number' ? imagePullStatus.downloaded_mb : null}
+                    {@const tot = typeof imagePullStatus.total_mb === 'number' ? imagePullStatus.total_mb : null}
+                    <div class="mt-3">
+                        <div class="mb-1 flex items-center justify-between text-xs text-cyan-300">
+                            <span class="flex items-center gap-1.5">
+                                <Loader2 size={11} class="animate-spin" />
+                                Téléchargement : <span class="font-mono">{imagePullStatus.model as string}</span>
+                            </span>
+                            <span class="font-mono tabular-nums text-neutral-400">
+                                {#if dl != null}{dl >= 1000 ? (dl / 1000).toFixed(1) + ' GB' : dl + ' MB'}{#if tot}&nbsp;/&nbsp;{tot >= 1000 ? (tot / 1000).toFixed(1) + ' GB' : tot + ' MB'}{/if}{/if}
+                                {#if pct != null}&nbsp;· {pct.toFixed(0)} %{/if}
+                            </span>
+                        </div>
+                        <div class="h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+                            {#if pct != null}
+                                <div class="h-full rounded-full bg-cyan-500 transition-all duration-300" style:width={`${Math.max(2, Math.min(100, pct))}%`}></div>
+                            {:else}
+                                <div class="dl-bar h-full w-1/3 rounded-full bg-cyan-500"></div>
+                            {/if}
+                        </div>
+                    </div>
                 {/if}
             </div>
         {:else}
@@ -804,3 +780,15 @@
         </section>
     {/if}
 </div>
+
+<style>
+    /* Barre de progression indéterminée (téléchargement sans % connu). */
+    .dl-bar {
+        animation: dl-slide 1.3s ease-in-out infinite;
+    }
+    @keyframes dl-slide {
+        0% { margin-left: 0; }
+        50% { margin-left: 66%; }
+        100% { margin-left: 0; }
+    }
+</style>

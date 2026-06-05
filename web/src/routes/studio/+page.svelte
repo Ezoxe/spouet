@@ -7,11 +7,20 @@
         ApiError,
         type ImageOut,
         type ImageHealth,
+        type ImageNodeOut,
         type GenerateImageIn
     } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
     import AuthedImage from '$lib/components/AuthedImage.svelte';
-    import { ImagePlus, Sparkles, Trash2, Download, X, Settings2, Wand2 } from 'lucide-svelte';
+    import { ImagePlus, Sparkles, Trash2, Download, X, Settings2, Wand2, Cpu, Check } from 'lucide-svelte';
+
+    // Suggestions de modèles (l'utilisateur peut saisir n'importe quel repo HF).
+    const MODEL_SUGGESTIONS = [
+        'stabilityai/sdxl-turbo',
+        'stabilityai/sd-turbo',
+        'stabilityai/stable-diffusion-xl-base-1.0',
+        'black-forest-labs/FLUX.1-schnell'
+    ];
 
     type SizePreset = { label: string; w: number; h: number };
     const SIZES: SizePreset[] = [
@@ -33,13 +42,53 @@
     let gallery: ImageOut[] = $state([]);
     let selected: ImageOut | null = $state(null);
 
+    // Choix du modèle
+    let imageNodes = $state<ImageNodeOut[]>([]);
+    let model = $state('');
+    let applyingModel = $state(false);
+
+    // Animation de génération
+    let genElapsed = $state(0);
+    let genTimer: ReturnType<typeof setInterval> | null = null;
+
+    const modelOptions = $derived.by(() => {
+        const set = new Set<string>(MODEL_SUGGESTIONS);
+        if (health?.model) set.add(health.model);
+        for (const n of imageNodes) if (n.model) set.add(n.model);
+        return [...set];
+    });
+
     async function refresh() {
-        [health, gallery] = await Promise.all([
+        [health, gallery, imageNodes] = await Promise.all([
             images.health().catch(() => null),
-            images.list().catch(() => [])
+            images.list().catch(() => []),
+            images.nodes().catch(() => [])
         ]);
+        if (!model && health?.model) model = health.model;
     }
     onMount(refresh);
+
+    async function applyModel() {
+        const m = model.trim();
+        if (!m) {
+            toast.error('Indique le modèle à activer.');
+            return;
+        }
+        applyingModel = true;
+        try {
+            await images.setModel(m);
+            toast.success(`Modèle activé : ${m}`);
+            setTimeout(refresh, 1500);
+        } catch (e) {
+            const msg =
+                e instanceof ApiError && typeof e.body === 'object' && e.body && 'detail' in e.body
+                    ? String((e.body as { detail: unknown }).detail)
+                    : 'Activation impossible';
+            toast.error(msg);
+        } finally {
+            applyingModel = false;
+        }
+    }
 
     async function generate() {
         const p = prompt.trim();
@@ -48,6 +97,9 @@
             return;
         }
         busy = true;
+        genElapsed = 0;
+        if (genTimer) clearInterval(genTimer);
+        genTimer = setInterval(() => (genElapsed += 1), 1000);
         try {
             const payload: GenerateImageIn = {
                 prompt: p,
@@ -71,6 +123,10 @@
             toast.error(msg);
         } finally {
             busy = false;
+            if (genTimer) {
+                clearInterval(genTimer);
+                genTimer = null;
+            }
         }
     }
 
@@ -143,6 +199,32 @@
             class="w-full resize-y rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-0)]
                    px-3 py-2 text-sm placeholder:text-neutral-600 focus:border-cyan-500/40 focus:outline-none"
         ></textarea>
+
+        <!-- Choix du modèle (n'importe quel repo HuggingFace) -->
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+            <span class="flex items-center gap-1.5 text-xs text-neutral-500"><Cpu size={13} /> Modèle</span>
+            <input
+                list="studio-models"
+                bind:value={model}
+                placeholder="stabilityai/sdxl-turbo"
+                class="min-w-0 flex-1 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-0)]
+                       px-3 py-1.5 font-mono text-xs placeholder:text-neutral-600 focus:border-cyan-500/40 focus:outline-none"
+            />
+            <datalist id="studio-models">
+                {#each modelOptions as m}<option value={m}></option>{/each}
+            </datalist>
+            <button
+                type="button"
+                onclick={applyModel}
+                disabled={applyingModel || !model.trim() || model.trim() === health?.model}
+                class="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-subtle)]
+                       px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-white/5 disabled:opacity-40"
+                title="Charger ce modèle sur le node (le télécharge si besoin)"
+            >
+                {#if applyingModel}<Sparkles size={13} class="animate-pulse" />{:else}<Check size={13} />{/if}
+                {model.trim() === health?.model ? 'Actif' : 'Activer'}
+            </button>
+        </div>
 
         <div class="mt-3 flex flex-wrap items-center gap-3">
             <div class="flex gap-1 rounded-lg border border-[var(--color-border-subtle)] p-0.5">
@@ -235,7 +317,7 @@
     </div>
 
     <!-- Galerie -->
-    {#if gallery.length === 0}
+    {#if gallery.length === 0 && !busy}
         <div class="grid place-items-center py-16 text-center text-neutral-600" in:fade>
             <ImagePlus size={40} class="mb-3 opacity-40" />
             <p class="text-sm">Aucune image générée pour l’instant.</p>
@@ -243,6 +325,20 @@
         </div>
     {:else}
         <div class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {#if busy}
+                <!-- Tuile d'animation pendant la génération -->
+                <div
+                    in:scale={{ start: 0.95, duration: 200 }}
+                    class="gen-tile relative grid aspect-square place-items-center overflow-hidden rounded-xl border border-cyan-500/30"
+                >
+                    <div class="gen-shimmer absolute inset-0"></div>
+                    <div class="relative flex flex-col items-center gap-2 text-cyan-200">
+                        <Sparkles size={26} class="animate-pulse" />
+                        <span class="text-xs">Génération…</span>
+                        <span class="font-mono text-[11px] tabular-nums text-cyan-300/80">{genElapsed}s</span>
+                    </div>
+                </div>
+            {/if}
             {#each gallery as img (img.id)}
                 <div
                     in:fly={{ y: 8, duration: 160 }}
@@ -343,3 +439,24 @@
         </button>
     </div>
 {/if}
+
+<style>
+    /* Tuile d'animation pendant la génération d'image. */
+    .gen-tile {
+        background: linear-gradient(165deg, oklch(0.2 0.04 230 / 0.6), oklch(0.14 0.03 250 / 0.6));
+    }
+    .gen-shimmer {
+        background: linear-gradient(
+            110deg,
+            transparent 30%,
+            oklch(0.7 0.15 210 / 0.12) 50%,
+            transparent 70%
+        );
+        background-size: 200% 100%;
+        animation: gen-sweep 1.4s linear infinite;
+    }
+    @keyframes gen-sweep {
+        from { background-position: 200% 0; }
+        to { background-position: -200% 0; }
+    }
+</style>

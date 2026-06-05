@@ -588,6 +588,13 @@ export interface GenerateImageIn {
     seed?: number | null;
 }
 
+export interface ImageNodeOut {
+    id: string;
+    name: string;
+    model: string | null;
+    gpu_model: string | null;
+}
+
 export const images = {
     health: () => api<ImageHealth>('/images/health'),
     list: (limit = 60, offset = 0) =>
@@ -595,7 +602,10 @@ export const images = {
     count: () => api<{ count: number }>('/images/count'),
     generate: (json: GenerateImageIn) =>
         api<ImageOut>('/images/generate', { method: 'POST', json }),
-    delete: (id: string) => api<void>(`/images/${id}`, { method: 'DELETE' })
+    delete: (id: string) => api<void>(`/images/${id}`, { method: 'DELETE' }),
+    nodes: () => api<ImageNodeOut[]>('/images/nodes'),
+    setModel: (model: string) =>
+        api<Record<string, unknown>>('/images/model', { method: 'POST', json: { model } })
 };
 
 // ----------------------------------------------------------------------------
