@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # recherches silencieuses automatiques.
     websearch_require_approval: bool = True
 
+    # Génération auto du titre + tags d'une conversation (petit appel LLM
+    # best-effort après les premiers échanges). false = titre heuristique
+    # (premiers mots du 1er message) sans appel LLM ni tags.
+    chat_autoname_enabled: bool = True
+
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10

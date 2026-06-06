@@ -127,6 +127,21 @@
         scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
     }
 
+    // Génère le titre (1er échange) puis enrichit les tags au fil de l'eau.
+    // Best-effort : silencieux en cas d'échec. Notifie la sidebar du changement.
+    async function maybeAutoname() {
+        if (!convId) return;
+        const assistantCount = messages.filter((m) => m.role === 'assistant' && m.content).length;
+        if (assistantCount === 0) return;
+        if (assistantCount !== 1 && assistantCount % 3 !== 0) return;
+        try {
+            conv = await conversations.autoname(convId);
+            window.dispatchEvent(new CustomEvent('spouet:conversations-changed'));
+        } catch {
+            /* best-effort : ni titre ni tags si le backend ne peut pas */
+        }
+    }
+
     function makePlaceholderAssistant(): MessageOut {
         return {
             id: uuid(),
@@ -230,6 +245,7 @@
                     /* garde l'état local */
                 }
             }
+            await maybeAutoname();
         }
     }
 

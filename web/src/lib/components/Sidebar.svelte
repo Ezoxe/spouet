@@ -121,7 +121,14 @@
         return $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
     }
 
-    onMount(refreshConvs);
+    onMount(() => {
+        refreshConvs();
+        // La page chat émet cet évènement après l'autoname (titre/tags) ou un
+        // changement de conversation → on resynchronise la liste.
+        const onChanged = () => refreshConvs();
+        window.addEventListener('spouet:conversations-changed', onChanged);
+        return () => window.removeEventListener('spouet:conversations-changed', onChanged);
+    });
 </script>
 
 

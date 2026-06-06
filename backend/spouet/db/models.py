@@ -182,6 +182,11 @@ class Conversation(Base, TimestampMixin):
     allowed_tool_slugs: Mapped[list[str]] = mapped_column(
         ARRAY(String), default=list, nullable=False
     )
+    # Mots-clés générés automatiquement (et/ou édités) pour filtrer les
+    # conversations. Enrichis au fil de l'échange par l'autoname LLM.
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False, server_default="{}"
+    )
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",

@@ -11,11 +11,12 @@ from uuid import UUID
 from fastapi import APIRouter, Body, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from spouet.api.deps import CurrentUser, DbSession
 from spouet.core.logging import get_logger
 from spouet.db.models import Conversation, Message
+from spouet.orchestrator.autoname import autoname_conversation
 from spouet.orchestrator.chat_loop import stream_assistant_reply
 
 logger = get_logger(__name__)
@@ -34,6 +35,7 @@ class ConversationPatch(BaseModel):
     system_prompt: str | None = None
     model_pref: str | None = None
     allowed_tool_slugs: list[str] | None = None
+    tags: list[str] | None = None
     archived: bool | None = None
     pinned: bool | None = None
 
@@ -46,6 +48,7 @@ class ConversationOut(BaseModel):
     archived: bool
     pinned: bool = False
     allowed_tool_slugs: list[str] = []
+    tags: list[str] = []
     created_at: datetime
     updated_at: datetime
 
@@ -55,6 +58,8 @@ async def list_conversations(
     user: CurrentUser,
     db: DbSession,
     q: str | None = Query(default=None, description="Filtre full-text sur titre + messages"),
+    tag: str | None = Query(default=None, description="Filtre par tag exact"),
+    model: str | None = Query(default=None, description="Filtre par modèle (model_pref)"),
 ) -> list[ConversationOut]:
     query = (
         select(Conversation)
@@ -71,8 +76,24 @@ async def list_conversations(
             .scalar_subquery()
         )
         query = query.where(or_(Conversation.title.ilike(like), Conversation.id.in_(sub)))
+    if tag:
+        query = query.where(Conversation.tags.any(tag))
+    if model:
+        query = query.where(Conversation.model_pref == model)
     rows = (await db.execute(query)).scalars().all()
     return [_to_out(r) for r in rows]
+
+
+@router.get("/tags", response_model=list[str])
+async def list_tags(user: CurrentUser, db: DbSession) -> list[str]:
+    """Tags distincts de l'utilisateur (pour l'UI de filtre)."""
+    rows = (
+        await db.execute(
+            select(func.unnest(Conversation.tags))
+            .where(Conversation.user_id == user.id, Conversation.archived.is_(False))
+        )
+    ).scalars().all()
+    return sorted({t for t in rows if t})
 
 
 @router.post("", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
@@ -115,6 +136,14 @@ async def patch_conversation(
         conv.model_pref = payload.model_pref or None
     if payload.allowed_tool_slugs is not None:
         conv.allowed_tool_slugs = list(payload.allowed_tool_slugs)
+    if payload.tags is not None:
+        # Normalise : minuscules, trim, dédoublonnage, max 6.
+        seen: list[str] = []
+        for t in payload.tags:
+            s = " ".join(str(t or "").split()).lower()[:24].strip()
+            if s and s not in seen:
+                seen.append(s)
+        conv.tags = seen[:6]
     if payload.archived is not None:
         conv.archived = payload.archived
     if payload.pinned is not None:
@@ -150,6 +179,26 @@ async def clone_conversation(
     await db.commit()
     await db.refresh(dup)
     return _to_out(dup)
+
+
+@router.post("/{conv_id}/autoname", response_model=ConversationOut)
+async def autoname_conv(conv_id: UUID, user: CurrentUser, db: DbSession) -> ConversationOut:
+    """Génère/complète le titre et les tags de la conversation (best-effort).
+
+    Le titre n'est (re)généré que s'il est encore par défaut ; les tags sont
+    fusionnés avec les existants. Appelé par le frontend après les premiers
+    échanges. N'échoue jamais bruyamment : en cas de souci, renvoie l'état actuel.
+    """
+    conv = await db.get(Conversation, conv_id)
+    if conv is None or conv.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    try:
+        await autoname_conversation(db, conv)
+    except Exception as e:  # noqa: BLE001 — l'autoname ne doit jamais casser l'UX
+        logger.warning("conversation.autoname_failed", conv_id=str(conv_id), error=str(e))
+        await db.rollback()
+    await db.refresh(conv)
+    return _to_out(conv)
 
 
 @router.delete("/{conv_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -314,6 +363,7 @@ def _to_out(c: Conversation) -> ConversationOut:
         archived=c.archived,
         pinned=c.pinned,
         allowed_tool_slugs=list(c.allowed_tool_slugs or []),
+        tags=list(c.tags or []),
         created_at=c.created_at,
         updated_at=c.updated_at,
     )

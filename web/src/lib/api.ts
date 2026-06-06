@@ -278,6 +278,7 @@ export interface ConversationOut {
     archived: boolean;
     pinned: boolean;
     allowed_tool_slugs: string[];
+    tags: string[];
     created_at: string;
     updated_at: string;
 }
@@ -287,6 +288,7 @@ export interface ConversationPatch {
     system_prompt?: string | null;
     model_pref?: string | null;
     allowed_tool_slugs?: string[];
+    tags?: string[];
     archived?: boolean;
     pinned?: boolean;
 }
@@ -479,13 +481,22 @@ export const nodes = {
 };
 
 export const conversations = {
-    list: (q?: string) =>
-        api<ConversationOut[]>(`/conversations${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    list: (q?: string, filters?: { tag?: string; model?: string }) => {
+        const p = new URLSearchParams();
+        if (q) p.set('q', q);
+        if (filters?.tag) p.set('tag', filters.tag);
+        if (filters?.model) p.set('model', filters.model);
+        const qs = p.toString();
+        return api<ConversationOut[]>(`/conversations${qs ? `?${qs}` : ''}`);
+    },
+    tags: () => api<string[]>('/conversations/tags'),
     get: (id: string) => api<ConversationOut>(`/conversations/${id}`),
     create: (json: { title?: string; model_pref?: string; system_prompt?: string }) =>
         api<ConversationOut>('/conversations', { method: 'POST', json }),
     patch: (id: string, json: ConversationPatch) =>
         api<ConversationOut>(`/conversations/${id}`, { method: 'PATCH', json }),
+    autoname: (id: string) =>
+        api<ConversationOut>(`/conversations/${id}/autoname`, { method: 'POST' }),
     clone: (id: string) =>
         api<ConversationOut>(`/conversations/${id}/clone`, { method: 'POST' }),
     delete: (id: string) => api<void>(`/conversations/${id}`, { method: 'DELETE' }),
