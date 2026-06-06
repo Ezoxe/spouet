@@ -169,33 +169,7 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     node.image_port = payload.image_port
     node.image_model = payload.image_model
 
-    await db.flush()  # garantit node.id avant l'insert métrique
-
-    # Persiste une ligne dans la timeseries node_metrics_raw — alimentation
-    # du dashboard historique. La table est partitionnée par jour ; en cas
-    # d'absence de partition pour `now`, le worker create_metrics_partitions
-    # crée les partitions à venir ; en attendant, la partition DEFAULT catche.
-    db.add(
-        NodeMetricRaw(
-            time=now,
-            node_id=node.id,
-            cpu_pct=payload.cpu_pct,
-            ram_used_mb=payload.ram_used_mb,
-            ram_total_mb=payload.ram_total_mb,
-            vram_used_mb=payload.vram_used_mb,
-            vram_total_mb=payload.vram_total_mb,
-            disk_used_mb=payload.disk_used_mb,
-            net_rx_kbps=payload.net_rx_kbps,
-            net_tx_kbps=payload.net_tx_kbps,
-            llama_running=payload.llama_running,
-            llama_model_loaded=payload.llama_model_loaded,
-            llama_tps=payload.llama_tps,
-            llama_slots_active=payload.llama_slots_active,
-            llama_prompt_tokens_total=payload.llama_prompt_tokens_processed,
-            llama_gen_tokens_total=payload.llama_tokens_generated,
-            llama_queue_pending=payload.llama_queue_pending,
-        )
-    )
+    await db.flush()  # garantit node.id avant l'upsert des models
 
     # Upsert des models : marque ceux présents, supprime ceux absents
     existing = {m.name: m for m in await _models_for_node(db, node.id)}
@@ -228,6 +202,40 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
             await db.delete(row)
 
     await db.commit()
+
+    # Timeseries node_metrics_raw (dashboard historique) — best-effort, dans sa
+    # PROPRE transaction, APRÈS le commit vital. La table est partitionnée par
+    # jour (partition DEFAULT catch-all créée en migration 0009). Si l'insert
+    # casse malgré tout (partition, contrainte…), on le journalise SANS faire
+    # échouer le heartbeat : sinon le node basculerait offline et toutes les
+    # stats (last_seen, KPI live) se figeraient.
+    try:
+        db.add(
+            NodeMetricRaw(
+                time=now,
+                node_id=node.id,
+                cpu_pct=payload.cpu_pct,
+                ram_used_mb=payload.ram_used_mb,
+                ram_total_mb=payload.ram_total_mb,
+                vram_used_mb=payload.vram_used_mb,
+                vram_total_mb=payload.vram_total_mb,
+                disk_used_mb=payload.disk_used_mb,
+                net_rx_kbps=payload.net_rx_kbps,
+                net_tx_kbps=payload.net_tx_kbps,
+                llama_running=payload.llama_running,
+                llama_model_loaded=payload.llama_model_loaded,
+                llama_tps=payload.llama_tps,
+                llama_slots_active=payload.llama_slots_active,
+                llama_prompt_tokens_total=payload.llama_prompt_tokens_processed,
+                llama_gen_tokens_total=payload.llama_tokens_generated,
+                llama_queue_pending=payload.llama_queue_pending,
+            )
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 — métrique = canal annexe, jamais vital
+        await db.rollback()
+        logger.warning("node.metric_insert_failed", node=payload.name, exc_info=True)
+
     logger.info(
         "node.heartbeat",
         node=payload.name,
@@ -753,14 +761,24 @@ async def get_node_metrics(
     # raw pour les courtes fenêtres (<= 24h), 1min pour les plus longues
     model_cls = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
 
-    rows = (
-        await db.execute(
-            select(model_cls)
-            .where(model_cls.node_id == node_id, model_cls.time >= cutoff)
-            .order_by(model_cls.time.asc())
-            .limit(limit)
+    # On veut les points les plus RÉCENTS de la fenêtre : tri DESC + limit (sinon
+    # ASC + limit renvoie les plus ANCIENS dès qu'il y a plus de `limit` points —
+    # 6h≈2160, 24h≈8640 en raw → le graphe restait figé loin dans le passé). On
+    # ré-inverse en ordre chronologique pour l'affichage.
+    rows = list(
+        reversed(
+            (
+                await db.execute(
+                    select(model_cls)
+                    .where(model_cls.node_id == node_id, model_cls.time >= cutoff)
+                    .order_by(model_cls.time.desc())
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
         )
-    ).scalars().all()
+    )
     return {
         "node_id": str(node_id),
         "range": range,
