@@ -236,7 +236,7 @@
 </form>
 
 <style>
-    /* Coque de saisie : anneau conique iridescent + halo qui s'allument au focus. */
+    /* Coque de saisie : bordure d'accent + halo doux au focus (pas d'anneau animé). */
     .composer-shell {
         position: relative;
         border-radius: 1rem;
@@ -246,40 +246,13 @@
             border-color 0.2s ease,
             box-shadow 0.3s ease;
     }
-    .composer-shell::before {
-        content: '';
-        position: absolute;
-        inset: -1.5px;
-        border-radius: inherit;
-        padding: 1.5px;
-        background: conic-gradient(
-            from 0deg,
-            oklch(0.72 0.18 210),
-            oklch(0.76 0.16 285),
-            oklch(0.74 0.15 165),
-            oklch(0.78 0.17 320),
-            oklch(0.72 0.18 210)
-        );
-        -webkit-mask:
-            linear-gradient(#000 0 0) content-box,
-            linear-gradient(#000 0 0);
-        mask:
-            linear-gradient(#000 0 0) content-box,
-            linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-        opacity: 0;
-        transition: opacity 0.35s ease;
-        pointer-events: none;
-    }
     .composer-shell:focus-within {
-        border-color: transparent;
+        border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-border));
         box-shadow:
             0 0 0 4px color-mix(in oklch, var(--color-accent) 9%, transparent),
             0 10px 34px -14px color-mix(in oklch, var(--color-accent) 40%, transparent);
     }
-    .composer-shell:focus-within::before {
-        opacity: 0.75;
-        animation: orb-spin 5s linear infinite;
-    }
+    /* Focus : halo statique (plus de rotation — l'anneau conique « tournait »
+       sur toute la largeur du composer, effet indésirable). On garde une bordure
+       d'accent + le box-shadow doux ci-dessus. */
 </style>
