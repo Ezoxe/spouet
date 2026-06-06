@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # Durée de cache Redis d'une recherche (s). Les counters / news bougent peu
     # à cette échelle ; le cache rend le 2ᵉ appel quasi-instantané.
     websearch_cache_ttl_s: int = 600
+    # Demande une validation HITL à l'utilisateur avant chaque recherche web.
+    # Rend chaque recherche réelle visible (et son absence trahit un petit modèle
+    # qui prétendrait chercher sans appeler l'outil). Mettre à false pour des
+    # recherches silencieuses automatiques.
+    websearch_require_approval: bool = True
 
     # Nodes
     node_offline_after_s: int = 30

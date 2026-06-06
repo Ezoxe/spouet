@@ -30,8 +30,14 @@
     let expanded = $state(false);
     let voiceOpen = $state(false);
     let voiceStart = $state(0);
-    let approval: { request_id: string; kind?: string; name?: string; tool?: string; steps?: Step[] } | null =
-        $state(null);
+    let approval: {
+        request_id: string;
+        kind?: string;
+        name?: string;
+        tool?: string;
+        query?: string;
+        steps?: Step[];
+    } | null = $state(null);
     let currentVisual: {
         kind: 'image' | 'card' | 'fact';
         url?: string | null;
@@ -125,6 +131,7 @@
                         kind?: string;
                         name?: string;
                         tool?: string;
+                        query?: string;
                         steps?: Step[];
                     };
                     approval = {
@@ -132,6 +139,7 @@
                         kind: d.kind,
                         name: d.name,
                         tool: d.tool,
+                        query: d.query,
                         steps: d.steps
                     };
                 } else if (ev.event === 'visual') {
@@ -275,6 +283,8 @@
                         <li>{i + 1}. {stepLabel(s)}</li>
                     {/each}
                 </ul>
+            {:else if approval.kind === 'web_search'}
+                <p>🔎 Chercher sur le web : <strong>« {approval.query} »</strong> ?</p>
             {:else}
                 <p>Autoriser <strong>{approval.tool}</strong> ?</p>
             {/if}

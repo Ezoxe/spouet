@@ -41,6 +41,7 @@
         tool?: string;
         kind?: string;
         name?: string;
+        query?: string;
         steps?: { action: string; app?: string; url?: string; monitor?: number; mode?: string }[];
     } | null = $state(null);
     let currentVisual: {
@@ -171,6 +172,7 @@
                         tool?: string;
                         kind?: string;
                         name?: string;
+                        query?: string;
                         steps?: {
                             action: string;
                             app?: string;
@@ -184,6 +186,7 @@
                         tool: d.tool,
                         kind: d.kind,
                         name: d.name,
+                        query: d.query,
                         steps: d.steps
                     };
                 } else if (ev.event === 'visual') {
@@ -568,6 +571,11 @@
                         {/each}
                     </ul>
                 </div>
+            {:else if approval.kind === 'web_search'}
+                <p class="min-w-0 text-sm text-amber-100">
+                    🔎 L'assistant veut chercher sur le web :
+                    <strong class="break-words">« {approval.query} »</strong>. Autoriser ?
+                </p>
             {:else}
                 <p class="text-sm text-amber-100">
                     L'assistant veut utiliser <strong>{approval.tool}</strong>. Approuver ?

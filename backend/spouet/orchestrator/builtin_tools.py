@@ -61,6 +61,8 @@ BUILTIN_SLUGS = _ALWAYS | _IMAGE_GATED | _DESKTOP_GATED
 ALLOWED_STEP_ACTIONS = ("launch_app", "open_url")
 ALLOWED_WINDOW_MODES = ("normal", "maximized", "fullscreen")
 MACRO_APPROVAL_TIMEOUT_S = 180
+# Temps max d'attente d'une décision utilisateur pour autoriser une recherche web.
+WEB_SEARCH_APPROVAL_TIMEOUT_S = 120
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +297,7 @@ async def execute(
 
     try:
         if slug == WEB_SEARCH_SLUG:
-            return await _h_web_search(args)
+            return await _h_web_search(conversation, args, channel)
         if slug == SHOW_VISUAL_SLUG:
             return await _h_show_visual(conversation, args, channel)
         if slug == GENERATE_IMAGE_SLUG:
@@ -320,11 +322,51 @@ async def execute(
 # ---------------------------------------------------------------------------
 
 
-async def _h_web_search(args: dict[str, Any]) -> BuiltinOutcome:
+async def _h_web_search(
+    conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
     query = str(args.get("query") or "").strip()
     kind = args.get("kind") if args.get("kind") in ("web", "images") else "web"
     if not query:
         return BuiltinOutcome(WEB_SEARCH_SLUG, {"status": "error", "error": "query manquante"})
+
+    # Permission HITL : l'utilisateur autorise (ou non) la recherche. Rend chaque
+    # recherche réelle visible — et un refus force l'IA à l'admettre honnêtement
+    # plutôt que d'inventer une réponse.
+    if settings.websearch_require_approval:
+        rid = await request_approval(
+            {
+                "kind": "web_search",
+                "query": query,
+                "search_kind": kind,
+                "conversation_id": str(conversation.id),
+            }
+        )
+        await publish(
+            channel,
+            "approval_required",
+            {"request_id": rid, "kind": "web_search", "query": query},
+        )
+        decision = await wait_for_decision(rid, timeout_s=WEB_SEARCH_APPROVAL_TIMEOUT_S)
+        if decision != "approved":
+            return BuiltinOutcome(
+                WEB_SEARCH_SLUG,
+                {
+                    "status": "denied" if decision == "rejected" else "timeout",
+                    "query": query,
+                    "note": (
+                        "L'utilisateur a refusé la recherche web."
+                        if decision == "rejected"
+                        else "Aucune réponse de l'utilisateur (délai dépassé)."
+                    ),
+                    "instruction": (
+                        "Tu n'as donc PAS pu effectuer la recherche. Indique-le "
+                        "honnêtement à l'utilisateur et ne fournis aucune "
+                        "information inventée sur ce sujet."
+                    ),
+                },
+            )
+
     resp = await websearch_search(query, kind=kind, count=6)
     results = [
         {
