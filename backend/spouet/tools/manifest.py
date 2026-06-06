@@ -40,12 +40,20 @@ class ToolManifest:
     output_schema: dict[str, Any] = field(default_factory=dict)
     secrets: dict[str, str] = field(default_factory=dict)  # {ENV_VAR: 'scope/key'}
     env: dict[str, str] = field(default_factory=dict)  # env vars statiques (non-secrètes)
+    # Override explicite du manifest (`requires_approval: true|false`). None =
+    # comportement par défaut (dérivé du mode réseau).
+    requires_approval_override: bool | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
     def requires_approval(self) -> bool:
-        # Tout accès réseau (Internet ou réseau interne) requiert une validation
-        # HITL par défaut. L'admin peut la lever par tool de confiance via PATCH.
+        # Par défaut, tout accès réseau (Internet ou réseau interne) requiert une
+        # validation HITL. Un manifest peut lever cette exigence explicitement via
+        # `requires_approval: false` pour un outil de confiance dont la surface est
+        # restreinte côté run.py (ex. net-check : commandes whitelistées, pas de
+        # shell arbitraire). L'admin peut aussi ajuster par PATCH.
+        if self.requires_approval_override is not None:
+            return self.requires_approval_override
         return self.network != "none"
 
 
@@ -99,6 +107,10 @@ def load_manifest(path: Path) -> ToolManifest:
         raise ManifestError("'env' doit être un mapping {ENV_VAR: 'valeur'}")
     env_static: dict[str, str] = {str(k): str(v) for k, v in env_raw.items()}
 
+    ra_override = raw.get("requires_approval")
+    if ra_override is not None and not isinstance(ra_override, bool):
+        raise ManifestError("'requires_approval' doit être un booléen (true/false)")
+
     return ToolManifest(
         slug=str(raw["slug"]),
         name=str(raw["name"]),
@@ -113,6 +125,7 @@ def load_manifest(path: Path) -> ToolManifest:
         output_schema=raw.get("output_schema", {}),
         secrets=secrets,
         env=env_static,
+        requires_approval_override=ra_override,
         raw=raw,
     )
 

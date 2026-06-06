@@ -1,0 +1,68 @@
+slug: net-check
+name: Net Check
+version: 0.1.0
+description: |
+  Diagnostic réseau RÉEL (pas une supposition) : teste la connectivité d'un hôte
+  ou d'une URL. Actions : `ping` (latence via connexion TCP), `dns` (résolution),
+  `http` (code + temps de réponse d'une URL), `port` (ouverture d'un port TCP).
+  Commandes strictement whitelistées — aucune commande shell arbitraire. À
+  utiliser quand l'utilisateur demande de vérifier une connexion, un ping, si un
+  site/serveur répond, etc. Ne jamais prétendre l'avoir fait sans appeler cet outil.
+image: spouet/tool-net-check:0.1.0
+
+# Réseau requis (bridge) mais surface restreinte (sockets non privilégiés, hôtes
+# whitelistés par regex, pas de shell) → pas d'approbation HITL.
+network: bridge
+requires_approval: false
+timeout_s: 25
+mem_limit: 128m
+cpu_limit: 1.0
+
+input_schema:
+  type: object
+  required: [action, target]
+  additionalProperties: false
+  properties:
+    action:
+      type: string
+      enum: [ping, dns, http, port]
+      description: >-
+        ping = latence/joignabilité (connexion TCP), dns = résolution d'un nom,
+        http = code HTTP + temps d'une URL, port = test d'ouverture d'un port TCP.
+    target:
+      type: string
+      description: Hôte ou domaine (ping/dns/port) ou URL (http). Ex. "google.com".
+    count:
+      type: integer
+      minimum: 1
+      maximum: 8
+      default: 4
+      description: Nombre de mesures (action ping).
+    port:
+      type: integer
+      minimum: 1
+      maximum: 65535
+      description: Port TCP à tester (action port).
+
+output_schema:
+  type: object
+  required: [status, action, target]
+  properties:
+    status:
+      type: string
+      description: ok ou error
+    action:
+      type: string
+    target:
+      type: string
+    command:
+      type: string
+      description: Description de l'opération réellement exécutée
+    output:
+      type: string
+      description: Sortie lisible (façon terminal)
+    summary:
+      type: string
+      description: Résumé court (ex. "0% perte, avg 12 ms")
+    error:
+      type: string
