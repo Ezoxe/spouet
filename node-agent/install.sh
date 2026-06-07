@@ -208,13 +208,18 @@ export DEBIAN_FRONTEND=noninteractive
 # llama.cpp ≥ b4000 : les plugins backend CPU (libggml-cpu-*.so) sont
 # linkés contre libgomp (OpenMP). Sans ces .so, dlopen échoue silencieusement
 # et llama.cpp lève « make_cpu_buft_list: no CPU backend found ».
+#
+# libvulkan1 = loader Vulkan (libvulkan.so.1). llama.cpp ne publie AUCUN binaire
+# CUDA pour Linux : sur un GPU NVIDIA, c'est le build Vulkan qui est installé et
+# il offload via l'ICD fourni par le driver NVIDIA. Sans le loader, le backend
+# Vulkan ne se charge pas → « ggml_vulkan: No devices found » → repli CPU.
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
     apt-get install -y -qq git curl ca-certificates wget jq \
-        libgomp1 libopenblas0 libcurl4
+        libgomp1 libopenblas0 libcurl4 libvulkan1
 elif command -v dnf &>/dev/null; then
     dnf install -y -q git curl ca-certificates wget jq \
-        libgomp libopenblas libcurl
+        libgomp libopenblas libcurl vulkan-loader
 fi
 
 # ---------------------------------------------------------------------------
@@ -458,6 +463,25 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
         done
         chown -R spouet:spouet "$BIN_DIR"
         log "✓ llama-server installé : $BIN_DIR/llama-server"
+
+        # Binaire Vulkan (seul build GPU pré-compilé pour Linux) : le loader
+        # libvulkan1 ne suffit pas, il faut un ICD exposant le GPU. Sur NVIDIA
+        # l'ICD vient du paquet GL du driver (souvent absent des installs
+        # headless/cuda-only). Sans ICD → « ggml_vulkan: No devices found » → CPU.
+        if [[ "$ASSET" == *vulkan* ]]; then
+            if ! ls /usr/share/vulkan/icd.d/*.json &>/dev/null \
+               && ! ls /etc/vulkan/icd.d/*.json &>/dev/null; then
+                warn "Aucun ICD Vulkan (/usr/share/vulkan/icd.d/*.json) — le GPU ne sera PAS vu par llama-server."
+                if [[ "$GPU_TYPE" == "cuda" ]]; then
+                    _drvver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1)
+                    warn "  GPU NVIDIA détecté : installe le paquet GL du driver, ex. :"
+                    warn "    apt-get install -y libnvidia-gl-${_drvver:-<version>}   (Debian/Ubuntu)"
+                    warn "  puis : systemctl restart spouet-agent"
+                fi
+            else
+                log "✓ ICD Vulkan présent — le GPU devrait être visible par le backend Vulkan."
+            fi
+        fi
 
         # Vérifie le binaire avec LD_LIBRARY_PATH pour trouver les .so bundlés
         if ! LD_LIBRARY_PATH="$BIN_DIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$BIN_DIR/llama-server" --version 2>&1; then
