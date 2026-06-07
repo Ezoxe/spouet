@@ -63,7 +63,11 @@ build_image() {
     local slug="$1"
     local manifest="$REGISTRY_DIR/$slug/manifest.yaml"
     local image
-    image="$(grep -E '^image:' "$manifest" | head -n1 | awk '{print $2}' | tr -d '"'"'"')"
+    image="$(grep -E '^image:' "$manifest" | head -n1 | awk '{print $2}')"
+    # Retire d'éventuels guillemets entourants (simples ou doubles) sans se
+    # battre avec le quoting shell.
+    image="${image%\"}"; image="${image#\"}"
+    image="${image%\'}"; image="${image#\'}"
     if [[ -z "$image" ]]; then
         echo "  ⚠ image manquante dans $manifest, skip build" >&2
         return
