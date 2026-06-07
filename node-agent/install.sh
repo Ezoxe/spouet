@@ -18,6 +18,9 @@
 #   LLAMA_PORT           Port llama-server       (def: 8080)
 #   AGENT_PORT           Port agent API          (def: 8765)
 #   SKIP_LLAMA           Si "1", ne (ré)installe pas llama.cpp (def: 0)
+#   CUDA_BUILD           NVIDIA : compile llama.cpp avec CUDA pour des perfs
+#                        natives (def: 1). Mets CUDA_BUILD=0 pour rester sur le
+#                        binaire pré-compilé Vulkan (pas de toolkit, plus lent).
 #   IMAGES               Génération d'images (torch/diffusers) (def: 1).
 #                        Mets IMAGES=0 ou --no-images pour désactiver.
 #   IMAGE_MODEL          Modèle d'images par défaut (repo HF). Optionnel :
@@ -310,7 +313,99 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# llama.cpp-server (binaire précompilé depuis les releases GitHub)
+# Build llama.cpp avec CUDA (perfs natives NVIDIA).
+#
+# llama.cpp ne publie AUCUN binaire CUDA pour Linux (uniquement CPU/Vulkan/ROCm) :
+# pour retrouver les perfs d'Ollama sur NVIDIA, on compile localement. Renvoie 0
+# si un llama-server CUDA a été installé dans BIN_DIR, non-zero sinon (l'appelant
+# retombe alors proprement sur le binaire pré-compilé Vulkan). Désactivable via
+# CUDA_BUILD=0 (reste en Vulkan).
+# ---------------------------------------------------------------------------
+build_llama_cuda() {
+    local bin_dir="$1"
+    local src_dir="$SPOUET_INSTALL_DIR/.cache/llama-src"
+
+    log "Build CUDA de llama.cpp (perfs natives — peut prendre 10-20 min)…"
+
+    # Dépendances de compilation + toolkit CUDA (nvcc).
+    if command -v apt-get &>/dev/null; then
+        apt-get install -y -qq build-essential cmake git libcurl4-openssl-dev \
+            || { warn "deps de build manquantes (apt)"; return 1; }
+        if ! command -v nvcc &>/dev/null && [[ ! -x /usr/local/cuda/bin/nvcc ]]; then
+            log "  → installation du toolkit CUDA (nvidia-cuda-toolkit, ~2 Go)…"
+            apt-get install -y -qq nvidia-cuda-toolkit \
+                || { warn "nvidia-cuda-toolkit introuvable dans les dépôts"; return 1; }
+        fi
+    elif command -v dnf &>/dev/null; then
+        dnf install -y -q gcc-c++ cmake git libcurl-devel cuda-toolkit \
+            || { warn "deps de build/CUDA manquantes (dnf)"; return 1; }
+    else
+        warn "gestionnaire de paquets non supporté pour le build CUDA"; return 1
+    fi
+
+    export PATH="/usr/local/cuda/bin:$PATH"
+    command -v nvcc &>/dev/null || { warn "nvcc introuvable après installation"; return 1; }
+
+    # Compute capability du GPU (ex. 6.1 → 61). Repli : éventail Pascal→Ada.
+    local cc archs
+    cc=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '. ')
+    if [[ "$cc" =~ ^[0-9]+$ ]]; then
+        archs="$cc"
+    else
+        archs="61;70;75;80;86;89"
+        warn "  → compute capability non détectée, build multi-arch ($archs)"
+    fi
+    log "  → CMAKE_CUDA_ARCHITECTURES=$archs"
+
+    # Source : tag de la dernière release (cohérent avec le canal prebuilt).
+    local tag
+    tag=$(curl -fsSL "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1" 2>/dev/null \
+          | jq -r '.[0].tag_name // empty')
+    rm -rf "$src_dir"
+    if [[ -n "$tag" ]]; then
+        log "  → clone llama.cpp $tag"
+        git clone --quiet --depth 1 --branch "$tag" \
+            https://github.com/ggml-org/llama.cpp "$src_dir" 2>/dev/null \
+            || git clone --quiet --depth 1 https://github.com/ggml-org/llama.cpp "$src_dir" \
+            || { warn "clone llama.cpp échoué"; return 1; }
+    else
+        git clone --quiet --depth 1 https://github.com/ggml-org/llama.cpp "$src_dir" \
+            || { warn "clone llama.cpp échoué"; return 1; }
+    fi
+
+    if ! cmake -S "$src_dir" -B "$src_dir/build" \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES="$archs" \
+            -DLLAMA_CURL=ON \
+            -DCMAKE_BUILD_TYPE=Release >/tmp/llama-cuda-cmake.log 2>&1; then
+        warn "configuration cmake CUDA échouée (voir /tmp/llama-cuda-cmake.log)"; return 1
+    fi
+    if ! cmake --build "$src_dir/build" --config Release -j"$(nproc)" \
+            --target llama-server >/tmp/llama-cuda-build.log 2>&1; then
+        warn "compilation CUDA échouée (voir /tmp/llama-cuda-build.log)"; return 1
+    fi
+
+    local built
+    built=$(find "$src_dir/build" -name llama-server -type f | head -1)
+    [[ -n "$built" ]] || { warn "binaire llama-server compilé introuvable"; return 1; }
+
+    install -m 755 "$built" "$bin_dir/llama-server"
+    # Copie les .so produits (libggml-base, libggml-cuda, libllama…) à côté.
+    find "$src_dir/build" \( -name "*.so" -o -name "*.so.*" \) -type f \
+        -exec cp -P {} "$bin_dir/" \; 2>/dev/null || true
+    chown -R spouet:spouet "$bin_dir"
+
+    # Vérifie que le binaire se lance avec ses libs (sans charger de modèle).
+    if ! LD_LIBRARY_PATH="$bin_dir:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            "$bin_dir/llama-server" --version 2>&1 | grep -qiE 'version|build'; then
+        warn "le llama-server CUDA ne démarre pas (libs CUDA manquantes ?)"; return 1
+    fi
+    log "✓ llama-server CUDA compilé et installé (arch $archs)."
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# llama.cpp-server (build CUDA natif si NVIDIA, sinon binaire précompilé)
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_LLAMA" == "0" ]]; then
     log "Détection hardware (via spouet-agent detect)…"
@@ -343,6 +438,18 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
     esac
 
     if [[ "$SKIP_LLAMA" == "0" ]]; then
+        # NVIDIA : on tente un build CUDA natif (perfs ~Ollama). Si le build
+        # échoue (ou CUDA_BUILD=0), on retombe sur le binaire pré-compilé Vulkan.
+        CUDA_BUILT=0
+        if [[ "$GPU_TYPE" == "cuda" && "${CUDA_BUILD:-1}" == "1" ]]; then
+            if build_llama_cuda "$BIN_DIR"; then
+                CUDA_BUILT=1
+            else
+                warn "Build CUDA indisponible — repli sur le binaire pré-compilé (Vulkan)."
+            fi
+        fi
+
+      if [[ "$CUDA_BUILT" == "0" ]]; then
         # La release "latest" peut avoir une CI incomplète (assets manquants).
         # On charge les 10 dernières releases et on cherche dans leurs assets API le
         # premier binaire Linux effectivement uploadé (browser_download_url garanti valide).
@@ -517,6 +624,7 @@ if [[ "$SKIP_LLAMA" == "0" ]]; then
                 log "✓ Tous les plugins CPU ont leurs dépendances résolues."
             fi
         fi
+      fi  # fin du repli prebuilt (CUDA_BUILT == 0)
     fi
 else
     log "SKIP_LLAMA=1 — llama.cpp non (ré)installé."
