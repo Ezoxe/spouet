@@ -52,6 +52,10 @@
         duration_ms?: number;
     } | null = $state(null);
     let scroller: HTMLElement | undefined = $state();
+    // Espaceur bas : réserve une hauteur d'écran sous le dernier échange pour que
+    // le couple question/réponse puisse remonter en haut du viewport (façon
+    // ChatGPT) pendant la génération, au lieu de rester collé en bas.
+    let spacerH = $state(0);
 
     // Dropdown models
     let isModelDropdownOpen = $state(false);
@@ -127,6 +131,17 @@
         scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
     }
 
+    // Épingle un message (par son id) en haut du viewport, en réservant une
+    // hauteur d'écran en dessous pour laisser la place à la réponse à venir.
+    async function pinMessageToTop(msgId: string) {
+        if (scroller) spacerH = scroller.clientHeight;
+        await tick();
+        const el = scroller?.querySelector(`[data-mid="${msgId}"]`) as HTMLElement | null;
+        if (!el || !scroller) return;
+        const delta = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+        scroller.scrollTo({ top: scroller.scrollTop + delta - 12, behavior: 'smooth' });
+    }
+
     // Génère le titre (1er échange) puis enrichit les tags au fil de l'eau.
     // Best-effort : silencieux en cas d'échec. Notifie la sidebar du changement.
     async function maybeAutoname() {
@@ -180,7 +195,8 @@
                     assistant.content += d.text;
                     if (voiceOpen) voiceBus.token(d.text);
                     messages = [...messages.slice(0, -1), { ...assistant }];
-                    scrollBottom();
+                    // Pas d'auto-scroll-bas par token : la question reste épinglée
+                    // en haut et la réponse se déroule dessous, dans le champ de vision.
                 } else if (ev.event === 'approval_required') {
                     const d = ev.data as {
                         request_id: string;
@@ -246,6 +262,9 @@
                 }
             }
             await maybeAutoname();
+            // Génération terminée : on libère l'espaceur (la position de lecture
+            // courante est conservée, pas de saut visible).
+            spacerH = 0;
         }
     }
 
@@ -261,10 +280,11 @@
             return;
         }
         if (!convId) return;
+        const userMsgId = uuid();
         messages = [
             ...messages,
             {
-                id: uuid(),
+                id: userMsgId,
                 role: 'user',
                 content: text,
                 model_used: null,
@@ -274,8 +294,7 @@
                 created_at: new Date().toISOString()
             }
         ];
-        await tick();
-        scrollBottom();
+        await pinMessageToTop(userMsgId);
         abortController = new AbortController();
         await consumeStream(
             conversations.send(convId, { text, model: selectedModel }, abortController.signal)
@@ -289,8 +308,8 @@
         if (lastAssistantIdx === -1) return;
         const idx = messages.length - 1 - lastAssistantIdx;
         messages = messages.slice(0, idx);
-        await tick();
-        scrollBottom();
+        const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+        if (lastUser) await pinMessageToTop(lastUser.id);
         abortController = new AbortController();
         await consumeStream(
             conversations.regenerate(convId, { model: selectedModel }, abortController.signal)
@@ -305,8 +324,7 @@
         messages = messages
             .slice(0, idx + 1)
             .map((m, i) => (i === idx ? { ...m, content: newText } : m));
-        await tick();
-        scrollBottom();
+        await pinMessageToTop(msgId);
         abortController = new AbortController();
         await consumeStream(
             conversations.editMessage(
@@ -544,16 +562,18 @@
                 i === messages.length - 1 &&
                 !streaming &&
                 !!m.content}
-            <MessageBubble
-                message={m}
-                streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
-                canEdit={m.role === 'user' && !streaming}
-                canRegenerate={isLastAssistant}
-                {thinkingLabel}
-                {thinkingDetail}
-                onedit={editUserMessage}
-                onregenerate={regenerate}
-            />
+            <div data-mid={m.id}>
+                <MessageBubble
+                    message={m}
+                    streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
+                    canEdit={m.role === 'user' && !streaming}
+                    canRegenerate={isLastAssistant}
+                    {thinkingLabel}
+                    {thinkingDetail}
+                    onedit={editUserMessage}
+                    onregenerate={regenerate}
+                />
+            </div>
         {:else}
             <EmptyState
                 icon={MessageSquare}
@@ -561,6 +581,9 @@
                 description="Posez votre première question pour démarrer."
             />
         {/each}
+        {#if spacerH > 0}
+            <div style="height:{spacerH}px" aria-hidden="true"></div>
+        {/if}
     </div>
 </div>
 
