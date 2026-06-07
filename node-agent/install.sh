@@ -243,15 +243,19 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -d "$SPOUET_INSTALL_DIR/.git" ]]; then
     log "Dépôt existant — mise à jour vers origin/$SPOUET_BRANCH…"
-    git -C "$SPOUET_INSTALL_DIR" fetch --quiet origin "$SPOUET_BRANCH"
-    git -C "$SPOUET_INSTALL_DIR" checkout --quiet "$SPOUET_BRANCH"
+    # `-c safe.directory` : le dépôt appartient à `spouet` mais ce script tourne
+    # en root → sans ça git lève « detected dubious ownership » et `set -e`
+    # avorte l'install. On l'applique à chaque commande git du bloc.
+    GIT="git -c safe.directory=$SPOUET_INSTALL_DIR -C $SPOUET_INSTALL_DIR"
+    $GIT fetch --quiet origin "$SPOUET_BRANCH"
+    $GIT checkout --quiet "$SPOUET_BRANCH"
     # Force la copie locale à correspondre exactement à origin.
     # reset --hard corrige les fichiers suivis modifiés ;
     # clean -fdq supprime les fichiers non suivis qui bloqueraient le merge
     # (ex : uv.lock généré par une ancienne install). Les fichiers ignorés
     # par .gitignore (modèles GGUF, cache uv…) sont préservés.
-    git -C "$SPOUET_INSTALL_DIR" reset --hard "origin/$SPOUET_BRANCH"
-    git -C "$SPOUET_INSTALL_DIR" clean -fdq
+    $GIT reset --hard "origin/$SPOUET_BRANCH"
+    $GIT clean -fdq
     log "✓ Dépôt mis à jour."
 else
     log "Clone $SPOUET_REPO_URL → $SPOUET_INSTALL_DIR…"

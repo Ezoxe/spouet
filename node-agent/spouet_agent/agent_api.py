@@ -354,10 +354,15 @@ async def self_update() -> dict:
 async def _self_update_task(install_dir: Path) -> None:
     branch = os.environ.get("SPOUET_BRANCH", "master")
     await asyncio.sleep(0.4)  # laisse la réponse 202 partir
+    # `-c safe.directory=<dir>` : neutralise le garde-fou git « detected dubious
+    # ownership ». Le dépôt /opt/spouet appartient à `spouet`, mais une install
+    # précédente (ou un `git pull` manuel en root) peut y laisser des fichiers
+    # root → git refuserait sinon d'opérer et l'auto-update échouerait en silence.
+    gitc = ["git", "-c", f"safe.directory={install_dir}", "-C", str(install_dir)]
     steps = (
-        ["git", "-C", str(install_dir), "fetch", "--quiet", "origin", branch],
-        ["git", "-C", str(install_dir), "reset", "--hard", f"origin/{branch}"],
-        ["git", "-C", str(install_dir), "clean", "-fdq"],
+        gitc + ["fetch", "--quiet", "origin", branch],
+        gitc + ["reset", "--hard", f"origin/{branch}"],
+        gitc + ["clean", "-fdq"],
     )
     for args in steps:
         try:
