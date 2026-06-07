@@ -10,7 +10,7 @@
     import { toast } from '$lib/toast.svelte';
     import { downloads } from '$lib/downloads.svelte';
     import {
-        Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap, Activity
+        Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap, Activity, Power
     } from 'lucide-svelte';
     import { goto } from '$app/navigation';
     import CapabilitiesCard from '$lib/components/CapabilitiesCard.svelte';
@@ -37,6 +37,7 @@
 
     // Modèle à charger
     let loadingModel: string | null = $state(null);
+    let unloading = $state(false);
 
     // Génération d'images (sur le node)
     let imageStatus: Record<string, unknown> | null = $state(null);
@@ -258,6 +259,21 @@
             toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
         } finally {
             loadingModel = null;
+        }
+    }
+
+    async function unloadModel() {
+        if (!nodeId) return;
+        if (!confirm('Décharger le modèle de la mémoire ? llama-server sera arrêté et la VRAM/RAM libérée.')) return;
+        unloading = true;
+        try {
+            await nodesApi.unloadModel(nodeId);
+            toast.success('Modèle déchargé — mémoire libérée.');
+            await loadNode();
+        } catch (e) {
+            toast.error(e instanceof ApiError ? `Erreur ${e.status}` : 'Erreur');
+        } finally {
+            unloading = false;
         }
     }
 
@@ -555,6 +571,18 @@
                         <span class="mx-1 text-neutral-700">·</span>
                         <span class="truncate font-mono text-[11px] text-neutral-300" title={node.llama_model_loaded}>{node.llama_model_loaded}</span>
                     {/if}
+                    {#if node.llama_running && node.agent_port}
+                        <button
+                            type="button"
+                            onclick={unloadModel}
+                            disabled={unloading}
+                            class="ml-2 flex items-center gap-1 rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-400 hover:bg-red-950 hover:text-red-300 disabled:opacity-50"
+                            title="Décharger le modèle (arrête llama-server, libère la mémoire)"
+                        >
+                            {#if unloading}<Loader2 size={11} class="animate-spin" />{:else}<Power size={11} />{/if}
+                            Décharger
+                        </button>
+                    {/if}
                 </div>
             </div>
 
@@ -745,6 +773,20 @@
                                         <Loader2 size={11} class="animate-spin" />
                                     {:else}
                                         <Play size={11} />
+                                    {/if}
+                                </button>
+                            {:else}
+                                <button
+                                    type="button"
+                                    onclick={unloadModel}
+                                    disabled={unloading}
+                                    class="flex items-center gap-1 rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:bg-red-950 hover:text-red-300 disabled:opacity-50"
+                                    title="Décharger ce modèle (libère la mémoire)"
+                                >
+                                    {#if unloading}
+                                        <Loader2 size={11} class="animate-spin" />
+                                    {:else}
+                                        <Power size={11} />
                                     {/if}
                                 </button>
                             {/if}

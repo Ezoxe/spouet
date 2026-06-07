@@ -6,6 +6,7 @@ Endpoints appelés par le backend Spouet pour piloter llama.cpp :
   POST /models/download     → lance téléchargement HuggingFace async
   GET  /models/download/status → progrès du dernier téléchargement
   POST /models/load         → change le modèle actif (redémarre llama-server)
+  POST /models/unload       → décharge le modèle actif (arrête llama-server, libère la mémoire)
   GET  /load/status         → état explicite du chargement (idle/loading/ready/error)
   DELETE /models/{filename} → supprime un GGUF
   PATCH /config             → change les params llama.cpp (redémarre llama-server)
@@ -241,6 +242,34 @@ async def load_model(req: LoadRequest) -> dict:
 async def load_status() -> dict:
     """État du dernier chargement llama-server (loading/ready/error/idle)."""
     return dict(_load_status)
+
+
+@app.post("/models/unload")
+async def unload_model() -> dict:
+    """Décharge le modèle actif : arrête llama-server → libère VRAM/RAM.
+
+    llama-server ne sait pas vider un modèle sans redémarrer le process ;
+    « décharger » revient donc à stopper le serveur. Le node reste en ligne
+    (heartbeat continu), simplement sans modèle chargé : `/load/status`
+    repasse `idle` et le prochain /models/load relance proprement.
+    """
+    if not _server:
+        raise HTTPException(500, "server not initialized")
+    if _load_status["state"] == "loading":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Un chargement est en cours pour {_load_status.get('filename')!r} — réessaie après.",
+        )
+    async with _load_lock:
+        await _server.stop()
+        _load_status.update(
+            state="idle",
+            filename=None,
+            error=None,
+            started_at=None,
+            ready_at=None,
+        )
+    return {"status": "idle"}
 
 
 async def _load_task(model_path: Path, config: Any, filename: str) -> None:

@@ -549,6 +549,22 @@ async def load_model(
         _raise_agent_unreachable(base, exc)
 
 
+@router.post("/{node_id}/local-models/unload")
+async def unload_model(
+    node_id: UUID, _: CurrentUser, db: DbSession
+) -> dict:  # type: ignore[type-arg]
+    """Décharge le modèle actif du node (arrête llama-server, libère la mémoire)."""
+    _, base = await _agent_url(db, node_id)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(f"{base}/models/unload")
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except httpx.ConnectError as exc:
+        _raise_agent_unreachable(base, exc)
+
+
 # ---------------------------------------------------------------------------
 # Routes proxy → API image du node (génération d'images)
 # ---------------------------------------------------------------------------

@@ -454,6 +454,8 @@ export const nodes = {
     pullStatus: (id: string) => api<Record<string, unknown>>(`/nodes/${id}/local-models/pull/status`),
     loadModel: (id: string, json: { filename: string }) =>
         api<Record<string, unknown>>(`/nodes/${id}/local-models/load`, { method: 'POST', json }),
+    unloadModel: (id: string) =>
+        api<Record<string, unknown>>(`/nodes/${id}/local-models/unload`, { method: 'POST' }),
     deleteLocalModel: (id: string, filename: string) =>
         api<void>(`/nodes/${id}/local-models/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
     metrics: (id: string, range: MetricsRange = '1h') =>
