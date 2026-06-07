@@ -32,6 +32,38 @@ def _lan_ip() -> str:
     except Exception:
         return socket.gethostname()
 
+
+def _port_is_free(port: int) -> bool:
+    """True si on peut binder 0.0.0.0:port (aucun autre process ne l'occupe).
+
+    On bind sans SO_REUSEADDR pour refléter exactement ce que fera llama-server /
+    uvicorn : si ça passe ici, ça passera pour eux. Un simple bind()+close() sans
+    connexion établie ne laisse pas de TIME_WAIT, donc pas d'effet de bord.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+            return True
+        except OSError:
+            return False
+
+
+def _find_free_port(preferred: int, exclude: set[int]) -> int:
+    """Retourne `preferred` s'il est libre, sinon le 1er port libre au-dessus.
+
+    `exclude` : ports déjà réservés par l'agent lui-même (évite l'auto-collision
+    entre llama-server / nommage / image / API de contrôle). Scanne
+    preferred..preferred+99 ; en dernier recours, laisse l'OS attribuer un port.
+    """
+    for port in range(preferred, min(preferred + 100, 65536)):
+        if port in exclude:
+            continue
+        if _port_is_free(port):
+            return port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("0.0.0.0", 0))
+        return s.getsockname()[1]
+
 AGENT_API_PORT = 8765
 LLAMA_SERVER_PORT = 8080
 NAMING_SERVER_PORT = 8081
@@ -142,9 +174,32 @@ async def _run(
 ) -> None:
     models_dir.mkdir(parents=True, exist_ok=True)
 
+    # Auto-résolution des ports : si un port préféré est déjà occupé par un autre
+    # programme sur le node, on bascule sur le 1er libre au-dessus. Les ports
+    # retenus sont publiés dans le heartbeat → le backend route automatiquement
+    # (rien à régler côté admin). On réserve au fur et à mesure pour éviter que
+    # deux services de l'agent tombent sur le même port.
+    _reserved: set[int] = set()
+
+    def _resolve_port(label: str, preferred: int) -> int:
+        chosen = _find_free_port(preferred, _reserved)
+        _reserved.add(chosen)
+        if chosen != preferred:
+            typer.echo(
+                f"[spouet-agent] port {label} {preferred} occupé → bascule sur {chosen}.",
+                err=True,
+            )
+        return chosen
+
+    # agent (API de contrôle) et llama-server sont toujours actifs.
+    agent_port = _resolve_port("agent", agent_port)
+    llama_port = _resolve_port("llama-server", llama_port)
+
     # Capacité image : seulement si l'extra (torch/diffusers) est installé et non
     # désactivé. C'est le node (machine GPU) qui exécute la génération.
     images_enabled = (not no_images) and image_gen.images_available()
+    if images_enabled:
+        image_port = _resolve_port("image", image_port)
     if image_model:
         image_gen.set_configured(image_model)
     if images_enabled:
@@ -245,6 +300,7 @@ async def _run(
         else:
             naming_path = models_dir / naming_model
             if naming_path.exists():
+                naming_port = _resolve_port("naming", naming_port)
                 naming_server = LlamaServer(
                     bin_path=llama_bin, models_dir=models_dir, port=naming_port, capabilities=caps
                 )
