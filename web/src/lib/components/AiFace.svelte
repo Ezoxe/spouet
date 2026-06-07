@@ -1,87 +1,109 @@
+<script module lang="ts">
+    // Compteur module-scope → id de clipPath unique par instance (évite que
+    // plusieurs loutres sur la page partagent/cassent leur clip).
+    let _uid = 0;
+</script>
+
 <script lang="ts">
     /**
-     * Loutre « Spouet » — personnage/avatar expressif de l'assistant.
-     * Dessinée en SVG (pas un emoji), animée en pur CSS, dimensionnée via --s.
+     * Loutre « Spouet » — avatar expressif de l'assistant, dessiné en SVG et
+     * animé en CSS. Dimensionnée via --s.
      *
-     * États :
-     *   - idle      : vivante au repos (bob, clignements, regard qui se balade,
-     *                 oreilles + moustaches qui frémissent)
-     *   - thinking  : tête penchée, regard en l'air, bulle « ? »
-     *   - writing   : regard concentré qui « scribble », bulle « ! »
-     *   - speaking  : museau qui s'anime (parle)
-     *   - happy     : yeux en arcs ^^ + petit rebond joyeux
-     *   - surprised : yeux écarquillés + museau en « o » + pop
+     * Traits de loutre : tête ronde brune, gros museau crème, nez foncé, oreilles
+     * rondes, moustaches. Les pupilles sont CLIPPÉES dans les yeux (elles ne
+     * débordent jamais, même en regardant de côté).
      *
-     * L'API ({size, state, class}) est identique à l'ancien visage abstrait.
+     * États : idle / thinking / writing / speaking / happy / surprised.
+     * L'API ({size, state, class}) est inchangée.
      */
     interface Props {
         size?: number;
         state?: 'idle' | 'thinking' | 'writing' | 'speaking' | 'happy' | 'surprised';
         class?: string;
     }
-    let { size = 28, state = 'idle', class: klass = '' }: Props = $props();
+    let { size = 32, state = 'idle', class: klass = '' }: Props = $props();
+
+    const id = `otter-${++_uid}`;
 </script>
 
 <span class="otter {state} {klass}" style="--s:{size}px" role="img" aria-label="Spouet, l'assistant loutre">
     <svg viewBox="0 0 100 100" class="ot-svg">
+        <defs>
+            <clipPath id={`${id}-eyeL`}><ellipse cx="37" cy="49" rx="6.6" ry="7.6" /></clipPath>
+            <clipPath id={`${id}-eyeR`}><ellipse cx="63" cy="49" rx="6.6" ry="7.6" /></clipPath>
+        </defs>
+
         <g class="ot-body">
             <!-- Oreilles -->
             <g class="ear ear-l">
-                <ellipse class="ear-out" cx="26" cy="25" rx="11" ry="12" />
-                <ellipse class="ear-in" cx="26" cy="26" rx="5.5" ry="6" />
+                <ellipse class="ear-out" cx="24" cy="26" rx="11" ry="12" />
+                <ellipse class="ear-in" cx="24.5" cy="27" rx="5.5" ry="6" />
             </g>
             <g class="ear ear-r">
-                <ellipse class="ear-out" cx="74" cy="25" rx="11" ry="12" />
-                <ellipse class="ear-in" cx="74" cy="26" rx="5.5" ry="6" />
+                <ellipse class="ear-out" cx="76" cy="26" rx="11" ry="12" />
+                <ellipse class="ear-in" cx="75.5" cy="27" rx="5.5" ry="6" />
             </g>
 
             <!-- Tête -->
             <ellipse class="head" cx="50" cy="55" rx="34" ry="31" />
-            <!-- Reflet diffus haut -->
-            <ellipse class="head-hi" cx="42" cy="38" rx="20" ry="13" />
+            <!-- Front un peu plus clair -->
+            <ellipse class="head-hi" cx="50" cy="40" rx="26" ry="15" />
 
-            <!-- Museau (zone claire) -->
-            <ellipse class="muzzle" cx="50" cy="68" rx="21" ry="16" />
+            <!-- Museau crème (large, signature loutre) -->
+            <path
+                class="muzzle"
+                d="M50 50
+                   C70 50 80 60 80 69
+                   C80 81 66 88 50 88
+                   C34 88 20 81 20 69
+                   C20 60 30 50 50 50 Z"
+            />
             <!-- Joues -->
-            <circle class="cheek cheek-l" cx="28" cy="64" r="5.5" />
-            <circle class="cheek cheek-r" cx="72" cy="64" r="5.5" />
+            <circle class="cheek cheek-l" cx="29" cy="66" r="6" />
+            <circle class="cheek cheek-r" cx="71" cy="66" r="6" />
 
             <!-- Moustaches -->
             <g class="whiskers wk-l">
-                <line x1="34" y1="64" x2="13" y2="60" />
-                <line x1="34" y1="67" x2="12" y2="67" />
-                <line x1="34" y1="70" x2="14" y2="74" />
+                <line x1="33" y1="64" x2="11" y2="60" />
+                <line x1="33" y1="67" x2="9" y2="67" />
+                <line x1="33" y1="70" x2="11" y2="75" />
             </g>
             <g class="whiskers wk-r">
-                <line x1="66" y1="64" x2="87" y2="60" />
-                <line x1="66" y1="67" x2="88" y2="67" />
-                <line x1="66" y1="70" x2="86" y2="74" />
+                <line x1="67" y1="64" x2="89" y2="60" />
+                <line x1="67" y1="67" x2="91" y2="67" />
+                <line x1="67" y1="70" x2="89" y2="75" />
             </g>
 
-            <!-- Yeux ronds -->
+            <!-- Yeux ronds (sclère claire + pupille clippée) -->
             <g class="eyes">
                 <g class="eye eye-l">
-                    <ellipse class="sclera" cx="37" cy="49" rx="7.5" ry="8.5" />
-                    <circle class="pupil" cx="37" cy="50" r="4.3" />
-                    <circle class="glint" cx="35" cy="47.5" r="1.5" />
+                    <ellipse class="sclera" cx="37" cy="49" rx="6.6" ry="7.6" />
+                    <g class="pupil-wrap" clip-path={`url(#${id}-eyeL)`}>
+                        <circle class="pupil" cx="37" cy="49.5" r="4.2" />
+                        <circle class="glint" cx="35.2" cy="47.4" r="1.5" />
+                    </g>
                 </g>
                 <g class="eye eye-r">
-                    <ellipse class="sclera" cx="63" cy="49" rx="7.5" ry="8.5" />
-                    <circle class="pupil" cx="63" cy="50" r="4.3" />
-                    <circle class="glint" cx="61" cy="47.5" r="1.5" />
+                    <ellipse class="sclera" cx="63" cy="49" rx="6.6" ry="7.6" />
+                    <g class="pupil-wrap" clip-path={`url(#${id}-eyeR)`}>
+                        <circle class="pupil" cx="63" cy="49.5" r="4.2" />
+                        <circle class="glint" cx="61.2" cy="47.4" r="1.5" />
+                    </g>
                 </g>
             </g>
-            <!-- Yeux « heureux » (arcs ^^), montrés en state happy -->
-            <path class="eye-happy" d="M30 50 Q37 43 44 50" />
-            <path class="eye-happy" d="M56 50 Q63 43 70 50" />
+            <!-- Yeux « heureux » : arcs ^^ (state happy) -->
+            <path class="eye-happy" d="M30 51 Q37 44 44 51" />
+            <path class="eye-happy" d="M56 51 Q63 44 70 51" />
 
             <!-- Nez -->
-            <path class="nose" d="M44 59 Q50 54 56 59 Q56 64 50 66 Q44 64 44 59 Z" />
-            <!-- Bouche / snout (deux courbes ω) -->
-            <path class="mouth" d="M50 66 Q50 72 43 71" />
-            <path class="mouth" d="M50 66 Q50 72 57 71" />
+            <path class="nose" d="M43 58 Q50 53 57 58 Q57 64 50 67 Q43 64 43 58 Z" />
+            <!-- Bouche normale (ω) -->
+            <path class="mouth m-omega" d="M50 67 Q46 71 42 68" />
+            <path class="mouth m-omega" d="M50 67 Q54 71 58 68" />
+            <!-- Grand sourire (state happy) -->
+            <path class="mouth m-smile" d="M40 67 Q50 77 60 67" />
             <!-- Bouche ouverte (speaking / surprised) -->
-            <ellipse class="mouth-open" cx="50" cy="71.5" rx="4.2" ry="2.6" />
+            <ellipse class="mouth-open" cx="50" cy="71" rx="4.2" ry="3" />
         </g>
     </svg>
 
@@ -100,7 +122,7 @@
         width: var(--s);
         height: var(--s);
         flex: none;
-        filter: drop-shadow(0 calc(var(--s) * 0.03) calc(var(--s) * 0.06) oklch(0.3 0.08 50 / 0.4));
+        filter: drop-shadow(0 calc(var(--s) * 0.03) calc(var(--s) * 0.06) oklch(0.3 0.08 50 / 0.35));
     }
     .ot-svg {
         width: 100%;
@@ -113,189 +135,111 @@
         animation: ot-bob 4.6s ease-in-out infinite;
     }
 
-    /* — Couleurs loutre (lisibles en clair comme en sombre) — */
-    .head {
-        fill: oklch(0.55 0.07 55);
-    }
-    .head-hi {
-        fill: oklch(0.66 0.07 60);
-        opacity: 0.55;
-    }
-    .ear-out {
-        fill: oklch(0.5 0.07 52);
-    }
-    .ear-in {
-        fill: oklch(0.62 0.08 35);
-    }
-    .muzzle {
-        fill: oklch(0.93 0.03 75);
-    }
-    .cheek {
-        fill: oklch(0.78 0.1 35);
-        opacity: 0.45;
-    }
-    .sclera {
-        fill: oklch(0.99 0.005 90);
-    }
-    .pupil {
-        fill: oklch(0.22 0.03 60);
-    }
-    .glint {
-        fill: oklch(1 0 0);
-        opacity: 0.95;
-    }
-    .nose {
-        fill: oklch(0.28 0.03 50);
-    }
+    /* Couleurs (lisibles en thème clair comme sombre) */
+    .head { fill: oklch(0.57 0.08 53); }
+    .head-hi { fill: oklch(0.64 0.075 58); opacity: 0.5; }
+    .ear-out { fill: oklch(0.5 0.08 50); }
+    .ear-in { fill: oklch(0.66 0.07 33); }
+    .muzzle { fill: oklch(0.94 0.025 80); }
+    .cheek { fill: oklch(0.8 0.09 32); opacity: 0.4; }
+    .sclera { fill: oklch(0.99 0.005 90); }
+    .pupil { fill: oklch(0.21 0.03 55); }
+    .glint { fill: oklch(1 0 0); opacity: 0.95; }
+    .nose { fill: oklch(0.29 0.03 45); }
     .mouth {
         fill: none;
-        stroke: oklch(0.3 0.03 50);
-        stroke-width: 2;
+        stroke: oklch(0.3 0.03 45);
+        stroke-width: 2.2;
         stroke-linecap: round;
     }
-    .mouth-open {
-        fill: oklch(0.32 0.05 30);
-        opacity: 0;
-    }
+    .m-smile { display: none; }
+    .mouth-open { fill: oklch(0.33 0.05 28); opacity: 0; }
     .eye-happy {
         fill: none;
-        stroke: oklch(0.22 0.03 60);
+        stroke: oklch(0.21 0.03 55);
         stroke-width: 3;
         stroke-linecap: round;
         opacity: 0;
     }
     .whiskers line {
-        stroke: oklch(0.75 0.02 70);
+        stroke: oklch(0.7 0.02 70);
         stroke-width: 1.2;
         stroke-linecap: round;
-        opacity: 0.6;
+        opacity: 0.55;
     }
-    .wk-l {
-        transform-box: fill-box;
-        transform-origin: 100% 50%;
-    }
-    .wk-r {
-        transform-box: fill-box;
-        transform-origin: 0% 50%;
-    }
+    .wk-l { transform-box: fill-box; transform-origin: 100% 50%; }
+    .wk-r { transform-box: fill-box; transform-origin: 0% 50%; }
 
-    /* — Oreilles : pivot à la base — */
-    .ear {
-        transform-box: fill-box;
-        transform-origin: 50% 85%;
-    }
-    .otter.idle .ear-l {
-        animation: ot-ear-l 5.5s ease-in-out infinite;
-    }
-    .otter.idle .ear-r {
-        animation: ot-ear-r 5.5s ease-in-out infinite;
-    }
-    .otter.idle .whiskers {
-        animation: ot-whisker 4s ease-in-out infinite;
-    }
+    /* Oreilles : pivot à la base */
+    .ear { transform-box: fill-box; transform-origin: 50% 85%; }
+    .otter.idle .ear-l { animation: ot-ear-l 5.5s ease-in-out infinite; }
+    .otter.idle .ear-r { animation: ot-ear-r 6.2s ease-in-out infinite; }
+    .otter.idle .whiskers { animation: ot-whisker 4s ease-in-out infinite; }
 
-    /* — Clignements — */
-    .eye {
-        transform-box: fill-box;
-        transform-origin: center;
-        animation: ot-blink 4.8s infinite;
-    }
-    .eye-r {
-        animation-delay: 0.04s;
-    }
-    .pupil {
-        transition: transform 0.4s ease;
-    }
+    /* Clignements (toute la loutre cligne ensemble) */
+    .eye { transform-box: fill-box; transform-origin: center; animation: ot-blink 4.8s infinite; }
+    .eye-r { animation-delay: 0.05s; }
 
-    /* — idle : regard qui se balade — */
-    .otter.idle .pupil {
-        animation: ot-dart 7s ease-in-out infinite;
-    }
+    /* Pupilles : translation en UNITÉS SVG, bornée, + clip → jamais de débordement */
+    .pupil-wrap { transform-box: fill-box; transform-origin: center; transition: transform 0.4s ease; }
 
-    /* — thinking : tête penchée, regard en l'air — */
-    .otter.thinking .ot-body {
-        animation: ot-tilt 2.6s ease-in-out infinite;
-    }
-    .otter.thinking .pupil {
-        transform: translateY(-18%);
-    }
-    .otter.thinking .eye {
-        animation-duration: 3.6s;
-    }
+    /* idle : le regard se balade */
+    .otter.idle .pupil-wrap { animation: ot-dart 7s ease-in-out infinite; }
 
-    /* — writing : regard concentré qui scribble — */
-    .otter.writing .pupil {
-        animation: ot-scribble 0.6s ease-in-out infinite;
-    }
+    /* thinking : tête penchée + regard en l'air */
+    .otter.thinking .ot-body { animation: ot-tilt 2.6s ease-in-out infinite; }
+    .otter.thinking .pupil-wrap { transform: translate(0px, -2px); }
+    .otter.thinking .eye { animation-duration: 3.6s; }
 
-    /* — speaking : museau qui parle — */
+    /* writing : regard concentré qui scribble */
+    .otter.writing .pupil-wrap { animation: ot-scribble 0.6s ease-in-out infinite; }
+
+    /* speaking : museau qui parle */
     .otter.speaking .mouth-open {
         opacity: 1;
         transform-box: fill-box;
         transform-origin: center;
         animation: ot-talk 0.34s ease-in-out infinite;
     }
-    .otter.speaking .mouth {
-        opacity: 0.35;
-    }
+    .otter.speaking .m-omega { opacity: 0.4; }
 
-    /* — happy : yeux en arcs + rebond — */
-    .otter.happy .eye {
-        opacity: 0;
-    }
-    .otter.happy .eye-happy {
-        opacity: 1;
-    }
-    .otter.happy .cheek {
-        opacity: 0.7;
-    }
-    .otter.happy .ot-body {
-        animation: ot-hop 0.7s ease-in-out infinite;
-    }
+    /* happy : yeux en arcs + grand sourire + rebond */
+    .otter.happy .eye { opacity: 0; }
+    .otter.happy .eye-happy { opacity: 1; }
+    .otter.happy .m-omega { display: none; }
+    .otter.happy .m-smile { display: block; }
+    .otter.happy .cheek { opacity: 0.72; }
+    .otter.happy .ot-body { animation: ot-hop 0.7s ease-in-out infinite; }
 
-    /* — surprised : yeux écarquillés + museau « o » + pop — */
-    .otter.surprised .eye {
-        transform: scale(1.18);
-        animation: none;
-    }
-    .otter.surprised .mouth-open {
-        opacity: 1;
-    }
-    .otter.surprised .mouth {
-        opacity: 0;
-    }
-    .otter.surprised .ot-body {
-        animation: ot-pop 0.4s ease-out;
-    }
+    /* surprised : yeux écarquillés + museau « o » + pop */
+    .otter.surprised .eye { transform: scale(1.18); animation: none; }
+    .otter.surprised .mouth-open { opacity: 1; }
+    .otter.surprised .m-omega { opacity: 0; }
+    .otter.surprised .ot-body { animation: ot-pop 0.4s ease-out; }
 
-    /* Bulle d'état flottante (?/!) — reprise de l'ancien visage */
+    /* Bulle d'état (?/!) */
     .glyph {
         position: absolute;
-        top: -14%;
-        right: -16%;
-        min-width: calc(var(--s) * 0.5);
-        height: calc(var(--s) * 0.5);
-        padding: 0 calc(var(--s) * 0.07);
+        top: -12%;
+        right: -14%;
+        min-width: calc(var(--s) * 0.46);
+        height: calc(var(--s) * 0.46);
+        padding: 0 calc(var(--s) * 0.06);
         display: grid;
         place-items: center;
-        font-size: calc(var(--s) * 0.4);
+        font-size: calc(var(--s) * 0.36);
         font-weight: 800;
         line-height: 1;
         color: oklch(0.2 0.04 262);
         border-radius: 999px;
-        box-shadow: 0 calc(var(--s) * 0.04) calc(var(--s) * 0.1) calc(var(--s) * -0.02)
-            oklch(0 0 0 / 0.45);
+        box-shadow: 0 calc(var(--s) * 0.04) calc(var(--s) * 0.1) calc(var(--s) * -0.02) oklch(0 0 0 / 0.45);
         transform-origin: bottom left;
         animation:
             ot-glyph-pop 0.28s ease-out backwards,
             ot-glyph-bob 2.1s ease-in-out infinite 0.28s;
     }
-    .glyph.think {
-        background: linear-gradient(160deg, oklch(0.9 0.12 205), oklch(0.78 0.14 210));
-    }
-    .glyph.bang {
-        background: linear-gradient(160deg, oklch(0.9 0.15 95), oklch(0.82 0.16 75));
-    }
+    .glyph.think { background: linear-gradient(160deg, oklch(0.9 0.12 205), oklch(0.78 0.14 210)); }
+    .glyph.bang { background: linear-gradient(160deg, oklch(0.9 0.15 95), oklch(0.82 0.16 75)); }
 
     @keyframes ot-bob {
         0%, 100% { transform: translateY(0) rotate(-1deg); }
@@ -311,7 +255,7 @@
         70% { transform: translateY(0) scale(0.98, 1.02); }
     }
     @keyframes ot-pop {
-        0% { transform: scale(0.8); }
+        0% { transform: scale(0.82); }
         60% { transform: scale(1.08); }
         100% { transform: scale(1); }
     }
@@ -319,31 +263,32 @@
         0%, 92%, 100% { transform: scaleY(1); }
         96% { transform: scaleY(0.1); }
     }
+    /* Mouvement borné (max ~2.4u) → reste dans la sclère, et clippé de toute façon */
     @keyframes ot-dart {
-        0%, 16% { transform: translate(0, 0); }
-        22%, 40% { transform: translate(22%, -6%); }
-        46%, 64% { transform: translate(-22%, 4%); }
-        70%, 100% { transform: translate(0, 0); }
+        0%, 16% { transform: translate(0px, 0px); }
+        22%, 40% { transform: translate(2.4px, -0.8px); }
+        46%, 64% { transform: translate(-2.4px, 0.8px); }
+        70%, 100% { transform: translate(0px, 0px); }
     }
     @keyframes ot-scribble {
-        0%, 100% { transform: translate(-16%, 18%); }
-        50% { transform: translate(16%, 18%); }
+        0%, 100% { transform: translate(-1.8px, 1.6px); }
+        50% { transform: translate(1.8px, 1.6px); }
     }
     @keyframes ot-talk {
-        0%, 100% { transform: scaleY(0.35); }
+        0%, 100% { transform: scaleY(0.4); }
         50% { transform: scaleY(1.15); }
     }
     @keyframes ot-ear-l {
         0%, 84%, 100% { transform: rotate(0deg); }
-        90% { transform: rotate(-11deg); }
+        90% { transform: rotate(-12deg); }
     }
     @keyframes ot-ear-r {
         0%, 80%, 100% { transform: rotate(0deg); }
-        88% { transform: rotate(11deg); }
+        88% { transform: rotate(12deg); }
     }
     @keyframes ot-whisker {
         0%, 100% { transform: rotate(0deg); }
-        50% { transform: rotate(2deg); }
+        50% { transform: rotate(2.5deg); }
     }
     @keyframes ot-glyph-pop {
         0% { transform: scale(0.2); opacity: 0; }
@@ -356,13 +301,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .ot-body,
-        .eye,
-        .pupil,
-        .ear,
-        .whiskers,
-        .mouth-open,
-        .glyph {
+        .ot-body, .eye, .pupil-wrap, .ear, .whiskers, .mouth-open, .glyph {
             animation: none !important;
         }
     }

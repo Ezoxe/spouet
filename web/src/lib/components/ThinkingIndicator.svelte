@@ -1,10 +1,10 @@
 <script lang="ts">
     /**
-     * Indicateur de « réflexion » de l'assistant : visage en mode thinking
-     * (bulle « ? »), libellé à dégradé balayé, et points qui rebondissent.
-     * Affiché avant le premier token ou pendant le chargement d'un modèle.
+     * Indicateur de « réflexion » de l'assistant : libellé à dégradé balayé et
+     * points qui rebondissent. Affiché avant le premier token ou pendant le
+     * chargement d'un modèle. (La loutre est portée par l'en-tête du message —
+     * on ne la duplique pas ici.)
      */
-    import AiFace from './AiFace.svelte';
 
     interface Props {
         label?: string;
@@ -14,7 +14,6 @@
 </script>
 
 <div class="ti">
-    <AiFace size={36} state="thinking" />
     <span class="ti-body">
         <span class="ti-line">
             <span class="ti-text ai-shimmer-text">{label}</span>
