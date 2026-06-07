@@ -327,17 +327,44 @@ build_llama_cuda() {
 
     log "Build CUDA de llama.cpp (perfs natives — peut prendre 10-20 min)…"
 
+    # nvcc déjà présent ? (évite de retélécharger le toolkit ~1.5 Go).
+    local have_nvcc=0
+    if command -v nvcc &>/dev/null || [[ -x /usr/local/cuda/bin/nvcc ]]; then
+        have_nvcc=1
+    fi
+
+    # Garde-fou espace disque : le toolkit CUDA + le build ont besoin de marge.
+    # Sans ça, un disque presque plein casse l'install (dpkg à moitié configuré,
+    # initramfs non régénéré). On préfère rester en Vulkan dans ce cas. Seuil
+    # plus bas si nvcc est déjà là (pas de téléchargement du toolkit).
+    local need_kb=6291456            # ~6 Go (toolkit + build)
+    (( have_nvcc == 1 )) && need_kb=3145728   # ~3 Go (build seul)
+    local avail_root avail_src
+    avail_root=$(df -Pk / | awk 'NR==2{print $4}')
+    avail_src=$(df -Pk "$SPOUET_INSTALL_DIR" | awk 'NR==2{print $4}')
+    if (( avail_root < need_kb || avail_src < need_kb )); then
+        warn "Espace disque insuffisant pour le build CUDA ("
+        warn "  / = $((avail_root/1024)) Mo, $SPOUET_INSTALL_DIR = $((avail_src/1024)) Mo libres ;"
+        warn "  ~$((need_kb/1024/1024)) Go requis). Libère de l'espace puis relance,"
+        warn "  ou reste en Vulkan (CUDA_BUILD=0)."
+        return 1
+    fi
+
     # Dépendances de compilation + toolkit CUDA (nvcc).
     if command -v apt-get &>/dev/null; then
         apt-get install -y -qq build-essential cmake git libcurl4-openssl-dev \
             || { warn "deps de build manquantes (apt)"; return 1; }
         if ! command -v nvcc &>/dev/null && [[ ! -x /usr/local/cuda/bin/nvcc ]]; then
-            log "  → installation du toolkit CUDA (nvidia-cuda-toolkit, ~2 Go)…"
-            apt-get install -y -qq nvidia-cuda-toolkit \
-                || { warn "nvidia-cuda-toolkit introuvable dans les dépôts"; return 1; }
+            log "  → installation du toolkit CUDA (nvcc + libs, ~1.5 Go)…"
+            # --no-install-recommends : ESSENTIEL. Sans ça, nvidia-cuda-toolkit
+            # tire nsight, les profilers, OpenJDK, GTK et la doc (plusieurs Go
+            # inutiles pour compiler) → disque plein. On ne garde que nvcc + dev.
+            apt-get install -y -qq --no-install-recommends nvidia-cuda-toolkit \
+                || { warn "nvidia-cuda-toolkit introuvable / install échouée"; return 1; }
         fi
     elif command -v dnf &>/dev/null; then
-        dnf install -y -q gcc-c++ cmake git libcurl-devel cuda-toolkit \
+        dnf install -y -q --setopt=install_weak_deps=False \
+            gcc-c++ cmake git libcurl-devel cuda-toolkit \
             || { warn "deps de build/CUDA manquantes (dnf)"; return 1; }
     else
         warn "gestionnaire de paquets non supporté pour le build CUDA"; return 1
@@ -400,6 +427,8 @@ build_llama_cuda() {
             "$bin_dir/llama-server" --version 2>&1 | grep -qiE 'version|build'; then
         warn "le llama-server CUDA ne démarre pas (libs CUDA manquantes ?)"; return 1
     fi
+    # Récupère l'espace : les sources + objets de build (~2 Go) ne servent plus.
+    rm -rf "$src_dir"
     log "✓ llama-server CUDA compilé et installé (arch $archs)."
     return 0
 }
