@@ -1,7 +1,7 @@
 <script lang="ts">
     import { fly } from 'svelte/transition';
     import { quintOut } from 'svelte/easing';
-    import { User, Bot, Wrench, Cog, Info, Copy, Pencil, RefreshCw, Check, X } from 'lucide-svelte';
+    import { User, Bot, Wrench, Cog, Info, Copy, Pencil, RefreshCw, Check, X, Brain, ChevronDown } from 'lucide-svelte';
     import type { MessageOut } from '$lib/api';
     import MessageDetails from './MessageDetails.svelte';
     import AiFace from './AiFace.svelte';
@@ -110,6 +110,18 @@
         });
     });
 
+    // Raisonnement « thinking » du modèle : en direct via message.reasoning
+    // (streaming), sinon réhydraté depuis content_json.reasoning (persisté).
+    const reasoning = $derived.by(() => {
+        const live = ('reasoning' in message ? (message as any).reasoning : null) as string | null | undefined;
+        const persisted = typeof cjson?.reasoning === 'string' ? (cjson.reasoning as string) : null;
+        return (live || persisted || '').trim();
+    });
+    let reasoningOpen = $state(false);
+    // Auto-déplié pendant que le modèle réfléchit (réponse pas encore arrivée),
+    // puis replié une fois la réponse en cours — sauf si l'utilisateur l'ouvre.
+    const showReasoning = $derived(reasoningOpen || (streaming && !!reasoning && !message.content));
+
     const meta = $derived.by(() => {
         switch (message.role) {
             case 'user':
@@ -216,7 +228,25 @@
             class:whitespace-pre-wrap={message.role !== 'assistant'}
         >
             {#if message.role === 'assistant'}
-                {#if streaming && !message.content}
+                {#if reasoning}
+                    <div class="mb-2">
+                        <button
+                            type="button"
+                            onclick={() => (reasoningOpen = !reasoningOpen)}
+                            class="flex items-center gap-1.5 text-xs text-neutral-500 transition-colors hover:text-neutral-300"
+                        >
+                            <Brain size={12} />
+                            <span>Réflexion</span>
+                            <ChevronDown size={12} class="transition-transform {showReasoning ? 'rotate-180' : ''}" />
+                        </button>
+                        {#if showReasoning}
+                            <div class="reasoning-body mt-1 rounded-lg border border-[var(--color-border-subtle)] bg-black/20 px-3 py-2 text-xs leading-relaxed text-neutral-400">
+                                <Markdown content={reasoning} />{#if streaming && !message.content}<span class="stream-caret"></span>{/if}
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
+                {#if streaming && !message.content && !reasoning}
                     <ThinkingIndicator label={thinkingLabel} detail={thinkingDetail} />
                 {:else}
                     {#if message.content}

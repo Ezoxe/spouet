@@ -180,6 +180,7 @@
             id: uuid(),
             role: 'assistant',
             content: '',
+            reasoning: '',
             model_used: selectedModel,
             tokens_in: null,
             tokens_out: null,
@@ -208,6 +209,10 @@
                 } else if (ev.event === 'loading_model') {
                     const d = ev.data as { node: string; model: string; phase: string; elapsed_s?: number };
                     loadingModel = d;
+                } else if (ev.event === 'reasoning') {
+                    const d = ev.data as { text: string };
+                    assistant.reasoning = (assistant.reasoning ?? '') + d.text;
+                    messages = [...messages.slice(0, -1), { ...assistant }];
                 } else if (ev.event === 'token') {
                     const d = ev.data as { text: string };
                     assistant.content += d.text;

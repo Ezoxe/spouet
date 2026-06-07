@@ -195,6 +195,7 @@ async def stream_assistant_reply(
             db, conversation=conversation, extra_system=extra_system, ctx_tokens=choice.n_ctx
         )
         accumulated = ""
+        accumulated_reasoning = ""
         tokens_out = 0
         tool_calls_out: list[dict[str, Any]] = []
         started = time.monotonic()
@@ -207,6 +208,15 @@ async def stream_assistant_reply(
                 tools=active_tools,
             ):
                 msg = chunk.get("message") or {}
+                reasoning_text = msg.get("reasoning") or ""
+                if reasoning_text:
+                    accumulated_reasoning += reasoning_text
+                    yield {"event": "reasoning", "data": {"text": reasoning_text}}
+                    await publish(
+                        channel,
+                        "reasoning",
+                        {"message_id": str(assistant_msg.id), "text": reasoning_text},
+                    )
                 token_text = msg.get("content") or ""
                 if token_text:
                     if first_token_at is None:
@@ -245,8 +255,13 @@ async def stream_assistant_reply(
             if assistant_msg.finish_reason is None:
                 assistant_msg.finish_reason = "stop"
             assistant_msg.latency_ms = int((time.monotonic() - started) * 1000)
+            cj: dict[str, Any] = {}
+            if accumulated_reasoning:
+                cj["reasoning"] = accumulated_reasoning
             if tool_calls_out:
-                assistant_msg.content_json = {"tool_calls": tool_calls_out}
+                cj["tool_calls"] = tool_calls_out
+            if cj:
+                assistant_msg.content_json = cj
             await db.commit()
 
         except OllamaError as e:
@@ -264,8 +279,13 @@ async def stream_assistant_reply(
             assistant_msg.content = accumulated
             assistant_msg.latency_ms = int((time.monotonic() - started) * 1000)
             assistant_msg.finish_reason = "cancelled"
+            cj: dict[str, Any] = {}
+            if accumulated_reasoning:
+                cj["reasoning"] = accumulated_reasoning
             if tool_calls_out:
-                assistant_msg.content_json = {"tool_calls": tool_calls_out}
+                cj["tool_calls"] = tool_calls_out
+            if cj:
+                assistant_msg.content_json = cj
             try:
                 await asyncio.shield(db.commit())
             except Exception:  # noqa: BLE001

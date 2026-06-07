@@ -222,7 +222,7 @@ def _normalize_chunk(
         # afin que la boucle de chat enregistre prompt_eval_count / eval_count.
         if usage:
             return {
-                "message": {"role": "assistant", "content": "", "tool_calls": None},
+                "message": {"role": "assistant", "content": "", "reasoning": "", "tool_calls": None},
                 "done": True,
                 "done_reason": None,
                 "prompt_eval_count": usage.get("prompt_tokens"),
@@ -235,6 +235,11 @@ def _normalize_chunk(
     finish_reason: str | None = choice.get("finish_reason")
 
     content = delta.get("content") or ""
+    # Raisonnement des modèles « thinking » (Gemma, Qwen3, DeepSeek-R1…) : avec
+    # --reasoning-format auto (défaut llama-server), le <think> est extrait dans
+    # `reasoning_content` plutôt que laissé inline. Sans le forwarder, on perdait
+    # tout le raisonnement (l'UI n'affichait que la réponse finale).
+    reasoning = delta.get("reasoning_content") or ""
 
     # Accumulation des tool_calls (OpenAI stream les envoie par morceaux)
     raw_tcs = delta.get("tool_calls")
@@ -274,6 +279,7 @@ def _normalize_chunk(
         "message": {
             "role": delta.get("role", "assistant"),
             "content": content,
+            "reasoning": reasoning,
             "tool_calls": tool_calls,
         },
         "done": done,

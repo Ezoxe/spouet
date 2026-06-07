@@ -304,6 +304,9 @@ export interface MessageOut {
     ttft_ms?: number | null;
     finish_reason?: string | null;
     content_json?: Record<string, unknown> | null;
+    // Raisonnement « thinking » du modèle (rempli en direct via l'event SSE
+    // `reasoning` ; persisté dans content_json.reasoning et réhydraté au chargement).
+    reasoning?: string | null;
     created_at: string;
 }
 
