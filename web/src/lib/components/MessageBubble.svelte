@@ -157,7 +157,7 @@
     {#if message.role !== 'tool'}
         <div class="flex items-center gap-1.5 text-xs text-neutral-500">
             {#if message.role === 'assistant'}
-                <AiFace size={17} state={faceState} />
+                <AiFace size={26} state={faceState} />
             {:else}
                 <meta.Icon size={12} />
             {/if}

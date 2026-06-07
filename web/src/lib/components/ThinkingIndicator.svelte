@@ -14,7 +14,7 @@
 </script>
 
 <div class="ti">
-    <AiFace size={26} state="thinking" />
+    <AiFace size={36} state="thinking" />
     <span class="ti-body">
         <span class="ti-line">
             <span class="ti-text ai-shimmer-text">{label}</span>

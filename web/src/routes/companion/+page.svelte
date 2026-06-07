@@ -10,7 +10,6 @@
         type MessageOut
     } from '$lib/api';
     import { Send, X, AudioLines, Sparkles } from 'lucide-svelte';
-    import AiOrb from '$lib/components/AiOrb.svelte';
     import AiFace from '$lib/components/AiFace.svelte';
     import Markdown from '$lib/components/Markdown.svelte';
     import ThinkingIndicator from '$lib/components/ThinkingIndicator.svelte';
@@ -229,7 +228,7 @@
             in:fade={{ duration: 180 }}
         >
             <div in:scale={{ duration: 320, start: 0.85 }}>
-                <AiOrb size={128} state={streaming ? 'thinking' : 'idle'} />
+                <AiFace size={132} state={streaming ? 'thinking' : 'idle'} />
             </div>
             <p class="text-center text-xs text-neutral-500">
                 Posez une question rapide à Spouet.
@@ -242,7 +241,7 @@
                     <p class="flex items-center gap-1.5 text-[10px] uppercase text-neutral-600">
                         {#if m.role === 'assistant'}
                             <AiFace
-                                size={14}
+                                size={22}
                                 state={streaming && i === messages.length - 1
                                     ? m.content
                                         ? 'writing'
