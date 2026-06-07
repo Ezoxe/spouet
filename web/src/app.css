@@ -203,14 +203,26 @@ body > div {
 }
 
 /* ---- Neutres (anciens fonds sombres) ---- */
+/* Inclut les variantes d'opacité (…/30, /40, /50, /60, /80, /95) — sinon elles
+   restaient foncées en thème clair (graphes node, cartes Santé système…). */
 :root:not([data-theme='dark']) .bg-neutral-950,
+:root:not([data-theme='dark']) .bg-neutral-950\/30,
+:root:not([data-theme='dark']) .bg-neutral-950\/40,
+:root:not([data-theme='dark']) .bg-neutral-950\/50,
+:root:not([data-theme='dark']) .bg-neutral-950\/60,
+:root:not([data-theme='dark']) .bg-neutral-950\/80,
+:root:not([data-theme='dark']) .bg-neutral-950\/95,
 :root:not([data-theme='dark']) .bg-neutral-900,
+:root:not([data-theme='dark']) .bg-neutral-900\/30,
 :root:not([data-theme='dark']) .bg-neutral-900\/40,
+:root:not([data-theme='dark']) .bg-neutral-900\/50,
 :root:not([data-theme='dark']) .bg-neutral-900\/60,
+:root:not([data-theme='dark']) .bg-neutral-900\/70,
 :root:not([data-theme='dark']) .bg-neutral-900\/80 {
     background-color: var(--light-surface-1);
 }
 :root:not([data-theme='dark']) .bg-neutral-800,
+:root:not([data-theme='dark']) .bg-neutral-800\/50,
 :root:not([data-theme='dark']) .bg-neutral-800\/60 {
     background-color: var(--light-surface-2);
 }

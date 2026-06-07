@@ -236,18 +236,18 @@
                 <!-- ticks X -->
                 {#each ticks as t}
                     <line
+                        class="grid-line"
                         x1={t.x}
                         x2={t.x}
                         y1={M.top}
                         y2={height - M.bottom}
-                        stroke="rgb(38 38 38)"
                         stroke-dasharray="2 4"
                     />
                     <text
+                        class="tick-label"
                         x={t.x}
                         y={height - M.bottom + 14}
                         text-anchor="middle"
-                        fill="rgb(115 115 115)"
                         font-size="10">{t.label}</text
                     >
                 {/each}
@@ -270,22 +270,22 @@
                 <!-- curseur survol -->
                 {#if hoverX !== null && hoverData}
                     <line
+                        class="hover-line"
                         x1={hoverX}
                         x2={hoverX}
                         y1={M.top}
                         y2={height - M.bottom}
-                        stroke="rgb(115 115 115)"
                         stroke-width="1"
                         stroke-dasharray="3 3"
                         pointer-events="none"
                     />
                     {#each hoverData.items as it}
                         <circle
+                            class="hover-dot"
                             cx={xFor(it.p.time)}
                             cy={yFor(it.s, it.p.value)}
                             r="3"
                             fill={it.s.color}
-                            stroke="rgb(10 10 10)"
                             stroke-width="1.5"
                             pointer-events="none"
                         />
@@ -348,3 +348,11 @@
         {/if}
     {/if}
 </div>
+
+<style>
+    /* Couleurs du graphe pilotées par le thème (clair/sombre) */
+    .grid-line { stroke: var(--color-border-subtle); }
+    .tick-label { fill: var(--color-text-subtle); }
+    .hover-line { stroke: var(--color-text-subtle); }
+    .hover-dot { stroke: var(--color-bg-0); }
+</style>
