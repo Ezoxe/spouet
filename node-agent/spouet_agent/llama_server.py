@@ -262,6 +262,11 @@ class LlamaServer:
             # Expose /metrics (Prometheus) — désactivé par défaut côté llama-server.
             # Indispensable pour que get_stats() remonte tps/tokens au heartbeat.
             "--metrics",
+            # --jinja : utilise le template de chat embarqué du modèle. INDISPENSABLE
+            # pour le tool calling (sans ça, llama-server ne parse pas les appels
+            # d'outils → les tokens `<|tool_call>…` du modèle fuient en texte brut)
+            # et pour l'extraction du raisonnement (<think> → reasoning_content).
+            "--jinja",
         ]
         # Flash attention : GPU uniquement — certains modèles (Gemma 4 MoE, etc.)
         # crashent avec --flash-attn sur CPU.
