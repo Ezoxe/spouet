@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     # best-effort après les premiers échanges). false = titre heuristique
     # (premiers mots du 1er message) sans appel LLM ni tags.
     chat_autoname_enabled: bool = True
+    # Modèle dédié au nommage (titre + tags), idéalement très petit (ex.
+    # « LFM2-350M-Q4_K_M.gguf »). Vide = on réutilise le modèle de la
+    # conversation. Le modèle n'est utilisé que s'il est DÉJÀ chargé sur un node
+    # (on ne le force pas à se charger, pour ne pas éjecter le modèle de chat) :
+    # le dédier sur sa propre node / instance CPU et le garder chaud.
+    chat_autoname_model: str = ""
 
     # Nodes
     node_offline_after_s: int = 30

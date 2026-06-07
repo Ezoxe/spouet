@@ -26,8 +26,8 @@ logger = get_logger(__name__)
 # Titres considérés comme « pas encore nommés » → on autorise la surcharge auto.
 DEFAULT_TITLES = {"", "…", "new conversation", "nouvelle conversation", "[compagnon]"}
 MAX_TAGS = 6
-_PROMPT_MESSAGES = 8  # nb de messages user/assistant pris en compte
-_MAX_MSG_CHARS = 500
+_PROMPT_MESSAGES = 6  # nb de messages user/assistant pris en compte (contexte court)
+_MAX_MSG_CHARS = 350
 
 _SYS_PROMPT = (
     "Tu génères des métadonnées concises pour une conversation. Réponds "
@@ -119,14 +119,19 @@ async def _complete(base_url: str, model: str, transcript: str) -> str:
 
 
 async def _llm_meta(db: AsyncSession, conversation: Conversation, transcript: str) -> dict:
-    if not settings.chat_autoname_enabled or not conversation.model_pref:
+    if not settings.chat_autoname_enabled:
+        return {}
+    # Modèle dédié (petit) si configuré, sinon le modèle de la conversation.
+    model = settings.chat_autoname_model or conversation.model_pref
+    if not model:
         return {}
     try:
-        choice = await pick_node(db, conversation.model_pref)
+        choice = await pick_node(db, model)
     except NoSuitableNodeError:
         return {}
-    # Ne pas déclencher un cold-load coûteux juste pour nommer : si le modèle
-    # n'est pas déjà chaud, on se contente du repli heuristique.
+    # On n'utilise le modèle que s'il est déjà chaud : pas de cold-load (qui, sur
+    # un llama-server mono-modèle, éjecterait le modèle de chat). Le modèle dédié
+    # de nommage doit donc rester chargé sur sa propre node / instance.
     if choice.needs_load:
         return {}
     try:
