@@ -68,6 +68,10 @@ class HeartbeatRequest(BaseModel):
     image_enabled: bool = False
     image_port: int | None = Field(default=None, ge=1, le=65535)
     image_model: str | None = None
+    # Serveur de nommage dédié (titre/tags) — 2e llama-server toujours chargé
+    naming_enabled: bool = False
+    naming_port: int | None = Field(default=None, ge=1, le=65535)
+    naming_model: str | None = None
     # Métriques système supplémentaires (agents ≥ 0.3.0)
     cpu_pct: float | None = Field(default=None, ge=0, le=100)
     net_rx_kbps: float | None = Field(default=None, ge=0)
@@ -121,6 +125,10 @@ class NodeOut(BaseModel):
     image_enabled: bool = False
     image_port: int | None = None
     image_model: str | None = None
+    # Serveur de nommage dédié (titre/tags)
+    naming_enabled: bool = False
+    naming_port: int | None = None
+    naming_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +176,9 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     node.image_enabled = payload.image_enabled
     node.image_port = payload.image_port
     node.image_model = payload.image_model
+    node.naming_enabled = payload.naming_enabled
+    node.naming_port = payload.naming_port
+    node.naming_model = payload.naming_model
 
     await db.flush()  # garantit node.id avant l'upsert des models
 
@@ -892,4 +903,7 @@ def _node_out(n: Node, models: list[Model]) -> NodeOut:
         image_enabled=n.image_enabled,
         image_port=n.image_port,
         image_model=n.image_model,
+        naming_enabled=n.naming_enabled,
+        naming_port=n.naming_port,
+        naming_model=n.naming_model,
     )

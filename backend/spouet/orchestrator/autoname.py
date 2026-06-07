@@ -19,7 +19,7 @@ from spouet.core.config import settings
 from spouet.core.logging import get_logger
 from spouet.db.models import Conversation, Message
 from spouet.nodes.client import LlamaError, chat_stream
-from spouet.nodes.router import NoSuitableNodeError, pick_node
+from spouet.nodes.router import NoSuitableNodeError, pick_naming_node, pick_node
 
 logger = get_logger(__name__)
 
@@ -121,7 +121,20 @@ async def _complete(base_url: str, model: str, transcript: str) -> str:
 async def _llm_meta(db: AsyncSession, conversation: Conversation, transcript: str) -> dict:
     if not settings.chat_autoname_enabled:
         return {}
-    # Modèle dédié (petit) si configuré, sinon le modèle de la conversation.
+
+    # 1) Serveur de nommage dédié (2e llama-server toujours chargé sur un node) :
+    #    le cas idéal — aucun swap du modèle de chat.
+    naming = await pick_naming_node(db)
+    if naming is not None:
+        try:
+            raw = await _complete(naming.base_url, naming.naming_model, transcript)
+            return _extract_json(raw)
+        except LlamaError as e:
+            logger.info("autoname.naming_node_failed", node=naming.name, error=str(e))
+            # On tente le repli ci-dessous.
+
+    # 2) Repli : modèle dédié configuré, sinon modèle de la conversation — mais
+    #    seulement s'il est DÉJÀ chaud (pas de cold-load qui éjecterait le chat).
     model = settings.chat_autoname_model or conversation.model_pref
     if not model:
         return {}
@@ -129,9 +142,6 @@ async def _llm_meta(db: AsyncSession, conversation: Conversation, transcript: st
         choice = await pick_node(db, model)
     except NoSuitableNodeError:
         return {}
-    # On n'utilise le modèle que s'il est déjà chaud : pas de cold-load (qui, sur
-    # un llama-server mono-modèle, éjecterait le modèle de chat). Le modèle dédié
-    # de nommage doit donc rester chargé sur sa propre node / instance.
     if choice.needs_load:
         return {}
     try:

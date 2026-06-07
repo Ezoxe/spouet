@@ -18,7 +18,7 @@ from spouet_agent.agent_api import init as init_control
 from spouet_agent.image_api import app as image_app
 from spouet_agent.capabilities import NodeCapabilities, probe_capabilities
 from spouet_agent.gpu import gpu_info_from_capabilities, probe_gpu
-from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
+from spouet_agent.llama_config import LlamaConfig, compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
 
@@ -34,7 +34,11 @@ def _lan_ip() -> str:
 
 AGENT_API_PORT = 8765
 LLAMA_SERVER_PORT = 8080
+NAMING_SERVER_PORT = 8081
 IMAGE_API_PORT = 8083
+# Serveur de nommage : petit contexte, CPU, 1 slot — il ne sert que des prompts
+# courts pour générer titre + tags.
+NAMING_N_CTX = 2048
 
 app = typer.Typer(help="Spouet node agent — llama.cpp lifecycle + heartbeat.")
 
@@ -84,6 +88,8 @@ def run(
     image_model: Annotated[str | None, typer.Option("--image-model", help="Modèle d'images par défaut (repo HF)")] = None,
     image_preload: Annotated[bool, typer.Option("--image-preload", help="Charger le modèle d'images au démarrage")] = False,
     no_images: Annotated[bool, typer.Option("--no-images", help="Désactive la capacité image même si l'extra est installé")] = False,
+    naming_model: Annotated[str | None, typer.Option("--naming-model", help="GGUF (nom de fichier) du serveur de nommage dédié, toujours chargé")] = None,
+    naming_port: Annotated[int, typer.Option("--naming-port", help="Port du 2e llama-server de nommage")] = NAMING_SERVER_PORT,
     interval: Annotated[int, typer.Option("--interval", min=5, max=300)] = 10,
     tags: Annotated[list[str] | None, typer.Option("--tag", help="Tags du node (répétable)")] = None,
     install_dir: Annotated[str, typer.Option("--install-dir", help="Répertoire d'installation Spouet")] = "/opt/spouet",
@@ -103,6 +109,8 @@ def run(
             image_model=image_model,
             image_preload=image_preload,
             no_images=no_images,
+            naming_model=naming_model,
+            naming_port=naming_port,
             interval=interval,
             tags=list(tags or []),
             install_dir=Path(install_dir),
@@ -124,6 +132,8 @@ async def _run(
     image_model: str | None,
     image_preload: bool,
     no_images: bool,
+    naming_model: str | None,
+    naming_port: int,
     interval: int,
     tags: list[str],
     install_dir: Path,
@@ -222,6 +232,42 @@ async def _run(
                 autoload_error = str(e)
                 typer.echo(f"[spouet-agent] autoload failed: {e}", err=True)
 
+    # 2e llama-server dédié au NOMMAGE (titre/tags) — petit modèle toujours
+    # chargé, sur CPU (n_gpu_layers=0) pour ne PAS concurrencer la VRAM du chat.
+    # Le backend route l'autoname vers http://{host}:{naming_port}/v1/chat/completions.
+    naming_server: LlamaServer | None = None
+    naming_loaded: str | None = None
+    naming_config: LlamaConfig | None = None
+    naming_path: Path | None = None
+    if naming_model and llama_bin:
+        if "/" in naming_model or "\\" in naming_model or ".." in naming_model:
+            typer.echo(f"[spouet-agent] WARN: --naming-model {naming_model!r} invalide — ignoré", err=True)
+        else:
+            naming_path = models_dir / naming_model
+            if naming_path.exists():
+                naming_server = LlamaServer(
+                    bin_path=llama_bin, models_dir=models_dir, port=naming_port, capabilities=caps
+                )
+                naming_config = LlamaConfig(
+                    n_ctx=NAMING_N_CTX, n_gpu_layers=0, n_batch=256, n_ubatch=256, n_parallel=1
+                )
+                typer.echo(
+                    f"[spouet-agent] serveur de nommage : {naming_model} "
+                    f"(port {naming_port}, CPU, n_ctx={NAMING_N_CTX})…"
+                )
+                try:
+                    await naming_server.start(naming_path, naming_config)
+                    naming_loaded = naming_model
+                except Exception as e:  # noqa: BLE001
+                    typer.echo(f"[spouet-agent] démarrage serveur de nommage échoué: {e}", err=True)
+                    naming_server = None
+            else:
+                typer.echo(
+                    f"[spouet-agent] WARN: --naming-model {naming_model!r} absent de "
+                    f"{models_dir} — nommage dédié désactivé.",
+                    err=True,
+                )
+
     # Initialise l'API de contrôle (capabilities injectées pour /capabilities et reload)
     init_control(
         server,
@@ -250,13 +296,30 @@ async def _run(
             capabilities=caps,
             images_enabled=images_enabled,
             image_port=image_port,
+            naming_server=naming_server,
+            naming_port=naming_port,
+            naming_model=naming_loaded,
         ),
     ]
     if llama_bin is not None:
         tasks.append(_update_loop(server))
     if images_enabled:
         tasks.append(_serve_image_api(image_port))
+    if naming_server is not None and naming_path is not None and naming_config is not None:
+        tasks.append(_naming_watchdog(naming_server, naming_path, naming_config))
     await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _naming_watchdog(server: LlamaServer, model_path: Path, config: LlamaConfig) -> None:
+    """Garde le serveur de nommage allumé : le relance s'il s'arrête."""
+    while True:
+        await asyncio.sleep(60)
+        if not server.is_running():
+            typer.echo("[spouet-agent] serveur de nommage arrêté — redémarrage…", err=True)
+            try:
+                await server.start(model_path, config)
+            except Exception as e:  # noqa: BLE001
+                typer.echo(f"[spouet-agent] redémarrage nommage échoué: {e}", err=True)
 
 
 async def _update_loop(server: LlamaServer) -> None:
@@ -327,6 +390,9 @@ async def _heartbeat_loop(
     capabilities: NodeCapabilities | None = None,
     images_enabled: bool = False,
     image_port: int = IMAGE_API_PORT,
+    naming_server: LlamaServer | None = None,
+    naming_port: int = NAMING_SERVER_PORT,
+    naming_model: str | None = None,
 ) -> None:
     headers = {"Authorization": f"Bearer {token}"}
     typer.echo(f"[spouet-agent] heartbeat → {backend}/api/nodes/heartbeat as '{name}'")
@@ -379,6 +445,9 @@ async def _heartbeat_loop(
                 # Stats llama.cpp
                 stats = await server.get_stats()
 
+                # Le serveur de nommage est-il prêt à servir ?
+                naming_ready = naming_server.is_running() if naming_server is not None else False
+
                 # Liste des modèles locaux
                 local_models = list_local_models(models_dir)
                 models_payload = [
@@ -420,6 +489,9 @@ async def _heartbeat_loop(
                     "image_enabled": images_enabled,
                     "image_port": image_port if images_enabled else None,
                     "image_model": image_gen.reported_model() if images_enabled else None,
+                    "naming_enabled": naming_ready,
+                    "naming_port": naming_port if naming_ready else None,
+                    "naming_model": naming_model if naming_ready else None,
                     "cpu_pct": cpu_pct,
                     "net_rx_kbps": net_rx_kbps,
                     "net_tx_kbps": net_tx_kbps,

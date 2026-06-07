@@ -195,6 +195,50 @@ async def pick_image_node(
     )
 
 
+@dataclass
+class NamingNodeChoice:
+    node_id: UUID
+    name: str
+    host: str
+    naming_port: int
+    naming_model: str
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.host}:{self.naming_port}"
+
+
+async def pick_naming_node(db: AsyncSession) -> NamingNodeChoice | None:
+    """Choisit un node exposant un serveur de nommage dédié (titre/tags).
+
+    Critères : node ONLINE, `naming_enabled`, `naming_port` + `naming_model`
+    renseignés. Retourne None si aucun (l'autoname retombe alors sur un repli).
+    """
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.node_offline_after_s)
+    rows = (
+        await db.execute(
+            select(Node).where(
+                Node.naming_enabled.is_(True),
+                Node.naming_port.is_not(None),
+                Node.naming_model.is_not(None),
+                Node.last_seen.is_not(None),
+                Node.last_seen >= threshold,
+            )
+        )
+    ).scalars().all()
+    if not rows:
+        return None
+    # Least-loaded (le serveur de nommage est léger, mais on reste cohérent).
+    node = min(rows, key=lambda n: (n.vram_used_mb if n.vram_used_mb is not None else 0, n.name))
+    return NamingNodeChoice(
+        node_id=node.id,
+        name=node.name,
+        host=node.host,
+        naming_port=node.naming_port,  # type: ignore[arg-type]
+        naming_model=node.naming_model,  # type: ignore[arg-type]
+    )
+
+
 async def list_available_models(db: AsyncSession) -> list[dict[str, object]]:
     """Liste agrégée : un modèle peut être présent sur plusieurs nodes."""
     threshold = datetime.now(timezone.utc) - timedelta(seconds=settings.node_offline_after_s)

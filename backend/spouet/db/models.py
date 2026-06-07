@@ -100,6 +100,12 @@ class Node(Base, TimestampMixin):
     image_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     image_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 2e llama-server dédié au nommage (titre/tags) : petit modèle toujours chargé
+    # (sur CPU) sur un port à part. Le backend route l'autoname vers
+    # http://{host}:{naming_port}/v1/chat/completions — zéro swap du modèle de chat.
+    naming_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    naming_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    naming_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     models: Mapped[list[Model]] = relationship(
         back_populates="node", cascade="all, delete-orphan"

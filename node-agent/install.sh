@@ -23,6 +23,11 @@
 #   IMAGE_MODEL          Modèle d'images par défaut (repo HF). Optionnel :
 #                        normalement on choisit/télécharge le modèle depuis l'UI.
 #   IMAGE_PORT           Port de l'API image     (def: 8083)
+#   NAMING               Serveur de nommage titre/tags (def: 1).
+#                        Mets NAMING=0 ou --no-naming pour désactiver.
+#   NAMING_MODEL         GGUF du nommage (def: LFM2-350M-Q4_K_M.gguf)
+#   NAMING_HF_REPO       Repo HF du modèle (def: LiquidAI/LFM2-350M-GGUF)
+#   NAMING_PORT          Port du 2e llama-server (def: 8081)
 #   SPOUET_NON_INTERACTIVE (def: 0)
 
 set -euo pipefail
@@ -39,6 +44,11 @@ set -euo pipefail
 : "${IMAGES:=1}"
 : "${IMAGE_MODEL:=}"
 : "${IMAGE_PORT:=8083}"
+# Serveur de nommage dédié (titre/tags) : petit modèle GGUF toujours chargé (CPU).
+: "${NAMING:=1}"
+: "${NAMING_MODEL:=LFM2-350M-Q4_K_M.gguf}"
+: "${NAMING_HF_REPO:=LiquidAI/LFM2-350M-GGUF}"
+: "${NAMING_PORT:=8081}"
 : "${SPOUET_NON_INTERACTIVE:=0}"
 UNINSTALL=0
 
@@ -53,13 +63,18 @@ while [[ $# -gt 0 ]]; do
         --image-model=*) IMAGE_MODEL="${1#*=}" ;;
         --images)       IMAGES=1 ;;
         --no-images)    IMAGES=0 ;;
+        --naming-model=*) NAMING_MODEL="${1#*=}" ;;
+        --naming-repo=*)  NAMING_HF_REPO="${1#*=}" ;;
+        --naming-port=*)  NAMING_PORT="${1#*=}" ;;
+        --naming)         NAMING=1 ;;
+        --no-naming)      NAMING=0 ;;
         --dir=*)        SPOUET_INSTALL_DIR="${1#*=}" ;;
         --branch=*)     SPOUET_BRANCH="${1#*=}" ;;
         --repo=*)       SPOUET_REPO_URL="${1#*=}" ;;
         --skip-llama)   SKIP_LLAMA=1 ;;
         --non-interactive) SPOUET_NON_INTERACTIVE=1 ;;
         --uninstall)    UNINSTALL=1 ;;
-        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
         *) echo "Argument inconnu: $1" >&2; exit 2 ;;
     esac
     shift
@@ -247,6 +262,25 @@ install -d -o spouet -g spouet -m 0755 "$MODELS_DIR"
 install -d -o spouet -g spouet -m 0755 "$BIN_DIR"
 install -d -o spouet -g spouet -m 0755 "$SPOUET_INSTALL_DIR/.cache/huggingface"
 chown -R spouet:spouet "$SPOUET_INSTALL_DIR"
+
+# Modèle de nommage (titre/tags) : téléchargé une fois dans MODELS_DIR.
+if [[ "$NAMING" == "1" && -n "$NAMING_MODEL" ]]; then
+    NAMING_PATH="$MODELS_DIR/$NAMING_MODEL"
+    if [[ -f "$NAMING_PATH" ]]; then
+        log "Modèle de nommage déjà présent : $NAMING_MODEL"
+    else
+        log "Téléchargement du modèle de nommage ($NAMING_HF_REPO / $NAMING_MODEL)…"
+        if wget -qO "$NAMING_PATH" \
+            "https://huggingface.co/$NAMING_HF_REPO/resolve/main/$NAMING_MODEL"; then
+            chown spouet:spouet "$NAMING_PATH"
+            log "✓ Modèle de nommage téléchargé."
+        else
+            warn "Échec du téléchargement du modèle de nommage — nommage dédié désactivé."
+            rm -f "$NAMING_PATH"
+            NAMING=0
+        fi
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # uv sync (node-agent) — nécessaire AVANT la détection GPU car on utilise
@@ -498,6 +532,14 @@ else
     UV_RUN_EXTRA=""
     IMAGE_ARGS="--no-images"
 fi
+
+# Serveur de nommage dédié (titre/tags) : actif si NAMING=1 et modèle présent.
+if [[ "$NAMING" == "1" && -n "$NAMING_MODEL" && -f "$MODELS_DIR/$NAMING_MODEL" ]]; then
+    NAMING_ARGS="--naming-model $NAMING_MODEL --naming-port $NAMING_PORT"
+    log "  → serveur de nommage activé (modèle $NAMING_MODEL, port $NAMING_PORT, CPU)"
+else
+    NAMING_ARGS=""
+fi
 cat > /etc/systemd/system/spouet-agent.service <<EOF
 [Unit]
 Description=Spouet node agent (llama.cpp lifecycle + heartbeat)
@@ -523,7 +565,7 @@ ExecStart=/usr/local/bin/uv run $UV_RUN_EXTRA --directory $SPOUET_INSTALL_DIR/no
     --agent-port $AGENT_PORT \\
     --install-dir $SPOUET_INSTALL_DIR \\
     --models-dir $MODELS_DIR \\
-    $IMAGE_ARGS
+    $IMAGE_ARGS $NAMING_ARGS
 Restart=always
 RestartSec=5
 
