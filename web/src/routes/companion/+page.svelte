@@ -23,6 +23,23 @@
     let messages: MessageOut[] = $state([]);
     let models: ModelAgg[] = $state([]);
     let selectedModel = $state('');
+
+    // Regroupement par node pour le sélecteur (affichage uniquement : le backend
+    // choisit le node le moins chargé à l'envoi).
+    const modelsByNode = $derived.by(() => {
+        const map = new Map<string, { node: string; models: ModelAgg[] }>();
+        for (const m of models) {
+            for (const n of m.nodes) {
+                let g = map.get(n.id);
+                if (!g) {
+                    g = { node: n.name, models: [] };
+                    map.set(n.id, g);
+                }
+                g.models.push(m);
+            }
+        }
+        return [...map.values()].sort((a, b) => a.node.localeCompare(b.node));
+    });
     let text = $state('');
     let streaming = $state(false);
     let scroller: HTMLElement | undefined = $state();
@@ -188,9 +205,19 @@
                 bind:value={selectedModel}
                 class="rounded bg-transparent text-[11px] focus:outline-none"
             >
-                {#each models as m}
-                    <option value={m.name} class="bg-neutral-900">{m.name}</option>
-                {/each}
+                {#if modelsByNode.length > 1}
+                    {#each modelsByNode as group (group.node)}
+                        <optgroup label={group.node}>
+                            {#each group.models as m (group.node + '/' + m.name)}
+                                <option value={m.name} class="bg-neutral-900">{m.name}</option>
+                            {/each}
+                        </optgroup>
+                    {/each}
+                {:else}
+                    {#each models as m}
+                        <option value={m.name} class="bg-neutral-900">{m.name}</option>
+                    {/each}
+                {/if}
             </select>
         </div>
         <div class="flex items-center gap-1">

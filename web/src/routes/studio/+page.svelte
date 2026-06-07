@@ -61,6 +61,24 @@
         return [...set];
     });
 
+    // Modèles téléchargés regroupés par node (« Node 1 : … ; Node 2 : … »). Un
+    // modèle présent sur plusieurs nodes apparaît sous chacun ; « actif » est
+    // évalué par node via le modèle configuré (imageNodes[].model).
+    const downloadedByNode = $derived.by(() => {
+        const map = new Map<string, { repo: string; size_bytes: number; active: boolean }[]>();
+        for (const m of downloadedModels) {
+            for (const nodeName of m.nodes) {
+                const activeOnNode = imageNodes.find((n) => n.name === nodeName)?.model === m.repo;
+                const arr = map.get(nodeName) ?? [];
+                arr.push({ repo: m.repo, size_bytes: m.size_bytes, active: activeOnNode });
+                map.set(nodeName, arr);
+            }
+        }
+        return [...map.entries()]
+            .map(([node, models]) => ({ node, models }))
+            .sort((a, b) => a.node.localeCompare(b.node));
+    });
+
     async function refresh() {
         [health, gallery, imageNodes, downloadedModels] = await Promise.all([
             images.health().catch(() => null),
@@ -232,21 +250,25 @@
         </div>
 
         {#if downloadedModels.length > 0}
-            <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span class="text-[10px] uppercase tracking-wider text-neutral-600">Téléchargés</span>
-                {#each downloadedModels as m (m.repo)}
-                    <button
-                        type="button"
-                        onclick={() => (model = m.repo)}
-                        class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition
-                               {model === m.repo
-                            ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-200'
-                            : 'border-[var(--color-border-subtle)] text-neutral-400 hover:text-neutral-200'}"
-                        title={`Sur : ${m.nodes.join(', ')}`}
-                    >
-                        <span class="font-mono">{m.repo}</span>
-                        {#if m.active}<span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>{/if}
-                    </button>
+            <div class="mt-2 space-y-1.5">
+                {#each downloadedByNode as group (group.node)}
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-[10px] uppercase tracking-wider text-neutral-600">{group.node}</span>
+                        {#each group.models as m (group.node + '/' + m.repo)}
+                            <button
+                                type="button"
+                                onclick={() => (model = m.repo)}
+                                class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition
+                                       {model === m.repo
+                                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-200'
+                                    : 'border-[var(--color-border-subtle)] text-neutral-400 hover:text-neutral-200'}"
+                                title={m.active ? `Actif sur ${group.node}` : `Sur ${group.node}`}
+                            >
+                                <span class="font-mono">{m.repo}</span>
+                                {#if m.active}<span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>{/if}
+                            </button>
+                        {/each}
+                    </div>
                 {/each}
             </div>
         {/if}

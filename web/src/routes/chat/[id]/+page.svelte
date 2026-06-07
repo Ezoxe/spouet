@@ -30,6 +30,24 @@
     let messages: MessageOut[] = $state([]);
     let models: ModelAgg[] = $state([]);
     let selectedModel = $state('');
+
+    // Regroupement du sélecteur par node : « Node 1 : … ; Node 2 : … ». Un même
+    // modèle présent sur plusieurs nodes apparaît sous chacun. Le backend choisit
+    // tout de même le node le moins chargé à l'envoi (affichage uniquement).
+    const modelsByNode = $derived.by(() => {
+        const map = new Map<string, { node: string; models: ModelAgg[] }>();
+        for (const m of models) {
+            for (const n of m.nodes) {
+                let g = map.get(n.id);
+                if (!g) {
+                    g = { node: n.name, models: [] };
+                    map.set(n.id, g);
+                }
+                g.models.push(m);
+            }
+        }
+        return [...map.values()].sort((a, b) => a.node.localeCompare(b.node));
+    });
     let selectedTools: string[] = $state([]);
     let streaming = $state(false);
     let abortController: AbortController | null = $state(null);
@@ -525,20 +543,27 @@
                         <div class="px-3 py-2 text-xs text-neutral-500">Aucun modèle disponible</div>
                     {/if}
                     <ul class="max-h-60 overflow-y-auto">
-                        {#each models as m}
-                            <li>
-                                <button
-                                    type="button"
-                                    class="w-full rounded px-3 py-2 text-left text-sm transition
-                                           {selectedModel === m.name ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-300 hover:bg-neutral-800'}"
-                                    onclick={() => {
-                                        selectedModel = m.name;
-                                        isModelDropdownOpen = false;
-                                    }}
-                                >
-                                    {m.name}
-                                </button>
-                            </li>
+                        {#each modelsByNode as group (group.node)}
+                            {#if modelsByNode.length > 1}
+                                <li class="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+                                    {group.node}
+                                </li>
+                            {/if}
+                            {#each group.models as m (group.node + '/' + m.name)}
+                                <li>
+                                    <button
+                                        type="button"
+                                        class="w-full rounded px-3 py-2 text-left text-sm transition
+                                               {selectedModel === m.name ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-300 hover:bg-neutral-800'}"
+                                        onclick={() => {
+                                            selectedModel = m.name;
+                                            isModelDropdownOpen = false;
+                                        }}
+                                    >
+                                        {m.name}
+                                    </button>
+                                </li>
+                            {/each}
                         {/each}
                     </ul>
                 </div>
