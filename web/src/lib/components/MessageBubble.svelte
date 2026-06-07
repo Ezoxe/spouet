@@ -7,6 +7,7 @@
     import AiFace from './AiFace.svelte';
     import ThinkingIndicator from './ThinkingIndicator.svelte';
     import Markdown from './Markdown.svelte';
+    import CommandCard from './CommandCard.svelte';
     import { toast } from '$lib/toast.svelte';
 
     interface Props {
@@ -86,6 +87,29 @@
         !streaming ? 'idle' : message.content ? 'writing' : 'thinking'
     );
 
+    // Métadonnées d'outil (messages role=tool et tool_calls de l'assistant).
+    const cjson = $derived(
+        ('content_json' in message ? message.content_json : null) as Record<string, any> | null | undefined
+    );
+    const toolName = $derived(String(cjson?.tool_name ?? 'outil'));
+    const toolCalls = $derived.by(() => {
+        const raw = cjson?.tool_calls;
+        if (!Array.isArray(raw)) return [] as { name: string; summary: string }[];
+        return raw.map((tc: any) => {
+            const fn = tc?.function ?? {};
+            const args = fn.arguments;
+            let summary = '';
+            if (args && typeof args === 'object') {
+                summary = Object.entries(args)
+                    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+                    .join(' ');
+            } else if (typeof args === 'string') {
+                summary = args;
+            }
+            return { name: String(fn.name ?? 'outil'), summary: summary.slice(0, 90) };
+        });
+    });
+
     const meta = $derived.by(() => {
         switch (message.role) {
             case 'user':
@@ -130,31 +154,33 @@
 </script>
 
 <div class="group flex flex-col gap-1 {meta.align}" in:fly={{ y: 8, duration: 220, easing: quintOut }}>
-    <div class="flex items-center gap-1.5 text-xs text-neutral-500">
-        {#if message.role === 'assistant'}
-            <AiFace size={17} state={faceState} />
-        {:else}
-            <meta.Icon size={12} />
-        {/if}
-        <span>{meta.label}</span>
-        {#if 'latency_ms' in message && message.latency_ms != null}
-            <span class="text-neutral-600">· {message.latency_ms}ms</span>
-        {/if}
-        {#if 'tokens_out' in message && message.tokens_out != null}
-            <span class="text-neutral-600">· {message.tokens_out} tok</span>
-        {/if}
-        {#if canShowDetails}
-            <button
-                type="button"
-                onclick={() => (detailsOpen = true)}
-                class="ml-0.5 rounded p-0.5 text-neutral-600 transition hover:bg-neutral-800 hover:text-neutral-300"
-                title="Détails complets"
-                aria-label="Afficher les détails du message"
-            >
-                <Info size={11} />
-            </button>
-        {/if}
-    </div>
+    {#if message.role !== 'tool'}
+        <div class="flex items-center gap-1.5 text-xs text-neutral-500">
+            {#if message.role === 'assistant'}
+                <AiFace size={17} state={faceState} />
+            {:else}
+                <meta.Icon size={12} />
+            {/if}
+            <span>{meta.label}</span>
+            {#if 'latency_ms' in message && message.latency_ms != null}
+                <span class="text-neutral-600">· {message.latency_ms}ms</span>
+            {/if}
+            {#if 'tokens_out' in message && message.tokens_out != null}
+                <span class="text-neutral-600">· {message.tokens_out} tok</span>
+            {/if}
+            {#if canShowDetails}
+                <button
+                    type="button"
+                    onclick={() => (detailsOpen = true)}
+                    class="ml-0.5 rounded p-0.5 text-neutral-600 transition hover:bg-neutral-800 hover:text-neutral-300"
+                    title="Détails complets"
+                    aria-label="Afficher les détails du message"
+                >
+                    <Info size={11} />
+                </button>
+            {/if}
+        </div>
+    {/if}
     {#if editing}
         <div class="w-full max-w-[85%]">
             <textarea
@@ -180,6 +206,10 @@
                 </button>
             </div>
         </div>
+    {:else if message.role === 'tool'}
+        <div class="w-full max-w-[85%]">
+            <CommandCard {toolName} content={message.content} />
+        </div>
     {:else}
         <div
             class="max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed {meta.bubble}"
@@ -189,16 +219,29 @@
                 {#if streaming && !message.content}
                     <ThinkingIndicator label={thinkingLabel} detail={thinkingDetail} />
                 {:else}
-                    <Markdown content={message.content} />{#if streaming}<span
-                            class="stream-caret"
-                        ></span>{/if}
+                    {#if message.content}
+                        <Markdown content={message.content} />{#if streaming}<span
+                                class="stream-caret"
+                            ></span>{/if}
+                    {/if}
+                    {#if toolCalls.length}
+                        <div class="toolcalls" class:mt-2={!!message.content}>
+                            {#each toolCalls as tc}
+                                <span class="toolcall-chip">
+                                    <Wrench size={11} />
+                                    <span class="tc-name">{tc.name}</span>
+                                    {#if tc.summary}<span class="tc-args">{tc.summary}</span>{/if}
+                                </span>
+                            {/each}
+                        </div>
+                    {/if}
                 {/if}
             {:else}
                 {message.content || (streaming ? '' : '…')}
             {/if}
         </div>
 
-        {#if !streaming && message.content}
+        {#if !streaming && message.content && message.role !== 'tool'}
             <div class="mt-0.5 flex gap-0.5 text-xs text-neutral-600 opacity-0 transition-opacity duration-200 hover:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
                 <button
                     type="button"
@@ -245,6 +288,36 @@
 {/if}
 
 <style>
+    /* Chips « appel d'outil » sous une réponse assistant */
+    .toolcalls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+    .toolcall-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        max-width: 100%;
+        padding: 0.12rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid color-mix(in oklch, var(--color-accent) 30%, transparent);
+        background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+        color: var(--color-text);
+        font-size: 0.72rem;
+    }
+    .tc-name {
+        font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+        font-weight: 600;
+    }
+    .tc-args {
+        color: var(--color-text-muted);
+        font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     /* Curseur de frappe pendant le streaming */
     .stream-caret {
         display: inline-block;
