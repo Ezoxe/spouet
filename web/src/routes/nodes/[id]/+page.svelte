@@ -8,6 +8,7 @@
         ApiError
     } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
+    import { copyText } from '$lib/clipboard';
     import { downloads } from '$lib/downloads.svelte';
     import {
         Download, Play, Trash2, Settings, Loader2, ChevronLeft, HardDrive, Cpu, MemoryStick, Zap, Activity, Power
@@ -54,15 +55,23 @@
 
     // Copie de diag
     let copyingDiag = $state(false);
+    let diagText = $state('');
     async function copyDiag(): Promise<void> {
         if (!nodeId) return;
         copyingDiag = true;
         try {
             const diag = await nodesApi.diag(nodeId);
-            await navigator.clipboard.writeText(JSON.stringify(diag, null, 2));
-            toast.success('Diag copié dans le presse-papier.');
-        } catch (e) {
-            toast.error('Échec de la copie du diag.');
+            diagText = JSON.stringify(diag, null, 2);
+            // En HTTP LAN, navigator.clipboard est absent → copyText retombe sur
+            // execCommand ; si ça échoue aussi, le panneau ci-dessous reste
+            // disponible pour une copie manuelle.
+            if (await copyText(diagText)) {
+                toast.success('Diag copié dans le presse-papier.');
+            } else {
+                toast.info('Diag affiché ci-dessous — sélectionne et copie manuellement.');
+            }
+        } catch {
+            toast.error('Récupération du diag impossible (agent injoignable ?).');
         } finally {
             copyingDiag = false;
         }
@@ -470,6 +479,39 @@
 </header>
 
 <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 pb-6 sm:px-8">
+
+    <!-- Diag : affiché ici car en HTTP LAN la copie presse-papier peut échouer -->
+    {#if diagText}
+        <section class="rounded-xl border border-amber-900/40 bg-amber-950/10 p-4">
+            <div class="mb-2 flex items-center justify-between">
+                <h2 class="text-xs font-medium uppercase tracking-wider text-amber-300/80">
+                    Diagnostic (copie manuelle possible)
+                </h2>
+                <div class="flex items-center gap-1.5">
+                    <button
+                        type="button"
+                        onclick={() => copyText(diagText).then((ok) => toast[ok ? 'success' : 'error'](ok ? 'Copié.' : 'Copie impossible — sélectionne le texte.'))}
+                        class="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+                    >
+                        Copier
+                    </button>
+                    <button
+                        type="button"
+                        onclick={() => (diagText = '')}
+                        class="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-800"
+                    >
+                        Fermer
+                    </button>
+                </div>
+            </div>
+            <textarea
+                readonly
+                rows="14"
+                class="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-300 focus:border-cyan-500/40 focus:outline-none"
+                onclick={(e) => (e.currentTarget as HTMLTextAreaElement).select()}
+            >{diagText}</textarea>
+        </section>
+    {/if}
 
     <!-- KPI strip : matériel condensé -->
     {#if node}
