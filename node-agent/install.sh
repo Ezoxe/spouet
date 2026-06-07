@@ -400,11 +400,20 @@ build_llama_cuda() {
             || { warn "clone llama.cpp échoué"; return 1; }
     fi
 
+    # nvcc Debian = CUDA 11.x → host compiler gcc ≤ 11 requis (Debian 12 a gcc-12
+    # par défaut). On force g++-11 s'il est présent pour éviter
+    # « unsupported GNU version ».
+    local host_cc_opt=()
+    if command -v g++-11 &>/dev/null; then
+        host_cc_opt=(-DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-11)
+    fi
+
     if ! cmake -S "$src_dir" -B "$src_dir/build" \
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_ARCHITECTURES="$archs" \
             -DLLAMA_CURL=ON \
-            -DCMAKE_BUILD_TYPE=Release >/tmp/llama-cuda-cmake.log 2>&1; then
+            -DCMAKE_BUILD_TYPE=Release \
+            "${host_cc_opt[@]}" >/tmp/llama-cuda-cmake.log 2>&1; then
         warn "configuration cmake CUDA échouée (voir /tmp/llama-cuda-cmake.log)"; return 1
     fi
     if ! cmake --build "$src_dir/build" --config Release -j"$(nproc)" \
