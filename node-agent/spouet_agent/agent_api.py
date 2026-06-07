@@ -15,6 +15,7 @@ Endpoints appelés par le backend Spouet pour piloter llama.cpp :
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import traceback
 from pathlib import Path
@@ -294,6 +295,64 @@ async def get_capabilities() -> dict:
     if _capabilities is None:
         raise HTTPException(500, "capabilities not initialized")
     return _capabilities.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Auto-update (déclenché par l'admin : deploy/install.sh → POST /self-update)
+# ---------------------------------------------------------------------------
+
+@app.post("/self-update", status_code=status.HTTP_202_ACCEPTED)
+async def self_update() -> dict:
+    """Met le node-agent à jour : git pull du dépôt puis redémarrage.
+
+    Tourne en utilisateur ``spouet`` (propriétaire du dépôt) : pas besoin de
+    root. On ne relance PAS install.sh (qui exige root) ; on fait juste un
+    fetch/reset, puis on quitte le process → systemd (``Restart=always``) relance
+    l'agent avec le nouveau code, et ``uv run`` resynchronise les dépendances.
+    Les fichiers ignorés (modèles GGUF, caches) sont préservés.
+    """
+    if _models_dir is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "agent non initialisé")
+    install_dir = _models_dir.parent  # MODELS_DIR = $INSTALL_DIR/models
+    if not (install_dir / ".git").exists():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"pas un dépôt git: {install_dir}"
+        )
+    asyncio.create_task(_self_update_task(install_dir))
+    return {"status": "updating", "install_dir": str(install_dir)}
+
+
+async def _self_update_task(install_dir: Path) -> None:
+    branch = os.environ.get("SPOUET_BRANCH", "master")
+    await asyncio.sleep(0.4)  # laisse la réponse 202 partir
+    steps = (
+        ["git", "-C", str(install_dir), "fetch", "--quiet", "origin", branch],
+        ["git", "-C", str(install_dir), "reset", "--hard", f"origin/{branch}"],
+        ["git", "-C", str(install_dir), "clean", "-fdq"],
+    )
+    for args in steps:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            out, _ = await proc.communicate()
+        except Exception as e:  # noqa: BLE001
+            print(f"[self-update] échec {' '.join(args)}: {e}", flush=True)
+            return
+        if proc.returncode != 0:
+            # On garde le code actuel plutôt que de redémarrer dans un état douteux.
+            print(
+                f"[self-update] {' '.join(args)} -> rc={proc.returncode}: "
+                f"{out.decode(errors='replace')[:500]}",
+                flush=True,
+            )
+            return
+    print("[self-update] dépôt à jour — redémarrage de l'agent (systemd relance)…", flush=True)
+    await asyncio.sleep(0.2)
+    # Quitte le process : systemd tue le cgroup (dont llama-server) puis relance.
+    os._exit(0)
 
 
 # ---------------------------------------------------------------------------

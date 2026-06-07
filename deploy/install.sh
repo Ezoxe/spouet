@@ -13,19 +13,22 @@
 #   bash install.sh --email=me@x    # email du compte admin (1re fois / rotation ciblée)
 #   bash install.sh --no-build      # skip le build (juste up + migrate + token)
 #   bash install.sh --skip-tools    # ne pas (ré)installer les tools du registry
+#   bash install.sh --update-nodes  # MAJ aussi les nodes (git pull + restart agent)
 set -euo pipefail
 
 EMAIL=""
 DO_BUILD=1
 DO_TOOLS=1
 NEW_TOKEN=0
+UPDATE_NODES=0
 for arg in "$@"; do
     case "$arg" in
         --email=*)              EMAIL="${arg#*=}" ;;
         --new-token|--rotate-token) NEW_TOKEN=1 ;;
         --no-build)             DO_BUILD=0 ;;
         --skip-tools)           DO_TOOLS=0 ;;
-        -h|--help)              sed -n '2,16p' "$0"; exit 0 ;;
+        --update-nodes)         UPDATE_NODES=1 ;;
+        -h|--help)              sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "Argument inconnu: $arg" >&2; exit 2 ;;
     esac
 done
@@ -201,6 +204,44 @@ if [[ "$NEW_TOKEN" == 1 || ! -f "$FLAG" ]]; then
     fi
 else
     log "Token déjà émis. Pour en régénérer un : bash install.sh --new-token [--email=<email>]"
+fi
+
+# ---------------------------------------------------------------------------
+# Mise à jour des nodes (optionnel) : déclenche /self-update sur chaque agent en
+# ligne. L'agent fait git pull + se relance (systemd) avec le nouveau code.
+# ---------------------------------------------------------------------------
+update_nodes() {
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl absent sur l'hôte — impossible de déclencher la MAJ des nodes."
+        return
+    fi
+    # host + agent_port des nodes vus il y a < 60s (SQL sans apostrophe → quoting simple)
+    local rows
+    rows="$(docker compose exec -T postgres sh -c \
+        'psql -tAF" " -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select host, agent_port from nodes where agent_port is not null and last_seen is not null and extract(epoch from (now()-last_seen)) < 60"' \
+        2>/dev/null | tr -d '\r')"
+    if [[ -z "${rows//[[:space:]]/}" ]]; then
+        warn "Aucun node en ligne avec une API agent — rien à mettre à jour."
+        return
+    fi
+    while read -r host port; do
+        [[ -z "$host" || -z "$port" ]] && continue
+        log "→ MAJ node $host:$port (git pull + redémarrage de l'agent)…"
+        if curl -fsS --max-time 10 -X POST "http://$host:$port/self-update" >/dev/null 2>&1; then
+            log "  ✓ déclenché (l'agent redémarre, ~quelques secondes d'indispo)."
+        else
+            warn "  ✗ échec sur $host:$port (agent injoignable / endpoint absent ?)."
+        fi
+    done <<< "$rows"
+}
+
+if [[ "$UPDATE_NODES" == 1 ]]; then
+    update_nodes
+elif [[ -t 0 || -e /dev/tty ]]; then
+    ans=""
+    printf '\033[1;36m[spouet]\033[0m Mettre à jour aussi les nodes (git pull + restart de chaque agent) ? [y/N] : '
+    read -r ans </dev/tty 2>/dev/null || ans=""
+    [[ "${ans,,}" == "y" ]] && update_nodes
 fi
 
 # ---------------------------------------------------------------------------
