@@ -268,10 +268,13 @@ class LlamaServer:
             # et pour l'extraction du raisonnement (<think> → reasoning_content).
             "--jinja",
         ]
-        # Flash attention : GPU uniquement — certains modèles (Gemma 4 MoE, etc.)
-        # crashent avec --flash-attn sur CPU.
+        # Flash attention : `auto` (et non `on`) — llama.cpp l'active uniquement
+        # là où elle aide. Sur Pascal (Tesla P4, sm_61, sans tensor cores) la FA
+        # forcée à `on` est souvent PLUS lente (chemin dégradé) et plombe le TTFT ;
+        # `auto` la désactive sur ce matériel. GPU uniquement (sur CPU certains
+        # modèles comme Gemma crashent avec la FA).
         if config.n_gpu_layers != 0:
-            cmd += ["--flash-attn", "on"]
+            cmd += ["--flash-attn", "auto"]
         if config.n_threads is not None:
             cmd += ["--threads", str(config.n_threads)]
         if config.n_threads_batch is not None:
