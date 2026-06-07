@@ -30,6 +30,8 @@ _TOOL_CAPABLE_PREFIXES = (
     "llama-3.1", "llama-3.2", "llama-3.3", "llama-4",
     "qwen2.5", "qwen3", "mistral", "mistral-nemo", "mixtral",
     "command-r", "firefunction", "hermes",
+    # Liquid LFM2 / LFM2.5 (function calling natif) — "lfm2" matche aussi "lfm2.5".
+    "lfm2",
 )
 
 

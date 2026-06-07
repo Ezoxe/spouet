@@ -54,14 +54,20 @@
             open = !open;
             if (open) ensureLoaded();
         }}
-        class="flex items-center gap-2 rounded-md border border-[var(--color-border)]
-               bg-[var(--color-bg-1)] px-3 py-1.5 text-sm transition
-               hover:border-cyan-500/50 disabled:opacity-50"
-        title="Restreindre les tools utilisables dans cette conversation"
+        class="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition
+               hover:border-cyan-500/50 disabled:opacity-50
+               {selected.length > 0
+                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300'
+                : 'border-[var(--color-border)] bg-[var(--color-bg-1)]'}"
+        title={selected.length > 0
+            ? `Tools restreints à : ${selected.join(', ')}`
+            : 'Tous les tools activés sont disponibles dans cette conversation'}
     >
         <Wrench size={14} class="text-cyan-400" />
         <span class="hidden text-xs text-neutral-500 sm:inline">Tools :</span>
-        <span class="max-w-[120px] truncate text-neutral-200">{label}</span>
+        <span class="max-w-[120px] truncate {selected.length > 0 ? 'text-cyan-300' : 'text-neutral-200'}"
+            >{label}</span
+        >
         <ChevronDown size={14} class="text-neutral-500 transition-transform {open ? 'rotate-180' : ''}" />
     </button>
 
