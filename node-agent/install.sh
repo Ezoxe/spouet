@@ -426,15 +426,33 @@ build_llama_cuda() {
     [[ -n "$built" ]] || { warn "binaire llama-server compilé introuvable"; return 1; }
 
     install -m 755 "$built" "$bin_dir/llama-server"
-    # Copie les .so produits (libggml-base, libggml-cuda, libllama…) à côté.
-    find "$src_dir/build" \( -name "*.so" -o -name "*.so.*" \) -type f \
+    # Copie les .so produits (libggml-base, libggml-cpu, libggml-cuda, libllama…)
+    # AVEC les symlinks (-type l) : sinon le SONAME libggml-cpu.so.0 (un symlink
+    # vers libggml-cpu.so.0.x.y) manque et llama-server lève au démarrage
+    # « libggml-cpu.so.0: cannot open shared object file ».
+    local libsrc="$src_dir/build/bin"
+    [[ -d "$libsrc" ]] || libsrc="$src_dir/build"
+    find "$libsrc" \( -name "*.so" -o -name "*.so.*" \) \( -type f -o -type l \) \
         -exec cp -P {} "$bin_dir/" \; 2>/dev/null || true
+    # Filet de sécurité : recrée les SONAME manquants (libfoo.so.0.1.2 → libfoo.so.0).
+    local sofile base soname
+    for sofile in "$bin_dir"/lib*.so.*.*; do
+        [[ -f "$sofile" ]] || continue
+        base=$(basename "$sofile")
+        soname=$(echo "$base" | sed -E 's/(.*\.so\.[0-9]+)\..*/\1/')
+        [[ "$soname" != "$base" ]] && ln -sf "$base" "$bin_dir/$soname"
+    done
     chown -R spouet:spouet "$bin_dir"
 
-    # Vérifie que le binaire se lance avec ses libs (sans charger de modèle).
-    if ! LD_LIBRARY_PATH="$bin_dir:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-            "$bin_dir/llama-server" --version 2>&1 | grep -qiE 'version|build'; then
-        warn "le llama-server CUDA ne démarre pas (libs CUDA manquantes ?)"; return 1
+    # Vérifie qu'AUCUNE lib dynamique ne manque (ldd : plus fiable que --version,
+    # qui n'effectue pas le dlopen des backends ggml).
+    local missing
+    missing=$(LD_LIBRARY_PATH="$bin_dir:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+              ldd "$bin_dir/llama-server" 2>/dev/null | grep -F "not found" || true)
+    if [[ -n "$missing" ]]; then
+        warn "llama-server CUDA : dépendances dynamiques manquantes :"
+        echo "$missing" | sed 's/^/    /' >&2
+        return 1
     fi
     # Récupère l'espace : les sources + objets de build (~2 Go) ne servent plus.
     rm -rf "$src_dir"
