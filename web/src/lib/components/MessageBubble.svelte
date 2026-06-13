@@ -333,6 +333,26 @@
         background: color-mix(in oklch, var(--color-accent) 12%, transparent);
         color: var(--color-text);
         font-size: 0.72rem;
+        animation: chip-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .toolcall-chip:nth-child(2) {
+        animation-delay: 0.07s;
+    }
+    .toolcall-chip:nth-child(3) {
+        animation-delay: 0.14s;
+    }
+    .toolcall-chip:nth-child(4) {
+        animation-delay: 0.21s;
+    }
+    @keyframes chip-in {
+        from {
+            opacity: 0;
+            transform: translateY(4px) scale(0.96);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
     }
     .tc-name {
         font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;

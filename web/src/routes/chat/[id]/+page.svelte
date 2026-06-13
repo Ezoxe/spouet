@@ -14,14 +14,14 @@
     } from '$lib/api';
     import MessageBubble from '$lib/components/MessageBubble.svelte';
     import Composer from '$lib/components/Composer.svelte';
-    import EmptyState from '$lib/components/EmptyState.svelte';
+    import AiFace from '$lib/components/AiFace.svelte';
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import ToolPicker from '$lib/components/ToolPicker.svelte';
     import VisualCard from '$lib/components/VisualCard.svelte';
     import ToolRunIndicator from '$lib/components/ToolRunIndicator.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square, Copy } from 'lucide-svelte';
+    import { Sparkles, Zap, AudioLines, ChevronDown, Loader2, Download, Square, Copy, Code2, Globe, GraduationCap, Lightbulb } from 'lucide-svelte';
     import { goto } from '$app/navigation';
     import type { SseEvent } from '$lib/api';
 
@@ -53,6 +53,15 @@
     let streaming = $state(false);
     let abortController: AbortController | null = $state(null);
     let focusComposer: (() => void) | null = $state(null);
+    let composerSetText: ((v: string) => void) | null = $state(null);
+
+    // Suggestions de départ (conversation vide) — pré-remplissent le composer.
+    const starterPrompts = [
+        { Icon: Code2, label: 'Écrire du code', text: 'Écris une fonction qui ' },
+        { Icon: Globe, label: 'Chercher sur le web', text: 'Cherche sur le web : ' },
+        { Icon: GraduationCap, label: 'Expliquer un concept', text: 'Explique-moi simplement : ' },
+        { Icon: Lightbulb, label: 'Brainstormer', text: "Donne-moi des idées pour " }
+    ];
     let nodeBadge: string | null = $state(null);
     let loadingModel: { node: string; model: string; phase: string; elapsed_s?: number } | null = $state(null);
     let approval: {
@@ -647,11 +656,30 @@
                 />
             </div>
         {:else}
-            <EmptyState
-                icon={MessageSquare}
-                title="Conversation vide"
-                description="Posez votre première question pour démarrer."
-            />
+            <div class="flex flex-col items-center gap-5 py-14 text-center" in:fade={{ duration: 300 }}>
+                <AiFace size={92} state="idle" />
+                <div class="space-y-1.5">
+                    <h2 class="text-lg font-medium text-neutral-200">Je vous écoute</h2>
+                    <p class="mx-auto max-w-sm text-sm text-neutral-500">
+                        Posez votre première question. Code, recherche web, outils,
+                        génération d'images… je m'en occupe.
+                    </p>
+                </div>
+                <div class="flex flex-wrap justify-center gap-2">
+                    {#each starterPrompts as p}
+                        <button
+                            type="button"
+                            onclick={() => composerSetText?.(p.text)}
+                            class="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)]
+                                   bg-[var(--color-bg-1)] px-3 py-1.5 text-xs text-neutral-300 transition
+                                   hover:-translate-y-0.5 hover:border-cyan-500/50 hover:bg-cyan-500/5 hover:text-cyan-300"
+                        >
+                            <p.Icon size={13} />
+                            {p.label}
+                        </button>
+                    {/each}
+                </div>
+            </div>
         {/each}
         {#if runningTools.length}
             <div class="flex flex-col gap-2">
@@ -772,7 +800,10 @@
 {/if}
 
 <Composer
-    onready={(api) => (focusComposer = api.focus)}
+    onready={(api) => {
+        focusComposer = api.focus;
+        composerSetText = api.setText;
+    }}
     disabled={streaming || !selectedModel}
     busy={streaming}
     placeholder={!selectedModel

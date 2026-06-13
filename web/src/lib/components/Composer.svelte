@@ -11,7 +11,7 @@
         busy?: boolean;
         placeholder?: string;
         onsend: (text: string) => void;
-        onready?: (api: { focus: () => void }) => void;
+        onready?: (api: { focus: () => void; setText: (v: string) => void }) => void;
     }
     let {
         disabled = false,
@@ -46,6 +46,21 @@
 
     function focus() {
         textarea?.focus();
+    }
+
+    // Pré-remplit le champ (suggestions de départ) — l'utilisateur complète/édite
+    // puis envoie lui-même (pas d'envoi automatique).
+    function setText(v: string) {
+        text = v;
+        tick().then(() => {
+            autoresize();
+            focus();
+            if (textarea) {
+                const end = textarea.value.length;
+                textarea.selectionStart = end;
+                textarea.selectionEnd = end;
+            }
+        });
     }
 
     function onKey(e: KeyboardEvent) {
@@ -115,7 +130,7 @@
     onMount(() => {
         // pré-chargement non-bloquant
         ensureTemplatesLoaded();
-        onready?.({ focus });
+        onready?.({ focus, setText });
     });
 </script>
 
