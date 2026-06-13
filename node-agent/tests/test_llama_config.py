@@ -92,3 +92,46 @@ def test_cpu_threads_leaves_one_core_for_os():
     """8 cœurs physiques → 7 threads pour llama, 1 pour l'OS."""
     cfg = compute_optimal_config(caps=_caps("cpu", cores=8), ram_total_mb=32000)
     assert cfg.n_threads == 7
+
+
+def test_max_threads_env_override(monkeypatch):
+    """SPOUET_MAX_THREADS abaisse le plafond (gros CPU bridé à la demande)."""
+    monkeypatch.setenv("SPOUET_MAX_THREADS", "4")
+    cfg = compute_optimal_config(caps=_caps("cpu", cores=32), ram_total_mb=128000)
+    assert cfg.n_threads == 4
+    assert cfg.n_threads_batch == 4
+
+
+def test_gpu_full_offload_when_model_fits():
+    """Modèle qui tient en VRAM → tout sur GPU (-1), comportement historique."""
+    cfg = compute_optimal_config(
+        caps=_caps(compute_class="cuda", gpu_kind="dgpu", vram_mb=24576),
+        ram_total_mb=32768,
+        model_size_bytes=5 * 1024**3,   # ~5 GB
+        model_n_layers=32,
+    )
+    assert cfg.n_gpu_layers == -1
+
+
+def test_gpu_partial_offload_when_model_exceeds_vram():
+    """70B (~40 GB) sur 24 GB → offload partiel : 0 < n_gpu_layers < n_layers."""
+    cfg = compute_optimal_config(
+        caps=_caps(compute_class="cuda", gpu_kind="dgpu", vram_mb=24000),
+        ram_total_mb=131072,
+        model_size_bytes=40 * 1024**3,  # ~40 GB
+        model_n_layers=80,
+    )
+    assert 0 < cfg.n_gpu_layers < 80, "doit offloader une partie des couches"
+    assert cfg.n_ctx <= 8192, "contexte borné en offload partiel"
+    assert cfg.n_parallel == 1
+
+
+def test_gpu_partial_offload_unknown_layers_keeps_all():
+    """Sans nombre de couches (GGUF illisible) → repli sûr -1 (pas de régression)."""
+    cfg = compute_optimal_config(
+        caps=_caps(compute_class="cuda", gpu_kind="dgpu", vram_mb=8000),
+        ram_total_mb=65536,
+        model_size_bytes=20 * 1024**3,
+        model_n_layers=None,
+    )
+    assert cfg.n_gpu_layers == -1

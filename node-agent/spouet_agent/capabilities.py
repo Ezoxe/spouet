@@ -65,6 +65,9 @@ class NodeCapabilities:
     cpu_features: list[str]
     llama_variant: str
     force_cpu: bool
+    # Nombre de GPU dédiés exploitables (0 si CPU/iGPU). `vram_total_mb` est la
+    # VRAM AGRÉGÉE (somme de toutes les cartes) sur un node multi-GPU.
+    gpu_count: int = 0
     warnings: list[str] = field(default_factory=list)
     # Diagnostic libre (ex: chemins libcuda trouvés, raison de classification iGPU)
     detection_notes: list[str] = field(default_factory=list)
@@ -117,7 +120,7 @@ def probe_capabilities() -> NodeCapabilities:
     # 1. NVIDIA
     nv = _probe_nvidia(notes, warnings)
     if nv is not None:
-        gpu_model, vram_mb = nv
+        gpu_model, vram_mb, gpu_count = nv
         return NodeCapabilities(
             compute_class="cuda",
             gpu_kind="dgpu",
@@ -128,6 +131,7 @@ def probe_capabilities() -> NodeCapabilities:
             cpu_features=cpu_features,
             llama_variant=_pick_cuda_variant(notes),
             force_cpu=False,
+            gpu_count=gpu_count,
             warnings=warnings,
             detection_notes=notes,
         )
@@ -146,6 +150,7 @@ def probe_capabilities() -> NodeCapabilities:
             cpu_features=cpu_features,
             llama_variant="rocm",
             force_cpu=False,
+            gpu_count=1,
             warnings=warnings,
             detection_notes=notes,
         )
@@ -165,6 +170,7 @@ def probe_capabilities() -> NodeCapabilities:
                 cpu_features=cpu_features,
                 llama_variant="rocm",
                 force_cpu=False,
+                gpu_count=1,
                 warnings=warnings,
                 detection_notes=notes,
             )
@@ -292,8 +298,13 @@ def _pick_cuda_variant(notes: list[str]) -> str:
 
 def _probe_nvidia(
     notes: list[str], warnings: list[str]
-) -> tuple[str, int] | None:
-    """Vérifie nvidia-smi ET la présence de libcuda.so (runtime utilisable)."""
+) -> tuple[str, int, int] | None:
+    """Vérifie nvidia-smi ET la présence de libcuda.so (runtime utilisable).
+
+    Multi-GPU : lit TOUTES les cartes. Retourne (modèle, vram_totale_agrégée_mb,
+    nombre_de_cartes). Le modèle est celui de la 1re carte, suffixé ` ×N` si N>1
+    (llama.cpp exploite par défaut toutes les cartes visibles).
+    """
     if not shutil.which("nvidia-smi"):
         return None
     try:
@@ -309,17 +320,25 @@ def _probe_nvidia(
     except (subprocess.SubprocessError, FileNotFoundError):
         return None
 
-    line = out.strip().splitlines()[0] if out.strip() else None
-    if not line:
+    names: list[str] = []
+    vram_total = 0
+    for line in out.strip().splitlines():
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            vram_total += int(parts[1])
+        except ValueError:
+            continue
+        names.append(parts[0])
+
+    if not names:
         return None
-    parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 2:
-        return None
-    try:
-        gpu_name = parts[0]
-        vram_mb = int(parts[1])
-    except ValueError:
-        return None
+
+    count = len(names)
+    gpu_name = names[0] if count == 1 else f"{names[0]} ×{count}"
 
     if not _cuda_libs_available(notes):
         warnings.append(
@@ -327,8 +346,11 @@ def _probe_nvidia(
             "fallback CPU. Installe les drivers CUDA pour activer le GPU."
         )
         return None
-    notes.append(f"NVIDIA OK : {gpu_name} {vram_mb} MB")
-    return gpu_name, vram_mb
+    if count > 1:
+        notes.append(f"NVIDIA multi-GPU : {count} cartes, VRAM agrégée {vram_total} MB")
+    else:
+        notes.append(f"NVIDIA OK : {gpu_name} {vram_total} MB")
+    return gpu_name, vram_total, count
 
 
 def _cuda_libs_available(notes: list[str]) -> bool:

@@ -218,14 +218,17 @@ async def load_model(req: LoadRequest) -> dict:
         )
 
     from spouet_agent.capabilities import probe_capabilities
+    from spouet_agent.gguf_meta import read_gguf_metadata
     from spouet_agent.llama_config import compute_optimal_config, get_model_size_bytes
     # Si capabilities n'a pas été injecté (anciens chemins), on les recalcule
     # à la volée pour rester compatible.
     caps = _capabilities or probe_capabilities()
+    _meta = read_gguf_metadata(model_path)
     config = compute_optimal_config(
         caps=caps,
         ram_total_mb=_gpu_info.ram_total_mb if _gpu_info else None,
         model_size_bytes=get_model_size_bytes(model_path),
+        model_n_layers=_meta.n_layers if _meta is not None else None,
     )
     _load_status.update(
         state="loading",

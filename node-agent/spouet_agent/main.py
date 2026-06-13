@@ -17,10 +17,18 @@ from spouet_agent.agent_api import app as control_app
 from spouet_agent.agent_api import init as init_control
 from spouet_agent.image_api import app as image_app
 from spouet_agent.capabilities import NodeCapabilities, probe_capabilities
+from spouet_agent.gguf_meta import read_gguf_metadata
 from spouet_agent.gpu import gpu_info_from_capabilities, probe_gpu
+from spouet_agent.gpu_telemetry import probe_gpu_telemetry
 from spouet_agent.llama_config import LlamaConfig, compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
+
+
+def _model_n_layers(model_path: Path) -> int | None:
+    """Nombre de couches du GGUF (en-tête), ou None si illisible."""
+    meta = read_gguf_metadata(model_path)
+    return meta.n_layers if meta is not None else None
 
 
 def _lan_ip() -> str:
@@ -92,6 +100,7 @@ def detect(
     typer.echo(f"compute_class : {caps.compute_class}")
     typer.echo(f"gpu_kind      : {caps.gpu_kind}")
     typer.echo(f"gpu_model     : {caps.gpu_model or '—'}")
+    typer.echo(f"gpu_count     : {caps.gpu_count}")
     typer.echo(f"vram_total_mb : {caps.vram_total_mb or '—'}")
     typer.echo(f"cpu_model     : {caps.cpu_model or '—'}")
     typer.echo(f"cpu_cores     : {caps.cpu_physical_cores}")
@@ -259,6 +268,7 @@ async def _run(
                     caps=caps,
                     ram_total_mb=gpu.ram_total_mb,
                     model_size_bytes=get_model_size_bytes(model_path),
+                    model_n_layers=_model_n_layers(model_path),
                 )
                 typer.echo(f"[spouet-agent] autoloading {autoload}…")
                 try:
@@ -279,6 +289,7 @@ async def _run(
                 caps=caps,
                 ram_total_mb=gpu.ram_total_mb,
                 model_size_bytes=get_model_size_bytes(first),
+                model_n_layers=_model_n_layers(first),
             )
             typer.echo(f"[spouet-agent] autoloading first model {first.name}…")
             try:
@@ -475,6 +486,24 @@ async def _heartbeat_loop(
                 gpu = probe_gpu()
                 gpu_info_ref[0] = gpu
 
+                # Télémétrie GPU live (par carte) : température, usage, puissance,
+                # ventilo, fréquences. Best-effort ([] si indispo).
+                tele = probe_gpu_telemetry(capabilities.compute_class if capabilities else "cpu")
+                gpu_telemetry_payload = [t.to_dict() for t in tele]
+                # Agrégats pour les séries temporelles (1 valeur par node) :
+                # température/usage max sur les cartes, puissance totale.
+                _temps = [t.temp_c for t in tele if t.temp_c is not None]
+                _utils = [t.util_pct for t in tele if t.util_pct is not None]
+                _powers = [t.power_w for t in tele if t.power_w is not None]
+                gpu_temp_c = max(_temps) if _temps else None
+                gpu_util_pct = max(_utils) if _utils else None
+                gpu_power_w = round(sum(_powers), 1) if _powers else None
+                # VRAM utilisée agrégée : préfère la somme par carte (multi-GPU)
+                # à la lecture mono-GPU de gpu.vram_used_mb.
+                _vram_used = [t.vram_used_mb for t in tele if t.vram_used_mb is not None]
+                if _vram_used:
+                    gpu.vram_used_mb = sum(_vram_used)
+
                 # CPU%
                 cpu_pct: float | None = None
                 if _psutil is not None:
@@ -551,6 +580,11 @@ async def _heartbeat_loop(
                     "cpu_pct": cpu_pct,
                     "net_rx_kbps": net_rx_kbps,
                     "net_tx_kbps": net_tx_kbps,
+                    # Télémétrie GPU : snapshot live (par carte) + agrégats série
+                    "gpu_telemetry": gpu_telemetry_payload,
+                    "gpu_temp_c": gpu_temp_c,
+                    "gpu_util_pct": gpu_util_pct,
+                    "gpu_power_w": gpu_power_w,
                 }
                 r = await client.post(
                     f"{backend}/api/nodes/heartbeat",

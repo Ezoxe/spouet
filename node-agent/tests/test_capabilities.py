@@ -49,14 +49,33 @@ def test_cpu_only_machine(monkeypatch):
 def test_nvidia_dgpu_dominates(monkeypatch):
     """nvidia-smi + libcuda OK → compute_class=cuda, dgpu."""
     _stub_cpu(monkeypatch, model="AMD Ryzen 9 7950X", cores=16)
-    monkeypatch.setattr(caps_mod, "_probe_nvidia", lambda notes, warnings: ("NVIDIA RTX 4090", 24576))
+    monkeypatch.setattr(caps_mod, "_probe_nvidia", lambda notes, warnings: ("NVIDIA RTX 4090", 24576, 1))
 
     caps = caps_mod.probe_capabilities()
     assert caps.compute_class == "cuda"
     assert caps.gpu_kind == "dgpu"
     assert caps.gpu_model == "NVIDIA RTX 4090"
     assert caps.vram_total_mb == 24576
+    assert caps.gpu_count == 1
     assert caps.llama_variant.startswith("cuda-cu")
+
+
+def test_nvidia_multi_gpu_aggregates_vram(monkeypatch):
+    """2 cartes NVIDIA → VRAM sommée + gpu_count=2 (parsing réel de _probe_nvidia)."""
+    _stub_cpu(monkeypatch, model="AMD Ryzen 9 7950X", cores=16)
+    monkeypatch.setattr(caps_mod.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(
+        caps_mod.subprocess,
+        "check_output",
+        lambda *a, **kw: "NVIDIA RTX 4090, 24576\nNVIDIA RTX 4090, 24576\n",
+    )
+    monkeypatch.setattr(caps_mod, "_cuda_libs_available", lambda notes: True)
+
+    caps = caps_mod.probe_capabilities()
+    assert caps.compute_class == "cuda"
+    assert caps.gpu_count == 2
+    assert caps.vram_total_mb == 49152
+    assert caps.gpu_model == "NVIDIA RTX 4090 ×2"
 
 
 def test_nvidia_without_libcuda_falls_back_to_cpu(monkeypatch):
