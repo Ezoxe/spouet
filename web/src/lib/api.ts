@@ -194,8 +194,26 @@ export interface NodeCapabilities {
     cpu_features: string[];
     llama_variant: string;
     force_cpu: boolean;
+    /** Nombre de GPU dédiés exploitables (multi-GPU). */
+    gpu_count?: number;
     warnings: string[];
     detection_notes: string[];
+}
+
+/** Télémétrie live d'une carte GPU (un objet par carte). */
+export interface GpuTelemetry {
+    index: number;
+    name: string | null;
+    util_pct: number | null;
+    mem_util_pct: number | null;
+    vram_used_mb: number | null;
+    vram_total_mb: number | null;
+    temp_c: number | null;
+    power_w: number | null;
+    power_limit_w: number | null;
+    fan_pct: number | null;
+    clock_sm_mhz: number | null;
+    clock_mem_mhz: number | null;
 }
 
 export interface NodeOut {
@@ -226,6 +244,8 @@ export interface NodeOut {
     llama_prompt_tokens_processed: number | null;
     llama_tokens_generated: number | null;
     capabilities: NodeCapabilities | null;
+    // Télémétrie GPU live (snapshot multi-GPU)
+    gpu_telemetry: GpuTelemetry[] | null;
     // Génération d'images sur ce node (extra spouet-agent[images])
     image_enabled: boolean;
     image_port: number | null;
@@ -417,6 +437,9 @@ export interface MetricsPoint {
     llama_running: boolean | null;
     llama_model_loaded: string | null;
     llama_queue_pending: number | null;
+    gpu_temp_c: number | null;
+    gpu_util_pct: number | null;
+    gpu_power_w: number | null;
 }
 
 export interface NodeMetricsOut {

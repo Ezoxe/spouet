@@ -15,6 +15,7 @@
     } from 'lucide-svelte';
     import { goto } from '$app/navigation';
     import CapabilitiesCard from '$lib/components/CapabilitiesCard.svelte';
+    import GpuTelemetryCard from '$lib/components/GpuTelemetryCard.svelte';
     import TimeSeriesChart, { type Series } from '$lib/components/TimeSeriesChart.svelte';
     import type { MetricsRange, NodeMetricsOut } from '$lib/api';
 
@@ -136,6 +137,15 @@
             mk('RAM', 'rgb(168 85 247)', ' MB', 0, (p) => p.ram_used_mb, 0, ramMax)
         ];
         if (vramMax) charts.push(mk('VRAM', 'rgb(34 211 238)', ' MB', 0, (p) => p.vram_used_mb, 0, vramMax));
+        // Graphiques GPU : seulement sur un node GPU (température/usage/puissance).
+        const hasGpu = node?.capabilities?.compute_class && node.capabilities.compute_class !== 'cpu';
+        if (hasGpu) {
+            charts.push(
+                mk('GPU usage', 'rgb(34 211 238)', ' %', 0, (p) => p.gpu_util_pct, 0, 100),
+                mk('GPU temp.', 'rgb(248 113 113)', ' °C', 0, (p) => p.gpu_temp_c, 0),
+                mk('GPU puissance', 'rgb(250 204 21)', ' W', 0, (p) => p.gpu_power_w, 0)
+            );
+        }
         charts.push(
             mk('Débit (tok/s)', 'rgb(16 185 129)', '', 1, (p) => p.llama_tps, 0),
             mk('Slots actifs', 'rgb(251 191 36)', '', 0, (p) => p.llama_slots_active, 0),
@@ -542,6 +552,9 @@
 
         <!-- Capabilities (compute_class, gpu_kind, llama_variant, warnings) -->
         <CapabilitiesCard caps={node.capabilities} agentVersion={node.agent_version} />
+
+        <!-- Télémétrie GPU live (température, usage, VRAM, puissance, ventilo, fréquences) -->
+        <GpuTelemetryCard telemetry={node.gpu_telemetry} />
 
         <!-- Métriques : un petit graphique indépendant par élément, rafraîchi en direct -->
         <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
