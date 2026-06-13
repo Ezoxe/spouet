@@ -7,13 +7,32 @@
      * - Sinon → JSON formaté repliable.
      * Remplace l'ancien dump JSON brut ambre.
      */
-    import { Terminal, ChevronDown, CircleCheck, CircleAlert, Ban, Clock, Search } from 'lucide-svelte';
+    import {
+        Terminal,
+        ChevronDown,
+        CircleCheck,
+        CircleAlert,
+        Ban,
+        Clock,
+        Search,
+        Copy,
+        Check
+    } from 'lucide-svelte';
+    import { copyText } from '$lib/clipboard';
 
     interface Props {
         toolName: string;
         content: string;
     }
     let { toolName, content }: Props = $props();
+
+    let copied = $state(false);
+    async function copy() {
+        if (await copyText(content)) {
+            copied = true;
+            setTimeout(() => (copied = false), 1500);
+        }
+    }
 
     type Json = Record<string, unknown>;
 
@@ -69,12 +88,23 @@
 </script>
 
 <div class="cmd">
-    <button type="button" class="cmd-head" onclick={() => (open = !open)} aria-expanded={open}>
-        <HeadIcon size={13} />
-        <span class="cmd-name">{toolName}</span>
-        <span class="cmd-status {sm.cls}"><sm.Icon size={11} /> {sm.label}</span>
-        <ChevronDown size={13} class="cmd-chev {open ? 'open' : ''}" />
-    </button>
+    <div class="cmd-head">
+        <button type="button" class="cmd-toggle" onclick={() => (open = !open)} aria-expanded={open}>
+            <HeadIcon size={13} />
+            <span class="cmd-name">{toolName}</span>
+            <span class="cmd-status {sm.cls}"><sm.Icon size={11} class="cmd-st-ico" /> {sm.label}</span>
+            <ChevronDown size={13} class="cmd-chev {open ? 'open' : ''}" />
+        </button>
+        <button
+            type="button"
+            class="cmd-copy {copied ? 'copied' : ''}"
+            onclick={copy}
+            aria-label="Copier le résultat de l'outil"
+            title="Copier le résultat"
+        >
+            {#if copied}<Check size={12} />{:else}<Copy size={12} />{/if}
+        </button>
+    </div>
 
     {#if open}
         {#if isCommand}
@@ -133,21 +163,89 @@
         background: color-mix(in oklch, var(--color-bg-0) 82%, oklch(0 0 0 / 0.18));
         overflow: hidden;
         font-size: 0.8rem;
+        animation: cmd-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
     }
     :global(:root:not([data-theme='dark'])) .cmd {
         background: var(--light-surface-1, oklch(0.965 0.004 240));
     }
+    @keyframes cmd-in {
+        from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.99);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
+    }
     .cmd-head {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.25rem;
         width: 100%;
-        padding: 0.4rem 0.6rem;
-        color: var(--color-text-muted);
         background: color-mix(in oklch, var(--color-bg-2) 55%, transparent);
         border-bottom: 1px solid var(--color-border-subtle);
+    }
+    .cmd-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 1;
+        min-width: 0;
+        padding: 0.4rem 0.6rem;
+        color: var(--color-text-muted);
         cursor: pointer;
         text-align: left;
+    }
+    .cmd-copy {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 1.75rem;
+        height: 1.75rem;
+        margin-right: 0.3rem;
+        border-radius: 6px;
+        color: var(--color-text-subtle);
+        cursor: pointer;
+        opacity: 0;
+        transition:
+            opacity 0.15s ease,
+            background 0.15s ease,
+            color 0.15s ease;
+    }
+    .cmd:hover .cmd-copy,
+    .cmd-copy:focus-visible {
+        opacity: 1;
+    }
+    .cmd-copy:hover {
+        background: var(--color-bg-3);
+        color: var(--color-text);
+    }
+    .cmd-copy.copied {
+        color: var(--color-success);
+        opacity: 1;
+    }
+    :global(.cmd-st-ico) {
+        animation: cmd-st-pop 0.45s 0.12s backwards cubic-bezier(0.2, 0.9, 0.3, 1.3);
+    }
+    @keyframes cmd-st-pop {
+        0% {
+            transform: scale(0.2);
+            opacity: 0;
+        }
+        65% {
+            transform: scale(1.25);
+            opacity: 1;
+        }
+        100% {
+            transform: scale(1);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .cmd,
+        :global(.cmd-st-ico) {
+            animation: none !important;
+        }
     }
     .cmd-name {
         font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;

@@ -9,6 +9,8 @@
      *   citations, tableaux, separateurs, sauts de ligne.
      * - Aucune dependance externe.
      */
+    import { copyText } from '$lib/clipboard';
+
     interface Props {
         content: string;
         class?: string;
@@ -293,19 +295,18 @@
         if (!btn) return;
         const code = btn.closest('.md-code')?.querySelector('pre code');
         if (!code) return;
-        navigator.clipboard
-            .writeText(code.textContent ?? '')
-            .then(() => {
-                btn.classList.add('copied');
-                const label = btn.querySelector('.md-copy-label');
-                const prev = label?.textContent ?? 'Copier';
-                if (label) label.textContent = 'Copié';
-                setTimeout(() => {
-                    btn.classList.remove('copied');
-                    if (label) label.textContent = prev;
-                }, 1500);
-            })
-            .catch(() => {});
+        // copyText : robuste hors contexte sécurisé (app servie en HTTP sur le LAN).
+        void copyText(code.textContent ?? '').then((ok) => {
+            if (!ok) return;
+            btn.classList.add('copied');
+            const label = btn.querySelector('.md-copy-label');
+            const prev = label?.textContent ?? 'Copier';
+            if (label) label.textContent = 'Copié';
+            setTimeout(() => {
+                btn.classList.remove('copied');
+                if (label) label.textContent = prev;
+            }, 1500);
+        });
     }
 </script>
 

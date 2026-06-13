@@ -9,6 +9,7 @@
     import Markdown from './Markdown.svelte';
     import CommandCard from './CommandCard.svelte';
     import { toast } from '$lib/toast.svelte';
+    import { copyText } from '$lib/clipboard';
 
     interface Props {
         message:
@@ -59,12 +60,9 @@
         editing = false;
     }
     async function copyContent() {
-        try {
-            await navigator.clipboard.writeText(message.content);
-            toast.success('Copié');
-        } catch {
-            toast.error('Copie impossible');
-        }
+        // copyText : robuste hors contexte sécurisé (app servie en HTTP sur le LAN).
+        if (await copyText(message.content)) toast.success('Copié');
+        else toast.error('Copie impossible');
     }
 
     // L'icône Info n'a de sens que si on a au moins quelques métriques
