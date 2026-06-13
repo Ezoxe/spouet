@@ -12,8 +12,12 @@
     interface Props {
         content: string;
         class?: string;
+        /** Pendant le streaming, le {@html} est re-rendu à chaque token : on coupe
+         *  les animations d'apparition des blocs (code/tableaux) pour éviter le
+         *  scintillement. Elles ne jouent qu'une fois, sur un message figé. */
+        streaming?: boolean;
     }
-    let { content, class: klass = '' }: Props = $props();
+    let { content, class: klass = '', streaming = false }: Props = $props();
 
     const html = $derived(parse(content ?? ''));
 
@@ -75,16 +79,24 @@
 
     const COPY_ICON =
         '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const CHECK_ICON =
+        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
     function codeBlock(code: string, lang: string): string {
+        const body = code.replace(/\n$/, '');
         const label = (lang || 'code').toLowerCase();
+        const lines = body ? body.split('\n').length : 0;
+        const count = lines > 1 ? '<span class="md-code-lines">' + lines + ' lignes</span>' : '';
         return (
-            '<div class="md-code"><div class="md-code-head"><span class="md-code-lang">' +
-            esc(label) +
+            '<div class="md-code" data-lang="' + esc(label) + '">' +
+            '<div class="md-code-head"><span class="md-code-id">' +
+            '<span class="md-code-dot"></span>' +
+            '<span class="md-code-lang">' + esc(label) + '</span>' + count +
             '</span><button class="md-code-copy" type="button" aria-label="Copier le code">' +
-            COPY_ICON +
+            '<span class="md-ico md-ico-copy">' + COPY_ICON + '</span>' +
+            '<span class="md-ico md-ico-check">' + CHECK_ICON + '</span>' +
             '<span class="md-copy-label">Copier</span></button></div><pre><code>' +
-            highlight(code.replace(/\n$/, ''), label) +
+            highlight(body, label) +
             '</code></pre></div>'
         );
     }
@@ -141,7 +153,13 @@
         const body = rows
             .map((r) => '<tr>' + r.map((c) => '<td>' + renderInline(c) + '</td>').join('') + '</tr>')
             .join('');
-        return '<table><thead><tr>' + th + '</tr></thead><tbody>' + body + '</tbody></table>';
+        return (
+            '<div class="md-table-wrap"><table><thead><tr>' +
+            th +
+            '</tr></thead><tbody>' +
+            body +
+            '</tbody></table></div>'
+        );
     }
 
     function listHtml(items: { depth: number; ordered: boolean; text: string }[]): string {
@@ -278,20 +296,20 @@
         navigator.clipboard
             .writeText(code.textContent ?? '')
             .then(() => {
+                btn.classList.add('copied');
                 const label = btn.querySelector('.md-copy-label');
-                if (label) {
-                    const prev = label.textContent;
-                    label.textContent = 'Copie';
-                    setTimeout(() => {
-                        if (label) label.textContent = prev;
-                    }, 1500);
-                }
+                const prev = label?.textContent ?? 'Copier';
+                if (label) label.textContent = 'Copié';
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    if (label) label.textContent = prev;
+                }, 1500);
             })
             .catch(() => {});
     }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="md {klass}" onclick={onClick}>
+<div class="md {klass}" class:md-streaming={streaming} onclick={onClick}>
     {@html html}
 </div>

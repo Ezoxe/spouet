@@ -855,13 +855,41 @@ textarea {
 .md em {
     font-style: italic;
 }
+/* Tableaux : enveloppe scrollable avec ombres de bord (indicateur de débordement
+   horizontal), en-tête collant, zébrures et surlignage de ligne au survol. */
+.md-table-wrap {
+    margin: 0.85em 0;
+    max-height: 26rem;
+    overflow: auto;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border-subtle);
+    /* Technique « scroll shadows » (Lea Verou) : 2 voiles opaques (local) aux
+       bords + 2 ombres (scroll) révélées quand le tableau déborde. */
+    background:
+        linear-gradient(to right, var(--color-bg-1) 30%, transparent) 0 0 / 34px 100% no-repeat
+            local,
+        linear-gradient(to left, var(--color-bg-1) 30%, transparent) 100% 0 / 34px 100% no-repeat
+            local,
+        radial-gradient(farthest-side at 0 50%, oklch(0 0 0 / 0.22), transparent) 0 0 / 14px 100%
+            no-repeat scroll,
+        radial-gradient(farthest-side at 100% 50%, oklch(0 0 0 / 0.22), transparent) 100% 0 / 14px
+            100% no-repeat scroll;
+}
+:root:not([data-theme='dark']) .md-table-wrap {
+    background:
+        linear-gradient(to right, var(--light-surface-1) 30%, transparent) 0 0 / 34px 100% no-repeat
+            local,
+        linear-gradient(to left, var(--light-surface-1) 30%, transparent) 100% 0 / 34px 100%
+            no-repeat local,
+        radial-gradient(farthest-side at 0 50%, oklch(0.2 0.01 260 / 0.1), transparent) 0 0 / 14px
+            100% no-repeat scroll,
+        radial-gradient(farthest-side at 100% 50%, oklch(0.2 0.01 260 / 0.1), transparent) 100% 0 /
+            14px 100% no-repeat scroll;
+}
 .md table {
     width: 100%;
-    margin: 0.85em 0;
     border-collapse: collapse;
     font-size: 0.9em;
-    display: block;
-    overflow-x: auto;
 }
 .md th,
 .md td {
@@ -870,8 +898,25 @@ textarea {
     text-align: left;
 }
 .md th {
-    background: color-mix(in oklch, var(--color-accent) 10%, transparent);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    /* Opaque (mélange dans bg-1) → les lignes ne transparaissent pas sous l'en-tête
+       collant pendant le défilement vertical. */
+    background: color-mix(in oklch, var(--color-accent) 12%, var(--color-bg-1));
     font-weight: 600;
+}
+:root:not([data-theme='dark']) .md th {
+    background: color-mix(in oklch, var(--color-accent) 10%, var(--light-surface-1));
+}
+.md tbody tr:nth-child(even) td {
+    background: color-mix(in oklch, var(--color-text) 4%, transparent);
+}
+.md tbody tr {
+    transition: background-color 0.12s ease;
+}
+.md tbody tr:hover td {
+    background: color-mix(in oklch, var(--color-accent) 9%, transparent);
 }
 
 /* Code inline */
@@ -931,6 +976,140 @@ textarea {
     background: var(--color-bg-3);
     color: var(--color-text);
 }
+
+/* Identité du bloc : pastille colorée par langage + libellé + nb de lignes */
+.md-code-id {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+}
+.md-code-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 999px;
+    background: var(--dot, var(--color-accent));
+    box-shadow: 0 0 7px -1px color-mix(in oklch, var(--dot, var(--color-accent)) 75%, transparent);
+}
+.md-code-lines {
+    font-size: 0.92em;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text-subtle);
+}
+/* Couleurs façon « type de fichier » — repère visuel rapide du langage */
+.md-code[data-lang='python'],
+.md-code[data-lang='py'] {
+    --dot: oklch(0.72 0.13 245);
+}
+.md-code[data-lang='javascript'],
+.md-code[data-lang='js'],
+.md-code[data-lang='jsx'] {
+    --dot: oklch(0.82 0.15 95);
+}
+.md-code[data-lang='typescript'],
+.md-code[data-lang='ts'],
+.md-code[data-lang='tsx'] {
+    --dot: oklch(0.64 0.14 250);
+}
+.md-code[data-lang='json'] {
+    --dot: oklch(0.7 0.02 260);
+}
+.md-code[data-lang='bash'],
+.md-code[data-lang='sh'],
+.md-code[data-lang='shell'],
+.md-code[data-lang='zsh'],
+.md-code[data-lang='console'] {
+    --dot: oklch(0.74 0.16 150);
+}
+.md-code[data-lang='html'],
+.md-code[data-lang='svelte'],
+.md-code[data-lang='xml'] {
+    --dot: oklch(0.72 0.16 45);
+}
+.md-code[data-lang='css'],
+.md-code[data-lang='scss'] {
+    --dot: oklch(0.66 0.16 295);
+}
+.md-code[data-lang='rust'],
+.md-code[data-lang='rs'] {
+    --dot: oklch(0.68 0.15 50);
+}
+.md-code[data-lang='go'] {
+    --dot: oklch(0.74 0.12 210);
+}
+.md-code[data-lang='sql'] {
+    --dot: oklch(0.72 0.1 200);
+}
+.md-code[data-lang='yaml'],
+.md-code[data-lang='yml'],
+.md-code[data-lang='toml'] {
+    --dot: oklch(0.68 0.16 25);
+}
+.md-code[data-lang='java'],
+.md-code[data-lang='kotlin'] {
+    --dot: oklch(0.66 0.15 40);
+}
+.md-code[data-lang='c'],
+.md-code[data-lang='cpp'],
+.md-code[data-lang='c++'] {
+    --dot: oklch(0.62 0.14 255);
+}
+.md-code[data-lang='dockerfile'],
+.md-code[data-lang='docker'] {
+    --dot: oklch(0.66 0.13 250);
+}
+
+/* Bouton copier : bascule icône copie → coche verte (feedback de succès) */
+.md-ico {
+    display: inline-flex;
+}
+.md-ico-check {
+    display: none;
+    color: var(--color-success);
+}
+.md-code-copy.copied {
+    color: var(--color-success);
+}
+.md-code-copy.copied .md-ico-copy {
+    display: none;
+}
+.md-code-copy.copied .md-ico-check {
+    display: inline-flex;
+    animation: md-check-pop 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+@keyframes md-check-pop {
+    0% {
+        transform: scale(0.3);
+        opacity: 0;
+    }
+    60% {
+        transform: scale(1.25);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* Apparition des blocs riches (code/tableaux) à l'ouverture d'une conversation.
+   Coupée pendant le streaming (.md-streaming) pour éviter le scintillement du
+   re-rendu par token. */
+@keyframes md-block-reveal {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+.md:not(.md-streaming) .md-code,
+.md:not(.md-streaming) .md-table-wrap {
+    animation: md-block-reveal 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 .md-code pre {
     margin: 0;
     padding: 0.9em 1em;
