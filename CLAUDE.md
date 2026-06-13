@@ -160,6 +160,7 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 ## Variables d'environnement utiles
 
 - `SPOUET_FORCE_CPU=1` (node-agent) : court-circuite la détection GPU, force `compute_class=cpu`. Filet de sécurité si la détection se trompe sur un dGPU non utilisable.
+- `SPOUET_MAX_THREADS` (node-agent, défaut 16) : plafond de threads CPU passé à llama-server (`compute_optimal_config`). À relever sur un gros CPU (EPYC/Threadripper) ou à abaisser pour brider un node partagé.
 - `SPOUET_METRICS_RETENTION_DAYS` (backend, défaut 7) : durée de conservation de `node_metrics_1min`. La table `node_metrics_raw` est toujours purgée à 24h.
 - `SPOUET_CONNECTORS_REGISTRY_DIR` (backend, défaut `/opt/spouet/connectors/registry`) : chemin où le wizard Discord cherche le manifest canonique.
 - `SPOUET_WHISPER_MODEL` / `SPOUET_WHISPER_DEVICE` / `SPOUET_WHISPER_COMPUTE_TYPE` / `SPOUET_PIPER_VOICE` (service `voice-engine`) : modèle Whisper (`small` par défaut), device (`cpu`/`cuda`), type de calcul, et voix Piper FR. Cf. `voice-engine/README.md`. Premier démarrage = téléchargement des modèles (volume `deploy/data/voice`).
@@ -173,3 +174,7 @@ Installation : `spouet-admin tools install ./tools/registry/<slug>` → build im
 ## Capabilities : source unique de vérité hardware
 
 Depuis la v0.3.0 du node-agent, la classification CPU vs CUDA vs ROCm + dGPU vs iGPU est centralisée dans `node-agent/spouet_agent/capabilities.py::probe_capabilities()`. Le résultat est sérialisé dans le heartbeat, persisté en JSONB sur `nodes.capabilities`, et consommé par `compute_optimal_config()` + `LlamaServer._build_cmd` (garde-fou anti-GPU-sur-CPU). Pour debug : `sudo -u spouet uv run --directory /opt/spouet/node-agent spouet-agent detect --json`.
+
+- **Multi-GPU** : `_probe_nvidia` lit toutes les cartes → `vram_total_mb` est la VRAM **agrégée** et `capabilities.gpu_count` le nombre de cartes. Les tiers de `compute_optimal_config` (ctx/batch/parallel) s'appuient sur cette VRAM totale.
+- **Offload partiel** : si un modèle ne tient pas en VRAM, `compute_optimal_config` lit le nombre de couches dans l'en-tête GGUF (`gguf_meta.read_gguf_metadata` → `<arch>.block_count`) et calcule un `n_gpu_layers` partiel (le reste sur CPU) plutôt que `-1` (qui ferait planter llama-server en OOM). Couches inconnues → repli `-1` (comportement historique).
+- **Télémétrie GPU** : `gpu_telemetry.probe_gpu_telemetry()` mesure à chaque heartbeat, **par carte**, température / usage % / VRAM / puissance / ventilo / fréquences (NVIDIA via `nvidia-smi`, AMD via sysfs+hwmon). Snapshot live en JSONB sur `nodes.gpu_telemetry` (page détail node) + agrégats (temp/usage max, puissance totale) historisés dans `node_metrics_{raw,1min}` → graphiques GPU dans le temps.
