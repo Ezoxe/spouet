@@ -95,6 +95,9 @@ class Node(Base, TimestampMixin):
     llama_tokens_generated: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # NodeCapabilities sérialisé (compute_class, gpu_kind, llama_variant, warnings…)
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Télémétrie GPU live (snapshot multi-GPU : temp, usage, VRAM, puissance,
+    # ventilo, fréquences par carte). Remplie par spouet-agent ≥ télémétrie GPU.
+    gpu_telemetry: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     # Génération d'images sur le node (extra spouet-agent[images]). Le backend
     # route les demandes d'image vers http://{host}:{image_port}/generate.
     image_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -730,6 +733,10 @@ class NodeMetricRaw(Base):
     llama_prompt_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     llama_gen_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     llama_queue_pending: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Télémétrie GPU agrégée (multi-GPU) : température/usage max, puissance totale.
+    gpu_temp_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_util_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class NodeMetric1Min(Base):
@@ -761,3 +768,6 @@ class NodeMetric1Min(Base):
     llama_prompt_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     llama_gen_tokens_total: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     llama_queue_pending: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gpu_temp_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_util_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)

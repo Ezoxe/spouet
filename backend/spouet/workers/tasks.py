@@ -271,7 +271,8 @@ async def _rollup_metrics_1min_async() -> int:
                     net_rx_kbps, net_tx_kbps,
                     llama_running, llama_model_loaded, llama_tps,
                     llama_slots_active, llama_prompt_tokens_total,
-                    llama_gen_tokens_total, llama_queue_pending
+                    llama_gen_tokens_total, llama_queue_pending,
+                    gpu_temp_c, gpu_util_pct, gpu_power_w
                 )
                 SELECT
                     date_trunc('minute', time) AS time,
@@ -290,7 +291,10 @@ async def _rollup_metrics_1min_async() -> int:
                     MAX(llama_slots_active)::int,
                     MAX(llama_prompt_tokens_total),
                     MAX(llama_gen_tokens_total),
-                    MAX(llama_queue_pending)::int
+                    MAX(llama_queue_pending)::int,
+                    MAX(gpu_temp_c)::real,
+                    AVG(gpu_util_pct)::real,
+                    AVG(gpu_power_w)::real
                 FROM node_metrics_raw
                 WHERE time >= date_trunc('minute', now()) - interval '2 minutes'
                   AND time <  date_trunc('minute', now()) - interval '1 minute'

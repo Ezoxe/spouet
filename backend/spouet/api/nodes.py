@@ -77,6 +77,12 @@ class HeartbeatRequest(BaseModel):
     net_rx_kbps: float | None = Field(default=None, ge=0)
     net_tx_kbps: float | None = Field(default=None, ge=0)
     llama_queue_pending: int | None = Field(default=None, ge=0)
+    # Télémétrie GPU (agents avec support télémétrie) : snapshot live multi-GPU
+    # + agrégats pour les séries temporelles.
+    gpu_telemetry: list[dict] | None = None
+    gpu_temp_c: float | None = Field(default=None, ge=0)
+    gpu_util_pct: float | None = Field(default=None, ge=0, le=100)
+    gpu_power_w: float | None = Field(default=None, ge=0)
 
 
 class HeartbeatResponse(BaseModel):
@@ -121,6 +127,8 @@ class NodeOut(BaseModel):
     llama_tokens_generated: int | None
     # Capabilities matérielles (issues du heartbeat de spouet-agent ≥ 0.3.0)
     capabilities: dict | None = None
+    # Télémétrie GPU live (snapshot multi-GPU)
+    gpu_telemetry: list[dict] | None = None
     # Génération d'images sur ce node
     image_enabled: bool = False
     image_port: int | None = None
@@ -173,6 +181,10 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
     # (rétro-compat : on ne touche pas la valeur précédente si payload absent).
     if payload.capabilities is not None:
         node.capabilities = payload.capabilities
+    # Télémétrie GPU : remplacée à chaque heartbeat (snapshot). None si l'agent
+    # ne la fournit pas (rétro-compat : on garde la valeur précédente).
+    if payload.gpu_telemetry is not None:
+        node.gpu_telemetry = payload.gpu_telemetry
     node.image_enabled = payload.image_enabled
     node.image_port = payload.image_port
     node.image_model = payload.image_model
@@ -240,6 +252,9 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
                 llama_prompt_tokens_total=payload.llama_prompt_tokens_processed,
                 llama_gen_tokens_total=payload.llama_tokens_generated,
                 llama_queue_pending=payload.llama_queue_pending,
+                gpu_temp_c=payload.gpu_temp_c,
+                gpu_util_pct=payload.gpu_util_pct,
+                gpu_power_w=payload.gpu_power_w,
             )
         )
         await db.commit()
@@ -271,6 +286,10 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
             "llama_prompt_tokens_total": payload.llama_prompt_tokens_processed,
             "llama_gen_tokens_total": payload.llama_tokens_generated,
             "llama_queue_pending": payload.llama_queue_pending,
+            "gpu_telemetry": payload.gpu_telemetry,
+            "gpu_temp_c": payload.gpu_temp_c,
+            "gpu_util_pct": payload.gpu_util_pct,
+            "gpu_power_w": payload.gpu_power_w,
         },
     )
     return HeartbeatResponse(
@@ -709,6 +728,7 @@ async def get_node_diag(node_id: UUID, _: CurrentUser, db: DbSession) -> dict:  
             "last_seen": node.last_seen.isoformat() if node.last_seen else None,
         },
         "capabilities": node.capabilities,
+        "gpu_telemetry": node.gpu_telemetry,
         "agent_diag": agent_diag,
         "recent_heartbeats": [
             {
@@ -827,6 +847,9 @@ async def get_node_metrics(
                 "llama_running": r.llama_running,
                 "llama_model_loaded": r.llama_model_loaded,
                 "llama_queue_pending": r.llama_queue_pending,
+                "gpu_temp_c": r.gpu_temp_c,
+                "gpu_util_pct": r.gpu_util_pct,
+                "gpu_power_w": r.gpu_power_w,
             }
             for r in rows
         ],
@@ -916,6 +939,7 @@ def _node_out(n: Node, models: list[Model]) -> NodeOut:
         llama_prompt_tokens_processed=n.llama_prompt_tokens_processed,
         llama_tokens_generated=n.llama_tokens_generated,
         capabilities=n.capabilities,
+        gpu_telemetry=n.gpu_telemetry,
         image_enabled=n.image_enabled,
         image_port=n.image_port,
         image_model=n.image_model,
