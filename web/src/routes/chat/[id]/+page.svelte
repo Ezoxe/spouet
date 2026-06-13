@@ -18,6 +18,7 @@
     import VoiceMode from '$lib/components/VoiceMode.svelte';
     import ToolPicker from '$lib/components/ToolPicker.svelte';
     import VisualCard from '$lib/components/VisualCard.svelte';
+    import ToolRunIndicator from '$lib/components/ToolRunIndicator.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
     import { Sparkles, MessageSquare, Zap, AudioLines, ChevronDown, Loader2, Download, RefreshCw, Square, Copy } from 'lucide-svelte';
@@ -69,6 +70,9 @@
         text?: string | null;
         duration_ms?: number;
     } | null = $state(null);
+    // Outils en cours d'exécution (entre le tool_call et son tool_result) : on
+    // affiche un indicateur « live » animé tant que le conteneur/built-in tourne.
+    let runningTools: { id: string; name: string; summary: string }[] = $state([]);
     let scroller: HTMLElement | undefined = $state();
     // Espaceur bas : réserve une hauteur d'écran sous le dernier échange pour que
     // le couple question/réponse puisse remonter en haut du viewport (façon
@@ -245,7 +249,25 @@
                     };
                 } else if (ev.event === 'visual') {
                     currentVisual = ev.data as typeof currentVisual;
+                } else if (ev.event === 'tool_calls') {
+                    // Le modèle déclenche un outil : indicateur « live » jusqu'au résultat.
+                    const tc = ev.data as { function?: { name?: string; arguments?: unknown } };
+                    const fn = tc?.function ?? {};
+                    const args = fn.arguments;
+                    let summary = '';
+                    if (args && typeof args === 'object') {
+                        summary = Object.entries(args as Record<string, unknown>)
+                            .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+                            .join(' ');
+                    } else if (typeof args === 'string') {
+                        summary = args;
+                    }
+                    runningTools = [
+                        ...runningTools,
+                        { id: uuid(), name: String(fn.name ?? 'outil'), summary: summary.slice(0, 110) }
+                    ];
                 } else if (ev.event === 'tool_result') {
+                    runningTools = [];
                     if (convId) messages = await conversations.messages(convId);
                     // après reload, on perd la ref locale assistant → on recrée un placeholder
                     assistant = makePlaceholderAssistant();
@@ -274,6 +296,7 @@
             abortController = null;
             approval = null;
             loadingModel = null;
+            runningTools = [];
             // Recharge l'état persisté : si la génération a été stoppée, le
             // backend a tout de même sauvegardé les tokens reçus jusque-là.
             if (convId) {
@@ -611,6 +634,13 @@
                 description="Posez votre première question pour démarrer."
             />
         {/each}
+        {#if runningTools.length}
+            <div class="flex flex-col gap-2">
+                {#each runningTools as t (t.id)}
+                    <ToolRunIndicator name={t.name} summary={t.summary} />
+                {/each}
+            </div>
+        {/if}
         {#if spacerH > 0}
             <div style="height:{spacerH}px" aria-hidden="true"></div>
         {/if}
