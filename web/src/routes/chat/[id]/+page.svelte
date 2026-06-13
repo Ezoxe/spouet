@@ -314,6 +314,24 @@
         }
     }
 
+    // Suivi de la position de défilement → bouton « descendre en bas ». On
+    // recalcule aussi quand le contenu grandit (un listener scroll seul ne suffit
+    // pas : sans défilement réel, aucun event n'est émis).
+    let atBottom = $state(true);
+    function recomputeAtBottom() {
+        if (!scroller) return;
+        const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        atBottom = gap < 120;
+    }
+    $effect(() => {
+        messages;
+        spacerH;
+        recomputeAtBottom();
+    });
+    // N'apparaît qu'en lecture figée (hors streaming, où l'épinglage gère déjà la
+    // position) et quand on a réellement scrollé vers le haut.
+    const showJump = $derived(!atBottom && !streaming && messages.length > 0);
+
     async function send(text: string) {
         if (!selectedModel) {
             if (models.length === 0) {
@@ -607,7 +625,8 @@
     </div>
 </header>
 
-<div bind:this={scroller} class="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
+<div class="relative flex min-h-0 flex-1 flex-col">
+<div bind:this={scroller} onscroll={recomputeAtBottom} class="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
     <div class="mx-auto flex max-w-3xl flex-col gap-5">
         {#each messages as m, i (m.id)}
             {@const isLastAssistant =
@@ -645,6 +664,22 @@
             <div style="height:{spacerH}px" aria-hidden="true"></div>
         {/if}
     </div>
+</div>
+{#if showJump}
+    <button
+        type="button"
+        onclick={() => scrollBottom()}
+        in:fade={{ duration: 150 }}
+        out:fade={{ duration: 120 }}
+        aria-label="Descendre au dernier message"
+        title="Descendre au dernier message"
+        class="glass-strong absolute bottom-4 right-4 z-30 grid h-10 w-10 place-items-center
+               rounded-full border border-[var(--color-border)] text-neutral-300 shadow-lg
+               transition hover:border-cyan-500/50 hover:text-cyan-300"
+    >
+        <ChevronDown size={18} />
+    </button>
+{/if}
 </div>
 
 {#if currentVisual}
