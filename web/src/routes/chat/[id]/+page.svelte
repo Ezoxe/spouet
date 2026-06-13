@@ -335,6 +335,8 @@
     $effect(() => {
         messages;
         spacerH;
+        // Bouton masqué pendant le stream → inutile de lire le layout à chaque token.
+        if (streaming) return;
         recomputeAtBottom();
     });
     // N'apparaît qu'en lecture figée (hors streaming, où l'épinglage gère déjà la
