@@ -387,6 +387,14 @@ export interface MemoryOut {
     last_used_at: string | null;
 }
 
+export interface MemoryFileOut {
+    name: string;
+    title: string;
+    description: string;
+    size_bytes: number;
+    updated_at: string;
+}
+
 export const auth = {
     me: () => api<MeOut>('/auth/me'),
     patchMe: (json: { default_model?: string | null }) =>
@@ -607,7 +615,18 @@ export const memory = {
         api<MemoryOut>('/memory', { method: 'POST', json }),
     patch: (id: string, json: { pinned?: boolean; value?: string }) =>
         api<MemoryOut>(`/memory/${id}`, { method: 'PATCH', json }),
-    delete: (id: string) => api<void>(`/memory/${id}`, { method: 'DELETE' })
+    delete: (id: string) => api<void>(`/memory/${id}`, { method: 'DELETE' }),
+    // Mémoire long-terme « fichiers .md » lue à la demande par l'IA
+    listFiles: () => api<MemoryFileOut[]>('/memory/files'),
+    readFile: (name: string) =>
+        api<{ name: string; content: string }>(`/memory/files/${encodeURIComponent(name)}`),
+    writeFile: (name: string, content: string) =>
+        api<MemoryFileOut>(`/memory/files/${encodeURIComponent(name)}`, {
+            method: 'PUT',
+            json: { content }
+        }),
+    deleteFile: (name: string) =>
+        api<void>(`/memory/files/${encodeURIComponent(name)}`, { method: 'DELETE' })
 };
 
 // ----------------------------------------------------------------------------

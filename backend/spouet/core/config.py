@@ -106,6 +106,14 @@ class Settings(BaseSettings):
     image_max_dimension: int = 1024
     image_max_per_user: int = 500
 
+    # Mémoire long-terme « fichiers .md » : répertoire (volume backend+worker) où
+    # sont stockés les fichiers mémoire par utilisateur ({memory_dir}/{user_id}/*.md).
+    # L'IA les lit à la demande via les tools memory_list/read/write ; seul l'INDEX
+    # (noms + descriptions) est injecté automatiquement dans le system prompt.
+    memory_dir: str = "/data/memory"
+    memory_max_files_per_user: int = 200
+    memory_max_file_bytes: int = 64_000
+
     # Spotify (OAuth Authorization Code — contrôle de lecture, Premium requis).
     # Créer une app sur https://developer.spotify.com/dashboard et y déclarer le
     # redirect_uri (ex https://spouet.local/api/spotify/callback).

@@ -94,6 +94,8 @@ services:
       - ../tools:/app/tools:ro
       # PNG générés par image-engine, servis via /api/images/{id}/file.
       - ./data/images:/data/images
+      # Mémoire long-terme « fichiers .md » par utilisateur (lue à la demande par l'IA).
+      - ./data/memory:/data/memory
     ports:
       - "${SPOUET_BACKEND_PORT:-10002}:8000"
     command: ["uvicorn", "spouet.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -124,6 +126,8 @@ services:
       # Les jobs planifiés peuvent générer des images (tool generate_image) :
       # même volume que le backend pour que les PNG soient servis ensuite.
       - ./data/images:/data/images
+      # Mémoire .md : même volume que le backend (jobs planifiés lisent/écrivent aussi).
+      - ./data/memory:/data/memory
     command: ["celery", "-A", "spouet.workers", "worker", "--loglevel=info", "--concurrency=4"]
 
   beat:

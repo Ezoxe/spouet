@@ -34,6 +34,7 @@ from spouet.desktop import bridge, registry
 from spouet.images import client as image_client
 from spouet.images import storage as image_storage
 from spouet.images.client import GenerateParams
+from spouet.memory import files as memory_files
 from spouet.nodes.router import NoSuitableNodeError, pick_image_node
 from spouet.realtime.hub import publish, user_channel
 from spouet.tools.approval import request_approval, wait_for_decision
@@ -45,6 +46,11 @@ logger = get_logger(__name__)
 WEB_SEARCH_SLUG = "web_search"
 SHOW_VISUAL_SLUG = "show_visual"
 LIST_MACROS_SLUG = "list_macros"
+# Mémoire long-terme « fichiers .md » (toujours disponible).
+MEMORY_LIST_SLUG = "memory_list"
+MEMORY_READ_SLUG = "memory_read"
+MEMORY_WRITE_SLUG = "memory_write"
+MEMORY_DELETE_SLUG = "memory_delete"
 # Tool conditionné à l'activation du moteur d'images (image-engine).
 GENERATE_IMAGE_SLUG = "generate_image"
 # Tools exigeant un client desktop connecté.
@@ -52,7 +58,15 @@ RUN_DESKTOP_ACTION_SLUG = "run_desktop_action"
 RUN_MACRO_SLUG = "run_macro"
 DEFINE_MACRO_SLUG = "define_macro"
 
-_ALWAYS = {WEB_SEARCH_SLUG, SHOW_VISUAL_SLUG, LIST_MACROS_SLUG}
+_ALWAYS = {
+    WEB_SEARCH_SLUG,
+    SHOW_VISUAL_SLUG,
+    LIST_MACROS_SLUG,
+    MEMORY_LIST_SLUG,
+    MEMORY_READ_SLUG,
+    MEMORY_WRITE_SLUG,
+    MEMORY_DELETE_SLUG,
+}
 _IMAGE_GATED = {GENERATE_IMAGE_SLUG}
 _DESKTOP_GATED = {RUN_DESKTOP_ACTION_SLUG, RUN_MACRO_SLUG, DEFINE_MACRO_SLUG}
 BUILTIN_SLUGS = _ALWAYS | _IMAGE_GATED | _DESKTOP_GATED
@@ -167,6 +181,76 @@ _DEF_LIST_MACROS: dict[str, Any] = {
     },
 }
 
+_DEF_MEMORY_LIST: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": MEMORY_LIST_SLUG,
+        "description": (
+            "Liste les fichiers de mémoire long-terme (.md) de l'utilisateur : "
+            "nom + courte description. La liste t'est aussi rappelée dans le system "
+            "prompt ; appelle ce tool pour la rafraîchir si besoin."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+_DEF_MEMORY_READ: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": MEMORY_READ_SLUG,
+        "description": (
+            "Lit le contenu complet d'un fichier de mémoire long-terme par son nom "
+            "(slug donné dans l'index/`memory_list`). Utilise-le DÈS QUE la réponse "
+            "peut dépendre d'un souvenir de l'utilisateur (préférences, contexte, "
+            "faits durables). N'invente jamais le contenu."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string", "description": "Nom (slug) du fichier mémoire"}},
+        },
+    },
+}
+
+_DEF_MEMORY_WRITE: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": MEMORY_WRITE_SLUG,
+        "description": (
+            "Crée ou met à jour un fichier de mémoire long-terme (.md). Utilise-le "
+            "pour retenir durablement une information utile pour les prochaines "
+            "conversations (préférence, fait personnel, décision, contexte projet). "
+            "Donne un `name` court et stable (ex. 'preferences', 'projet-x') et un "
+            "`content` Markdown commençant idéalement par un titre `# ...`. Réécrit "
+            "intégralement le fichier (relis-le avant si tu veux compléter)."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["name", "content"],
+            "properties": {
+                "name": {"type": "string", "description": "Nom (slug) du fichier mémoire"},
+                "content": {"type": "string", "description": "Contenu Markdown complet du fichier"},
+            },
+        },
+    },
+}
+
+_DEF_MEMORY_DELETE: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": MEMORY_DELETE_SLUG,
+        "description": (
+            "Supprime un fichier de mémoire long-terme devenu obsolète ou erroné, "
+            "par son nom (slug)."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string", "description": "Nom (slug) du fichier mémoire"}},
+        },
+    },
+}
+
 _STEP_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["action"],
@@ -246,7 +330,15 @@ def tool_defs(*, desktop_connected: bool, images_enabled: bool = False) -> list[
     d'images est activé. web_search / show_visual / list_macros sont toujours
     disponibles.
     """
-    defs = [_DEF_WEB_SEARCH, _DEF_SHOW_VISUAL, _DEF_LIST_MACROS]
+    defs = [
+        _DEF_WEB_SEARCH,
+        _DEF_SHOW_VISUAL,
+        _DEF_LIST_MACROS,
+        _DEF_MEMORY_LIST,
+        _DEF_MEMORY_READ,
+        _DEF_MEMORY_WRITE,
+        _DEF_MEMORY_DELETE,
+    ]
     if images_enabled:
         defs.append(_DEF_GENERATE_IMAGE)
     if desktop_connected:
@@ -304,6 +396,14 @@ async def execute(
             return await _h_generate_image(db, conversation, args, channel)
         if slug == LIST_MACROS_SLUG:
             return await _h_list_macros(db, conversation)
+        if slug == MEMORY_LIST_SLUG:
+            return _h_memory_list(conversation)
+        if slug == MEMORY_READ_SLUG:
+            return _h_memory_read(conversation, args)
+        if slug == MEMORY_WRITE_SLUG:
+            return _h_memory_write(conversation, args)
+        if slug == MEMORY_DELETE_SLUG:
+            return _h_memory_delete(conversation, args)
         if slug == RUN_DESKTOP_ACTION_SLUG:
             return await _h_run_desktop_action(conversation, args, channel)
         if slug == RUN_MACRO_SLUG:
@@ -497,6 +597,69 @@ async def _h_list_macros(db: AsyncSession, conversation: Conversation) -> Builti
                 for m in macros
             ],
         },
+    )
+
+
+def _h_memory_list(conversation: Conversation) -> BuiltinOutcome:
+    files = memory_files.list_files(conversation.user_id)
+    return BuiltinOutcome(
+        MEMORY_LIST_SLUG,
+        {
+            "status": "ok",
+            "files": [
+                {"name": f.name, "title": f.title, "description": f.description}
+                for f in files
+            ],
+        },
+    )
+
+
+def _h_memory_read(conversation: Conversation, args: dict[str, Any]) -> BuiltinOutcome:
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return BuiltinOutcome(MEMORY_READ_SLUG, {"status": "error", "error": "name manquant"})
+    content = memory_files.read_file(conversation.user_id, name)
+    if content is None:
+        return BuiltinOutcome(
+            MEMORY_READ_SLUG,
+            {
+                "status": "not_found",
+                "name": memory_files.slugify(name),
+                "note": "Aucun fichier mémoire de ce nom. Utilise memory_list pour voir l'existant.",
+            },
+        )
+    return BuiltinOutcome(
+        MEMORY_READ_SLUG,
+        {"status": "ok", "name": memory_files.slugify(name), "content": content},
+    )
+
+
+def _h_memory_write(conversation: Conversation, args: dict[str, Any]) -> BuiltinOutcome:
+    name = str(args.get("name") or "").strip()
+    content = str(args.get("content") or "")
+    if not name:
+        return BuiltinOutcome(MEMORY_WRITE_SLUG, {"status": "error", "error": "name manquant"})
+    try:
+        f = memory_files.write_file(conversation.user_id, name, content)
+    except memory_files.MemoryFileError as e:
+        return BuiltinOutcome(MEMORY_WRITE_SLUG, {"status": "error", "error": str(e)})
+    return BuiltinOutcome(
+        MEMORY_WRITE_SLUG,
+        {"status": "saved", "name": f.name, "title": f.title, "size_bytes": f.size_bytes},
+    )
+
+
+def _h_memory_delete(conversation: Conversation, args: dict[str, Any]) -> BuiltinOutcome:
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return BuiltinOutcome(MEMORY_DELETE_SLUG, {"status": "error", "error": "name manquant"})
+    try:
+        deleted = memory_files.delete_file(conversation.user_id, name)
+    except memory_files.MemoryFileError as e:
+        return BuiltinOutcome(MEMORY_DELETE_SLUG, {"status": "error", "error": str(e)})
+    return BuiltinOutcome(
+        MEMORY_DELETE_SLUG,
+        {"status": "deleted" if deleted else "not_found", "name": memory_files.slugify(name)},
     )
 
 

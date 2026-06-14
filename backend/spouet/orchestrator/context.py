@@ -29,16 +29,18 @@ async def build_extra_system(
     """Construit les injections automatiques (RAG + memory) pour le prochain prompt."""
     parts: list[str] = []
 
-    # Memory long-terme (pertinence par recherche vectorielle si dispo, sinon top par score)
+    # Mémoire long-terme « fichiers .md » : on n'injecte QUE l'index (noms +
+    # descriptions). L'IA lit le détail à la demande via le tool `memory_read`
+    # (cf. builtin_tools). Plus de dump auto de tout le contenu : contexte compact
+    # et l'IA décide quoi lire ou écrire.
     try:
-        from spouet.memory.store import recall_relevant
+        from spouet.memory.files import build_index
 
-        mems = await recall_relevant(db, user_id=user_id, query=last_user_text, k=5)
-        if mems:
-            lines = [f"- {m.key}: {m.value}" for m in mems]
-            parts.append("Mémoire utilisateur :\n" + "\n".join(lines))
+        index = build_index(user_id)
+        if index:
+            parts.append(index)
     except Exception as e:  # noqa: BLE001
-        _log.warning("memory.recall_failed", error=str(e))
+        _log.warning("memory.index_failed", error=str(e))
 
     # RAG : contexte documents
     try:
