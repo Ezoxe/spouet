@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import signal
 import time
 from pathlib import Path
 
@@ -86,19 +85,20 @@ async def _git_pull(install_dir: Path) -> bool:
         return False
 
 
-async def maybe_self_update(install_dir: Path, target_commit: str | None) -> None:
-    """Déclenche une mise à jour si l'auto-update est actif et le cooldown passé.
+async def maybe_self_update(install_dir: Path, target_commit: str | None) -> bool:
+    """Tente une mise à jour si l'auto-update est actif et le cooldown passé.
 
-    Fait un ``git pull`` puis, en cas de succès, envoie SIGTERM au process → le
-    gestionnaire de service relance l'agent sur le nouveau code. Best-effort et
-    idempotent : protégé par un cooldown anti-boucle.
+    Fait un ``git pull --ff-only``. Retourne ``True`` si le code a été mis à jour
+    et que l'agent doit redémarrer (l'appelant arrête proprement llama-server puis
+    quitte → le gestionnaire de service relance sur le nouveau code). ``False``
+    sinon (désactivé, cooldown, non-git, ou pull échoué). Cooldown anti-boucle.
     """
     global _last_attempt_at, _in_progress
     if _in_progress or not auto_update_enabled():
-        return
+        return False
     now = time.monotonic()
     if now - _last_attempt_at < _RETRY_COOLDOWN_S:
-        return
+        return False
     _last_attempt_at = now
     _in_progress = True
     try:
@@ -112,16 +112,15 @@ async def maybe_self_update(install_dir: Path, target_commit: str | None) -> Non
                 f"mise à jour manuelle requise.",
                 err=True,
             )
-            return
+            _in_progress = False
+            return False
         if not await _git_pull(install_dir):
             _in_progress = False  # autorise une nouvelle tentative après cooldown
-            return
-        typer.echo("[self-update] code à jour — redémarrage du service (relancé par systemd/NSSM)…")
-        # Laisse le temps au log de partir, puis termine proprement. Le gestionnaire
-        # de service (Restart=always / NSSM) relance ; `uv run` resynchronise les deps.
-        await asyncio.sleep(1.0)
-        os.kill(os.getpid(), signal.SIGTERM)
-    finally:
-        # On ne remet pas _in_progress à False sur le chemin succès : le process
-        # est en train de se terminer.
-        pass
+            return False
+        # Succès : on laisse _in_progress=True (le process va se terminer) et on
+        # signale à l'appelant de redémarrer proprement.
+        return True
+    except Exception as e:  # noqa: BLE001
+        typer.echo(f"[self-update] erreur inattendue: {e}", err=True)
+        _in_progress = False
+        return False

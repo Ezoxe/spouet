@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 from pathlib import Path
 from typing import Annotated
@@ -614,15 +615,26 @@ async def _heartbeat_loop(
                         f"tps={stats.tokens_per_second}"
                     )
                     # Auto-update : le backend signale une nouvelle version du
-                    # monorepo → git pull + redémarrage (best-effort, idempotent).
+                    # monorepo → git pull, puis arrêt propre de llama-server et
+                    # sortie du process. systemd/NSSM relancent sur le nouveau code
+                    # (uv run resynchronise les deps).
                     try:
                         body = r.json()
                     except ValueError:
                         body = {}
                     if body.get("update_available"):
-                        await self_update.maybe_self_update(
+                        should_restart = await self_update.maybe_self_update(
                             install_dir, body.get("target_commit")
                         )
+                        if should_restart:
+                            typer.echo("[self-update] arrêt propre avant redémarrage…")
+                            try:
+                                await server.stop()
+                                if naming_server is not None:
+                                    await naming_server.stop()
+                            except Exception as e:  # noqa: BLE001
+                                typer.echo(f"[self-update] stop serveurs: {e}", err=True)
+                            os._exit(0)
             except Exception as e:  # noqa: BLE001
                 typer.echo(f"[heartbeat] error: {e}", err=True)
             await asyncio.sleep(interval)
