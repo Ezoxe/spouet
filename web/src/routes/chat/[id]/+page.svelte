@@ -10,7 +10,8 @@
         uuid,
         type ConversationOut,
         type MessageOut,
-        type ModelAgg
+        type ModelAgg,
+        type NodeOut
     } from '$lib/api';
     import MessageBubble from '$lib/components/MessageBubble.svelte';
     import Composer from '$lib/components/Composer.svelte';
@@ -21,7 +22,7 @@
     import ToolRunIndicator from '$lib/components/ToolRunIndicator.svelte';
     import { createVoiceBus } from '$lib/voice';
     import { toast } from '$lib/toast.svelte';
-    import { Sparkles, Zap, AudioLines, ChevronDown, Loader2, Download, Square, Copy, Code2, Globe, GraduationCap, Lightbulb } from 'lucide-svelte';
+    import { Sparkles, Zap, AudioLines, ChevronDown, Loader2, Download, Square, Copy, Code2, Globe, GraduationCap, Lightbulb, CircleDot } from 'lucide-svelte';
     import { goto } from '$app/navigation';
     import type { SseEvent } from '$lib/api';
 
@@ -30,18 +31,28 @@
     let conv: ConversationOut | null = $state(null);
     let messages: MessageOut[] = $state([]);
     let models: ModelAgg[] = $state([]);
+    let nodeRows: NodeOut[] = $state([]);
     let selectedModel = $state('');
+    // Modèle en cours de pré-chargement à chaud : clé `${nodeId}/${filename}`.
+    let loadingOnNode = $state<string | null>(null);
+
+    // Modèle actuellement chargé dans llama-server, par node id.
+    const loadedByNode = $derived.by(() => {
+        const map = new Map<string, string | null>();
+        for (const n of nodeRows) map.set(n.id, n.llama_model_loaded);
+        return map;
+    });
 
     // Regroupement du sélecteur par node : « Node 1 : … ; Node 2 : … ». Un même
     // modèle présent sur plusieurs nodes apparaît sous chacun. Le backend choisit
     // tout de même le node le moins chargé à l'envoi (affichage uniquement).
     const modelsByNode = $derived.by(() => {
-        const map = new Map<string, { node: string; models: ModelAgg[] }>();
+        const map = new Map<string, { nodeId: string; node: string; models: ModelAgg[] }>();
         for (const m of models) {
             for (const n of m.nodes) {
                 let g = map.get(n.id);
                 if (!g) {
-                    g = { node: n.name, models: [] };
+                    g = { nodeId: n.id, node: n.name, models: [] };
                     map.set(n.id, g);
                 }
                 g.models.push(m);
@@ -49,6 +60,39 @@
         }
         return [...map.values()].sort((a, b) => a.node.localeCompare(b.node));
     });
+
+    // Pré-charge un modèle GGUF dans llama-server sur un node donné, sans avoir à
+    // envoyer un message. Le heartbeat (≤10s) reflète ensuite le modèle chargé →
+    // on rafraîchit l'état des nodes en boucle courte jusqu'à confirmation.
+    async function loadModelOnNode(nodeId: string, filename: string, ev?: Event) {
+        ev?.preventDefault();
+        ev?.stopPropagation();
+        const key = `${nodeId}/${filename}`;
+        if (loadingOnNode) return;
+        loadingOnNode = key;
+        try {
+            await nodesApi.loadModel(nodeId, { filename });
+            toast.success(`Chargement de ${filename}…`);
+            // Poll jusqu'à ~40s : confirme via llama_model_loaded.
+            for (let i = 0; i < 20; i++) {
+                await new Promise((r) => setTimeout(r, 2000));
+                try {
+                    const n = await nodesApi.get(nodeId);
+                    nodeRows = nodeRows.map((row) => (row.id === nodeId ? n : row));
+                    if (n.llama_model_loaded === filename) {
+                        toast.success(`${filename} chargé`);
+                        break;
+                    }
+                } catch {
+                    /* on continue de poller */
+                }
+            }
+        } catch {
+            toast.error('Chargement du modèle impossible');
+        } finally {
+            loadingOnNode = null;
+        }
+    }
     let selectedTools: string[] = $state([]);
     let streaming = $state(false);
     let abortController: AbortController | null = $state(null);
@@ -100,6 +144,7 @@
         conv = await conversations.get(convId);
         messages = await conversations.messages(convId);
         models = await nodesApi.models().catch(() => []);
+        nodeRows = await nodesApi.list().catch(() => []);
         let defaultModel = '';
         try {
             const me = await auth.me();
@@ -598,12 +643,12 @@
             </button>
             {#if isModelDropdownOpen}
                 <div
-                    class="absolute right-0 top-full mt-2 z-50 w-56 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-1)] p-1 shadow-xl"
+                    class="absolute right-0 top-full mt-2 z-50 w-72 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-1)] p-1 shadow-xl"
                 >
                     {#if models.length === 0}
                         <div class="px-3 py-2 text-xs text-neutral-500">Aucun modèle disponible</div>
                     {/if}
-                    <ul class="max-h-60 overflow-y-auto">
+                    <ul class="max-h-72 overflow-y-auto">
                         {#each modelsByNode as group (group.node)}
                             {#if modelsByNode.length > 1}
                                 <li class="px-3 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wider text-neutral-500">
@@ -611,18 +656,43 @@
                                 </li>
                             {/if}
                             {#each group.models as m (group.node + '/' + m.name)}
-                                <li>
+                                {@const isLoaded = loadedByNode.get(group.nodeId) === m.name}
+                                {@const isLoading = loadingOnNode === group.nodeId + '/' + m.name}
+                                <li class="flex items-center gap-1">
                                     <button
                                         type="button"
-                                        class="w-full rounded px-3 py-2 text-left text-sm transition
+                                        class="flex min-w-0 flex-1 items-center gap-2 rounded px-3 py-2 text-left text-sm transition
                                                {selectedModel === m.name ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-300 hover:bg-neutral-800'}"
                                         onclick={() => {
                                             selectedModel = m.name;
                                             isModelDropdownOpen = false;
                                         }}
                                     >
-                                        {m.name}
+                                        <span class="truncate">{m.name}</span>
                                     </button>
+                                    {#if isLoaded}
+                                        <span
+                                            class="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-emerald-400"
+                                            title="Modèle chargé en mémoire sur {group.node}"
+                                        >
+                                            <CircleDot size={11} class="fill-emerald-400/20" /> chargé
+                                        </span>
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-[10px] text-neutral-400
+                                                   hover:bg-neutral-800 hover:text-cyan-300 disabled:opacity-50"
+                                            disabled={!!loadingOnNode}
+                                            onclick={(ev) => loadModelOnNode(group.nodeId, m.name, ev)}
+                                            title="Charger ce modèle à chaud sur {group.node}"
+                                        >
+                                            {#if isLoading}
+                                                <Loader2 size={11} class="animate-spin" /> chargement…
+                                            {:else}
+                                                <Zap size={11} /> charger
+                                            {/if}
+                                        </button>
+                                    {/if}
                                 </li>
                             {/each}
                         {/each}
