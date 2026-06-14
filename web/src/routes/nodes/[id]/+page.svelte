@@ -53,6 +53,10 @@
     let histRange: MetricsRange = $state('1h');
     let histData: NodeMetricsOut | null = $state(null);
     let histLoading = $state(false);
+    // Jeton anti-course : le polling silencieux (5s) et les clics de plage peuvent
+    // se chevaucher ; seule la requête la PLUS RÉCENTE applique ses données et
+    // remet histLoading à false (sinon « Chargement… » figé / données obsolètes).
+    let histToken = 0;
 
     // Copie de diag
     let copyingDiag = $state(false);
@@ -80,14 +84,27 @@
 
     async function loadHistory(range: MetricsRange, silent = false): Promise<void> {
         if (!nodeId) return;
-        if (!silent) histLoading = true;
+        const rangeChanged = range !== histRange;
         histRange = range;
+        if (!silent) {
+            histLoading = true;
+            // Feedback immédiat : on vide le graphe au changement de plage pour
+            // afficher l'état « Chargement… » (sinon l'ancien graphe reste figé et
+            // on a l'impression que le clic n'a rien fait).
+            if (rangeChanged) histData = null;
+        }
+        const token = ++histToken;
         try {
-            histData = await nodesApi.metrics(nodeId, range);
+            const data = await nodesApi.metrics(nodeId, range);
+            if (token === histToken) {
+                histData = data;
+                histLoading = false;
+            }
         } catch {
-            if (!silent) histData = null;
-        } finally {
-            if (!silent) histLoading = false;
+            if (token === histToken) {
+                if (!silent) histData = null;
+                histLoading = false;
+            }
         }
     }
 
