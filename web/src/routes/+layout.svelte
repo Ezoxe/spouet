@@ -63,7 +63,12 @@
         <Sidebar />
         <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
             {#key $page.url.pathname}
-                <div class="flex min-h-0 flex-1 flex-col" in:fade={{ duration: 140 }}>
+                <!-- overflow-y-auto : repli scrollable pour les pages « document »
+                     (tools, stats, settings…) qui ne gèrent pas leur propre scroll.
+                     Sans ça, leur contenu était clippé (impossible de descendre à la
+                     molette, surtout au zoom). Les pages à scroll interne (chat,
+                     secrets, connectors) remplissent la hauteur → pas de double-scroll. -->
+                <div class="flex min-h-0 flex-1 flex-col overflow-y-auto" in:fade={{ duration: 140 }}>
                     {@render children?.()}
                 </div>
             {/key}
