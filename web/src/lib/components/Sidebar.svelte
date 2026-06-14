@@ -159,12 +159,7 @@
            bg-[color-mix(in_oklch,var(--color-bg-1)_85%,transparent)] backdrop-blur-md transition-transform duration-200 ease-in-out md:static md:flex"
 >
     <div class="flex items-center gap-2.5 px-4 py-4">
-        <div
-            class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-cyan-500/15
-                   to-cyan-700/5 p-1 shadow-[inset_0_0_0_1px_oklch(0.55_0.18_210/0.25)]"
-        >
-            <Logo size={28} glow />
-        </div>
+        <Logo size={36} glow />
         <div>
             <p class="text-base font-semibold tracking-tight leading-none">Spouet</p>
             <p class="mt-0.5 text-[10px] uppercase tracking-wider text-neutral-500">v0.1</p>
