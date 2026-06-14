@@ -824,7 +824,10 @@ async def get_node_metrics(
     if seconds is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown range {range!r}")
 
-    cutoff = datetime.now(UTC) - _timedelta(seconds)
+    # ATTENTION : timedelta(x) = x JOURS (1er arg positionnel) ! Il faut le mot-clé
+    # `seconds=` sinon le cutoff valait des milliers de jours dans le passé → aucun
+    # filtrage → toutes les plages renvoyaient tout l'historique (axe de temps figé).
+    cutoff = datetime.now(UTC) - _timedelta(seconds=seconds)
     # raw pour les courtes fenêtres (<= 24h), 1min pour les plus longues
     model_cls = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
 
@@ -894,7 +897,7 @@ async def get_cluster_aggregate(
     seconds = _RANGE_TO_SECONDS.get(range)
     if seconds is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown range {range!r}")
-    cutoff = datetime.now(UTC) - _timedelta(seconds)
+    cutoff = datetime.now(UTC) - _timedelta(seconds=seconds)  # seconds= (sinon = jours)
 
     nodes_rows = (await db.execute(select(Node))).scalars().all()
     online = sum(1 for n in nodes_rows if n.is_online())
