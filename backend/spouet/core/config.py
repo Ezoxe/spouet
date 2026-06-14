@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10
+    # Auto-update des node-agents : commit git cible du monorepo déployé.
+    # Stampé dans deploy/.env par install.sh (git rev-parse --short HEAD). Quand un
+    # node-agent rapporte un commit différent, le heartbeat lui répond
+    # `update_available=true` → il se met à jour seul (git pull + uv sync + restart).
+    # Vide = pas de signal d'update (comportement historique).
+    agent_target_commit: str | None = None
 
     # Timeseries : rétention de la table 1-min agrégée (jours). La table raw
     # est toujours purgée à 24h. Plafond hard à 30j même si configuré plus.

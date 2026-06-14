@@ -298,6 +298,21 @@ log "Préparation des volumes (uid 1000)…"
 mkdir -p data/voice data/images
 chown -R 1000:1000 data/voice data/images 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
+# Auto-update des node-agents : on stampe le commit git déployé dans .env (à
+# chaque run, car .env est conservé entre les updates). Le backend le sert via
+# le heartbeat → les node-agents au commit différent se mettent à jour seuls.
+# ---------------------------------------------------------------------------
+AGENT_TARGET_COMMIT="$(git -c safe.directory="$SPOUET_INSTALL_DIR" -C "$SPOUET_INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+if [[ -n "$AGENT_TARGET_COMMIT" ]]; then
+    if grep -q '^SPOUET_AGENT_TARGET_COMMIT=' .env 2>/dev/null; then
+        sed -i "s/^SPOUET_AGENT_TARGET_COMMIT=.*/SPOUET_AGENT_TARGET_COMMIT=$AGENT_TARGET_COMMIT/" .env
+    else
+        echo "SPOUET_AGENT_TARGET_COMMIT=$AGENT_TARGET_COMMIT" >> .env
+    fi
+    log "Commit cible node-agents : $AGENT_TARGET_COMMIT (auto-update via heartbeat)"
+fi
+
 log "docker compose build…"
 docker compose build
 
@@ -425,14 +440,17 @@ log "    cd desktop"
 log "    PUBLIC_API_BASE=http://$LAN_IP:$PORT_BACKEND pnpm tauri build"
 
 # --- Node-agents (machines GPU / Ollama) -------------------------------------
-# Le node-agent tourne sur d'autres machines : on ne peut pas les mettre à jour
-# à distance, mais on affiche la commande prête à coller (le même installeur fait
-# office de mise à jour : il self-update via git puis réinstalle l'agent), avec
-# le token fraîchement généré et l'URL backend pré-remplis.
+# Les node-agents déjà connectés se mettent à jour SEULS : le backend leur signale
+# le commit cible (stampé ci-dessus) via le heartbeat, et l'agent fait git pull +
+# redémarrage (cf. self_update.py ; désactivable avec SPOUET_AGENT_AUTO_UPDATE=0).
+# La commande ci-dessous reste utile pour une PREMIÈRE install, ou un node hors git.
 _TOK_DISPLAY="${ADMIN_TOKEN:-<TOKEN>}"
 echo
-log "═══ Mettre à jour / installer les node-agents ═══"
-log "À lancer SUR CHAQUE machine GPU/Ollama (self-update git pull + réinstall) :"
+log "═══ Node-agents ═══"
+if [[ -n "$AGENT_TARGET_COMMIT" ]]; then
+    log "Les node-agents connectés vont s'auto-mettre à jour vers $AGENT_TARGET_COMMIT (via heartbeat)."
+fi
+log "Première install (ou node hors git) — à lancer SUR CHAQUE machine GPU :"
 log ""
 log "  • Mise à jour OU première install (recommandé) :"
 log "      curl -fsSL $NODE_RAW_URL \\"

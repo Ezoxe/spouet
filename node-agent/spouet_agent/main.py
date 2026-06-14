@@ -23,6 +23,7 @@ from spouet_agent.gpu_telemetry import probe_gpu_telemetry
 from spouet_agent.llama_config import LlamaConfig, compute_optimal_config, get_model_size_bytes
 from spouet_agent.llama_server import LlamaServer, find_llama_server
 from spouet_agent.model_manager import list_local_models, model_supports_tools
+from spouet_agent import self_update
 
 
 def _model_n_layers(model_path: Path) -> int | None:
@@ -359,6 +360,7 @@ async def _run(
             tags=tags,
             server=server,
             models_dir=models_dir,
+            install_dir=install_dir,
             gpu_info_ref=[gpu],
             capabilities=caps,
             images_enabled=images_enabled,
@@ -453,6 +455,7 @@ async def _heartbeat_loop(
     tags: list[str],
     server: LlamaServer,
     models_dir: Path,
+    install_dir: Path,
     gpu_info_ref: list,
     capabilities: NodeCapabilities | None = None,
     images_enabled: bool = False,
@@ -467,6 +470,15 @@ async def _heartbeat_loop(
     # Capabilities calculées une fois au boot ; on les renvoie à chaque
     # heartbeat (le backend persiste en JSONB pour l'admin).
     caps_payload = capabilities.to_dict() if capabilities is not None else None
+
+    # Commit git courant du monorepo → permet au backend de détecter qu'une mise
+    # à jour est dispo (auto-update). None si install hors git.
+    agent_commit = await self_update.read_git_commit(install_dir)
+    if agent_commit:
+        typer.echo(
+            f"[spouet-agent] commit={agent_commit} "
+            f"auto-update={'on' if self_update.auto_update_enabled() else 'off'}"
+        )
 
     # État pour calculer les deltas réseau et CPU entre 2 heartbeats.
     last_net = _read_net_counters()
@@ -553,6 +565,7 @@ async def _heartbeat_loop(
                     "port": llama_port,
                     "agent_port": agent_port,
                     "agent_version": __version__,
+                    "agent_commit": agent_commit,
                     "gpu_model": gpu.model,
                     "vram_total_mb": gpu.vram_total_mb,
                     "vram_used_mb": gpu.vram_used_mb,
@@ -600,6 +613,16 @@ async def _heartbeat_loop(
                         f"llama={'running' if stats.running else 'stopped'} "
                         f"tps={stats.tokens_per_second}"
                     )
+                    # Auto-update : le backend signale une nouvelle version du
+                    # monorepo → git pull + redémarrage (best-effort, idempotent).
+                    try:
+                        body = r.json()
+                    except ValueError:
+                        body = {}
+                    if body.get("update_available"):
+                        await self_update.maybe_self_update(
+                            install_dir, body.get("target_commit")
+                        )
             except Exception as e:  # noqa: BLE001
                 typer.echo(f"[heartbeat] error: {e}", err=True)
             await asyncio.sleep(interval)

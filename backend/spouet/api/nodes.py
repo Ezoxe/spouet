@@ -45,6 +45,9 @@ class HeartbeatRequest(BaseModel):
     port: int = Field(default=8080, ge=1, le=65535)
     agent_port: int | None = Field(default=None, ge=1, le=65535)
     agent_version: str
+    # Commit git du monorepo dont l'agent est issu (auto-update). None = agent
+    # ancien sans support, ou install hors git → pas d'auto-update.
+    agent_commit: str | None = None
     gpu_model: str | None = None
     vram_total_mb: int | None = Field(default=None, ge=0)
     vram_used_mb: int | None = Field(default=None, ge=0)
@@ -88,6 +91,10 @@ class HeartbeatRequest(BaseModel):
 class HeartbeatResponse(BaseModel):
     node_id: str
     next_heartbeat_in_s: int
+    # Auto-update : le backend signale à l'agent qu'une nouvelle version du
+    # monorepo est déployée (commit ≠). L'agent se met alors à jour seul.
+    update_available: bool = False
+    target_commit: str | None = None
 
 
 class ModelOut(BaseModel):
@@ -292,8 +299,21 @@ async def heartbeat(payload: HeartbeatRequest, _: CurrentUser, db: DbSession) ->
             "gpu_power_w": payload.gpu_power_w,
         },
     )
+    # Auto-update node-agent : si le serveur connaît un commit cible (stampé par
+    # install.sh) et que l'agent rapporte un commit différent, on lui demande de
+    # se mettre à jour. Comparaison souple (prefix) : le serveur peut stamper un
+    # SHA court et l'agent un SHA long (ou l'inverse).
+    target = settings.agent_target_commit
+    update_available = bool(
+        target
+        and payload.agent_commit
+        and not _commits_match(payload.agent_commit, target)
+    )
     return HeartbeatResponse(
-        node_id=str(node.id), next_heartbeat_in_s=settings.node_heartbeat_interval_s
+        node_id=str(node.id),
+        next_heartbeat_in_s=settings.node_heartbeat_interval_s,
+        update_available=update_available,
+        target_commit=target if update_available else None,
     )
 
 
@@ -896,6 +916,19 @@ async def get_cluster_aggregate(
         "total_tps_current": round(total_current_tps, 2),
         "total_tokens_generated_window": int(tokens_row or 0),
     }
+
+
+def _commits_match(a: str, b: str) -> bool:
+    """True si deux SHA git désignent le même commit (l'un peut être abrégé).
+
+    Tolère SHA court vs long dans les deux sens (préfixe), insensible à la casse
+    et aux espaces. Sert au signal d'auto-update des node-agents.
+    """
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return False
+    return a.startswith(b) or b.startswith(a)
 
 
 async def _models_for_node(db, node_id: UUID) -> list[Model]:  # type: ignore[no-untyped-def]
