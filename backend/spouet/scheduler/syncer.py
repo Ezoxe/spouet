@@ -22,7 +22,7 @@ from sqlalchemy.pool import NullPool
 from spouet.core.config import settings
 from spouet.core.logging import get_logger
 from spouet.db.models import ScheduledJob
-from spouet.workers.app import celery_app
+from spouet.workers.app import STATIC_BEAT_SCHEDULE, celery_app
 
 logger = get_logger(__name__)
 
@@ -64,17 +64,12 @@ async def collect_jobs() -> list[ScheduledJob]:
 
 
 def build_beat_entries(jobs: list[ScheduledJob]) -> dict[str, dict[str, Any]]:
-    entries: dict[str, dict[str, Any]] = {
-        # Housekeeping toujours présents
-        "mark-offline-nodes": {
-            "task": "spouet.workers.tasks.mark_offline_nodes",
-            "schedule": 15.0,
-        },
-        "scheduler-sync": {
-            "task": "spouet.workers.tasks.sync_scheduler",
-            "schedule": 60.0,
-        },
-    }
+    # On REPART du socle statique (mark-offline, poll-direct-nodes, monitor-connectors,
+    # sync-mail, rollup/purge/partitions métriques, scheduler-sync) puis on ajoute les
+    # jobs utilisateur. Sans cette base, reload_beat_schedule() (toutes les 60s)
+    # supprimerait les tâches système → notamment rollup_metrics_1min, ce qui vidait
+    # node_metrics_1min et cassait la plage 7d.
+    entries: dict[str, dict[str, Any]] = dict(STATIC_BEAT_SCHEDULE)
     for j in jobs:
         try:
             sched = parse_cron(j.cron)

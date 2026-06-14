@@ -828,24 +828,34 @@ async def get_node_metrics(
     # raw pour les courtes fenêtres (<= 24h), 1min pour les plus longues
     model_cls = NodeMetricRaw if seconds <= _RANGE_TO_SECONDS["24h"] else NodeMetric1Min
 
-    # On veut les points les plus RÉCENTS de la fenêtre : tri DESC + limit (sinon
-    # ASC + limit renvoie les plus ANCIENS dès qu'il y a plus de `limit` points —
-    # 6h≈2160, 24h≈8640 en raw → le graphe restait figé loin dans le passé). On
-    # ré-inverse en ordre chronologique pour l'affichage.
-    rows = list(
-        reversed(
-            (
-                await db.execute(
-                    select(model_cls)
-                    .where(model_cls.node_id == node_id, model_cls.time >= cutoff)
-                    .order_by(model_cls.time.desc())
-                    .limit(limit)
-                )
+    # On lit TOUTE la fenêtre en ordre chronologique (cap mémoire MAX_FETCH), puis
+    # on sous-échantillonne uniformément à ≤ `limit` points. Auparavant la requête
+    # faisait `ORDER BY time DESC LIMIT 1000` : pour 6h (~2160 pts), 24h (~8640) ou
+    # 7d, elle ne renvoyait que les ~1000 points les plus RÉCENTS (≈ la même chose
+    # que 1h) → les plages longues semblaient « ne pas marcher ». Le striding couvre
+    # désormais l'intégralité de la fenêtre demandée.
+    MAX_FETCH = 50000
+    all_rows = list(
+        (
+            await db.execute(
+                select(model_cls)
+                .where(model_cls.node_id == node_id, model_cls.time >= cutoff)
+                .order_by(model_cls.time.asc())
+                .limit(MAX_FETCH)
             )
-            .scalars()
-            .all()
         )
+        .scalars()
+        .all()
     )
+    target = max(1, limit)
+    if len(all_rows) > target:
+        step = (len(all_rows) + target - 1) // target  # ceil
+        rows = all_rows[::step]
+        # Garde toujours le point le plus récent (fraîcheur du graphe).
+        if rows[-1] is not all_rows[-1]:
+            rows.append(all_rows[-1])
+    else:
+        rows = all_rows
     return {
         "node_id": str(node_id),
         "range": range,

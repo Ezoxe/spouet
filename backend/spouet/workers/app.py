@@ -26,8 +26,12 @@ celery_app.conf.update(
     task_default_max_retries=3,
 )
 
-# Tâches périodiques minimales (M1) : marquer les nodes offline
-celery_app.conf.beat_schedule = {
+# Tâches périodiques « système ». SOURCE UNIQUE de vérité : `scheduler/syncer.py`
+# reconstruit le beat_schedule depuis la DB (jobs utilisateur) et DOIT repartir de
+# ce socle, sinon `reload_beat_schedule()` (appelé toutes les 60s par
+# `sync_scheduler`) écraserait ces tâches → rollup/purge/partitions/connectors/mail
+# s'arrêteraient silencieusement (c'est ce qui vidait node_metrics_1min → 7d KO).
+STATIC_BEAT_SCHEDULE: dict[str, dict] = {
     "mark-offline-nodes": {
         "task": "spouet.workers.tasks.mark_offline_nodes",
         "schedule": schedule(15.0),
@@ -57,4 +61,11 @@ celery_app.conf.beat_schedule = {
         "task": "spouet.workers.tasks.purge_metrics_partitions",
         "schedule": schedule(3600.0 * 6),  # 4× par jour
     },
+    # Resynchronise le beat depuis la DB (jobs utilisateur) toutes les 60s.
+    "scheduler-sync": {
+        "task": "spouet.workers.tasks.sync_scheduler",
+        "schedule": schedule(60.0),
+    },
 }
+
+celery_app.conf.beat_schedule = dict(STATIC_BEAT_SCHEDULE)
