@@ -13,6 +13,7 @@ from spouet.api.deps import CurrentUser, DbSession
 from spouet.db.models import Memory
 from spouet.memory import files as memory_files
 from spouet.memory.store import upsert as upsert_memory
+from spouet.memory.templates import MEMORY_TEMPLATES
 
 router = APIRouter()
 
@@ -37,6 +38,30 @@ class MemoryFileContentOut(BaseModel):
 
 class MemoryFileWrite(BaseModel):
     content: str = Field(min_length=1)
+
+
+class MemoryTemplateOut(BaseModel):
+    name: str
+    title: str
+    description: str
+    content: str
+    active: bool
+
+
+@router.get("/templates", response_model=list[MemoryTemplateOut])
+async def list_memory_templates(user: CurrentUser) -> list[MemoryTemplateOut]:
+    """Modèles `.md` prêts à l'emploi + s'ils sont déjà activés (fichier existant)."""
+    active = {f.name for f in memory_files.list_files(user.id)}
+    return [
+        MemoryTemplateOut(
+            name=t.name,
+            title=t.title,
+            description=t.description,
+            content=t.content,
+            active=t.name in active,
+        )
+        for t in MEMORY_TEMPLATES
+    ]
 
 
 @router.get("/files", response_model=list[MemoryFileOut])

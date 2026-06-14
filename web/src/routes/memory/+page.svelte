@@ -1,13 +1,15 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { memory, type MemoryOut, type MemoryFileOut } from '$lib/api';
+    import { memory, type MemoryOut, type MemoryFileOut, type MemoryTemplateOut } from '$lib/api';
     import { toast } from '$lib/toast.svelte';
-    import { Trash2, Plus, Pin, PinOff, Wand2, FileText, Pencil, Save, X, Eye } from 'lucide-svelte';
+    import { Trash2, Plus, Pin, PinOff, Wand2, FileText, Pencil, Save, X, Eye, Sparkles } from 'lucide-svelte';
     import HelpPanel from '$lib/components/HelpPanel.svelte';
     import MemoryWizard from '$lib/components/MemoryWizard.svelte';
 
     // --- Fichiers mémoire (.md) ---
     let files: MemoryFileOut[] = $state([]);
+    let templates: MemoryTemplateOut[] = $state([]);
+    let togglingTpl: string | null = $state(null);
     let editing: { name: string; content: string; isNew: boolean } | null = $state(null);
     let saving = $state(false);
 
@@ -20,8 +22,31 @@
     async function refreshFiles() {
         files = await memory.listFiles().catch(() => []);
     }
+    async function refreshTemplates() {
+        templates = await memory.listTemplates().catch(() => []);
+    }
     async function refresh() {
         list = await memory.list().catch(() => []);
+    }
+
+    // Active (crée le fichier avec le contenu par défaut) / désactive (supprime) un
+    // modèle prêt à l'emploi. Une fois actif, il s'édite comme tout fichier .md.
+    async function toggleTemplate(t: MemoryTemplateOut) {
+        if (togglingTpl) return;
+        togglingTpl = t.name;
+        try {
+            if (t.active) {
+                if (!confirm(`Désactiver « ${t.title} » ? Le fichier mémoire sera supprimé.`)) return;
+                await memory.deleteFile(t.name);
+            } else {
+                await memory.writeFile(t.name, t.content);
+            }
+            await Promise.all([refreshTemplates(), refreshFiles()]);
+        } catch {
+            toast.error('Action impossible');
+        } finally {
+            togglingTpl = null;
+        }
     }
 
     async function newFile() {
@@ -91,6 +116,7 @@
 
     onMount(() => {
         refreshFiles();
+        refreshTemplates();
         refresh();
     });
 </script>
@@ -173,6 +199,55 @@
             class="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 font-mono text-sm
                    leading-relaxed focus:border-cyan-500/50 focus:outline-none"
         ></textarea>
+    </div>
+{/if}
+
+<!-- Modèles prêts à l'emploi (activer/désactiver) -->
+{#if templates.length}
+    <div class="px-6 pb-2 pt-1 sm:px-8">
+        <h2 class="mb-2 flex items-center gap-2 text-sm font-medium text-neutral-300">
+            <Sparkles size={14} class="text-cyan-400" /> Modèles prêts à l'emploi
+        </h2>
+        <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {#each templates as t (t.name)}
+                <div
+                    class="flex items-start justify-between gap-3 rounded-xl border p-3 transition
+                           {t.active
+                        ? 'border-cyan-500/40 bg-cyan-500/5'
+                        : 'border-neutral-800 bg-neutral-900/60'}"
+                >
+                    <div class="min-w-0">
+                        <p class="truncate text-sm font-medium text-neutral-200">{t.title}</p>
+                        <p class="mt-0.5 line-clamp-2 text-xs text-neutral-500">{t.description}</p>
+                        {#if t.active}
+                            <button
+                                type="button"
+                                onclick={() => openFile(t.name)}
+                                class="mt-1.5 inline-flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300"
+                            >
+                                <Pencil size={11} /> éditer
+                            </button>
+                        {/if}
+                    </div>
+                    <button
+                        type="button"
+                        onclick={() => toggleTemplate(t)}
+                        disabled={togglingTpl === t.name}
+                        role="switch"
+                        aria-checked={t.active}
+                        aria-label={t.active ? `Désactiver ${t.title}` : `Activer ${t.title}`}
+                        title={t.active ? 'Activé — cliquer pour désactiver' : 'Désactivé — cliquer pour activer'}
+                        class="relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50
+                               {t.active ? 'bg-cyan-500' : 'bg-neutral-700'}"
+                    >
+                        <span
+                            class="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all
+                                   {t.active ? 'left-[1.125rem]' : 'left-0.5'}"
+                        ></span>
+                    </button>
+                </div>
+            {/each}
+        </div>
     </div>
 {/if}
 
