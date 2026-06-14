@@ -80,7 +80,11 @@ async def run_tool(
                 return ToolResult(
                     status="error",
                     stdout="",
-                    stderr=f"image {image!r} not available locally and pull failed: {e}",
+                    stderr=(
+                        f"image {image!r} introuvable localement et pull impossible ({e}). "
+                        f"Builde les images des tools sur le serveur : "
+                        f"`bash tools/install-all.sh` (ou relance install.sh)."
+                    ),
                     exit_code=None,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     container_id=None,

@@ -353,17 +353,32 @@ fi
 # 6b. Installation des tools custom (build images + insert en DB)
 # ---------------------------------------------------------------------------
 TOOLS_FLAG_FILE="$SPOUET_INSTALL_DIR/deploy/.tools-installed"
-if [[ ! -f "$TOOLS_FLAG_FILE" ]] && [[ -x "$SPOUET_INSTALL_DIR/tools/install-all.sh" ]]; then
-    log "Installation des tools custom (registry)…"
-    set +e
-    (cd "$SPOUET_INSTALL_DIR" && bash tools/install-all.sh) 2>&1 | tee /tmp/spouet-tools-install.log
-    rc=${PIPESTATUS[0]}
-    set -e
-    if [[ $rc -eq 0 ]]; then
-        touch "$TOOLS_FLAG_FILE"
-        log "Tools installés. (Re-run : bash $SPOUET_INSTALL_DIR/tools/install-all.sh)"
+if [[ -x "$SPOUET_INSTALL_DIR/tools/install-all.sh" ]]; then
+    # (Re)installe les tools quand c'est nécessaire :
+    #   - jamais fait (pas de flag) ou dernier run échoué,
+    #   - OU le registry a changé depuis le dernier run réussi (nouveau tool comme
+    #     web-fetch, Dockerfile/manifest/run.py modifié après un `git pull`).
+    # install-all.sh est idempotent (rebuild images + upsert DB) → sûr à relancer.
+    # Sans ça, un tool ajouté après la 1re install n'était jamais buildé/inséré →
+    # l'IA « voyait » le tool mais son image manquait à l'exécution (web fetch KO).
+    registry_changed=""
+    if [[ -f "$TOOLS_FLAG_FILE" ]]; then
+        registry_changed="$(find "$SPOUET_INSTALL_DIR/tools/registry" -newer "$TOOLS_FLAG_FILE" -print -quit 2>/dev/null || true)"
+    fi
+    if [[ ! -f "$TOOLS_FLAG_FILE" ]] || [[ -n "$registry_changed" ]]; then
+        log "Installation/synchro des tools custom (registry)…"
+        set +e
+        (cd "$SPOUET_INSTALL_DIR" && bash tools/install-all.sh) 2>&1 | tee /tmp/spouet-tools-install.log
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [[ $rc -eq 0 ]]; then
+            touch "$TOOLS_FLAG_FILE"
+            log "Tools synchronisés. (Manuel : bash $SPOUET_INSTALL_DIR/tools/install-all.sh)"
+        else
+            warn "Installation des tools incomplète — voir /tmp/spouet-tools-install.log"
+        fi
     else
-        warn "Installation des tools incomplète — voir /tmp/spouet-tools-install.log"
+        log "Tools déjà à jour (registry inchangé). Forcer : bash $SPOUET_INSTALL_DIR/tools/install-all.sh"
     fi
 fi
 
