@@ -61,6 +61,17 @@
         return [...map.values()].sort((a, b) => a.node.localeCompare(b.node));
     });
 
+    // Rafraîchit la liste des modèles + l'état chargé/online des nodes. Appelé à
+    // l'ouverture du dropdown → un modèle chargé depuis la page node se reflète ici.
+    async function refreshModelState() {
+        const [m, n] = await Promise.all([
+            nodesApi.models().catch(() => null),
+            nodesApi.list().catch(() => null)
+        ]);
+        if (m) models = m;
+        if (n) nodeRows = n;
+    }
+
     // Pré-charge un modèle GGUF dans llama-server sur un node donné, sans avoir à
     // envoyer un message. Le heartbeat (≤10s) reflète ensuite le modèle chargé →
     // on rafraîchit l'état des nodes en boucle courte jusqu'à confirmation.
@@ -562,8 +573,12 @@
     }
 </script>
 
+<!-- relative z-30 : le `backdrop-blur` crée un contexte d'empilement ; sans
+     z-index explicite, le contenu de la conversation (frère plus bas dans le DOM)
+     se peignait PAR-DESSUS les dropdowns du header (modèle, tools) → items non
+     cliquables. On élève le header au-dessus du contenu. -->
 <header
-    class="flex items-center justify-between border-b border-[var(--color-border-subtle)]
+    class="relative z-30 flex items-center justify-between border-b border-[var(--color-border-subtle)]
            bg-[color-mix(in_oklch,var(--color-bg-0)_70%,transparent)] px-6 py-3 backdrop-blur sm:px-8"
 >
     <div class="min-w-0">
@@ -629,7 +644,10 @@
         <div class="relative">
             <button
                 type="button"
-                onclick={() => (isModelDropdownOpen = !isModelDropdownOpen)}
+                onclick={() => {
+                    isModelDropdownOpen = !isModelDropdownOpen;
+                    if (isModelDropdownOpen) refreshModelState();
+                }}
                 class="flex items-center gap-2 rounded-md border border-[var(--color-border)]
                        bg-[var(--color-bg-1)] px-3 py-1.5 text-sm transition hover:border-cyan-500/50"
                 title="Modèle Ollama utilisé pour répondre"
