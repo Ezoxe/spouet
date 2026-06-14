@@ -315,34 +315,38 @@ until docker compose exec -T backend curl -fsS --max-time 2 http://127.0.0.1:800
 done
 
 # ---------------------------------------------------------------------------
-# 6. Migrations + premier token
+# 6. Migrations + token admin/agent (toujours régénéré et affiché)
 # ---------------------------------------------------------------------------
 log "Migrations Alembic…"
 docker compose exec -T backend alembic upgrade head
 
-TOKEN_FLAG_FILE="$SPOUET_INSTALL_DIR/deploy/.first-token-issued"
-if [[ ! -f "$TOKEN_FLAG_FILE" ]]; then
-    log "Création du premier token admin (email=$SPOUET_ADMIN_EMAIL)…"
-    set +e
-    TOKEN_OUTPUT=$(docker compose exec -T backend spouet-admin create-token --email "$SPOUET_ADMIN_EMAIL" 2>&1)
-    rc=$?
-    set -e
-    if [[ $rc -eq 0 ]]; then
-        touch "$TOKEN_FLAG_FILE"
-        echo
-        echo "==========================================================="
-        echo " TOKEN ADMIN — copie-le MAINTENANT, il ne sera plus affiché"
-        echo "==========================================================="
-        echo "$TOKEN_OUTPUT"
-        echo "==========================================================="
-        echo
-    else
-        warn "create-token a échoué :"
-        echo "$TOKEN_OUTPUT" >&2
-        warn "Tu peux le créer plus tard : docker compose exec backend spouet-admin create-token --email <addr>"
-    fi
+# Le token API n'est stocké qu'en hash (non récupérable) : impossible de
+# réafficher un token existant. Pour qu'un token soit TOUJOURS visible à la fin
+# d'une install/màj — et réinjectable dans la commande de mise à jour des
+# node-agents — on en (re)génère un à chaque exécution. ⚠ Cela ROTATE le token
+# de cet email : les anciens tokens du même email cessent de fonctionner.
+log "Génération du token admin/agent (email=$SPOUET_ADMIN_EMAIL)…"
+set +e
+TOKEN_OUTPUT=$(docker compose exec -T backend spouet-admin create-token --email "$SPOUET_ADMIN_EMAIL" 2>&1)
+rc=$?
+set -e
+ADMIN_TOKEN=""
+if [[ $rc -eq 0 ]]; then
+    touch "$SPOUET_INSTALL_DIR/deploy/.first-token-issued"
+    # La sortie CLI contient « Token (à conserver, non récupérable) : <token> ».
+    ADMIN_TOKEN=$(printf '%s\n' "$TOKEN_OUTPUT" | tr -d '\r' | sed -n 's/^Token.*: \(.*\)$/\1/p' | head -1 || true)
+    echo
+    echo "==========================================================="
+    echo " TOKEN ADMIN / AGENT — copie-le MAINTENANT"
+    echo "   (non récupérable ; régénéré à chaque exécution de install.sh)"
+    echo "==========================================================="
+    echo "${ADMIN_TOKEN:-$TOKEN_OUTPUT}"
+    echo "==========================================================="
+    echo
 else
-    log "Premier token déjà émis (flag $TOKEN_FLAG_FILE) — skip."
+    warn "create-token a échoué :"
+    echo "$TOKEN_OUTPUT" >&2
+    warn "Crée-le plus tard : docker compose exec backend spouet-admin create-token --email <addr>"
 fi
 
 # ---------------------------------------------------------------------------
@@ -381,12 +385,45 @@ if [[ "$SPOUET_SKIP_SYSTEMD" != "1" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 8. Récap + proposition de mise à jour des node-agents
+# ---------------------------------------------------------------------------
+# IP LAN routable du serveur → préremplit l'URL backend des node-agents et les
+# liens d'accès (localhost est trompeur sur un serveur headless).
+LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1 || true)
+[[ -n "$LAN_IP" ]] || LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+[[ -n "$LAN_IP" ]] || LAN_IP="<IP_SERVEUR>"
+BACKEND_URL="http://$LAN_IP:$PORT_BACKEND"
+
+# URL raw du script node-agent (pour une mise à jour / 1re install par curl).
+NODE_RAW_URL=$(printf '%s' "$SPOUET_REPO_URL" \
+    | sed -E 's#^https://github.com/#https://raw.githubusercontent.com/#; s#\.git$##' || true)
+NODE_RAW_URL="$NODE_RAW_URL/$SPOUET_BRANCH/node-agent/install.sh"
+
 log "✓ Installation terminée."
-log "  → Web UI      : http://localhost:$PORT_WEB  (navigateur / PWA mobile)"
-log "  → Backend API : http://localhost:$PORT_BACKEND/api/docs"
+log "  → Web UI      : http://$LAN_IP:$PORT_WEB  (navigateur / PWA mobile)"
+log "  → Backend API : http://$LAN_IP:$PORT_BACKEND/api/docs"
 log "  → Logs        : (cd $SPOUET_INSTALL_DIR/deploy && docker compose logs -f)"
 log "  → Status      : systemctl status spouet-stack"
 log ""
 log "  Pour l'app desktop Windows (Tauri), construire avec :"
 log "    cd desktop"
-log "    PUBLIC_API_BASE=http://<IP_SERVEUR>:$PORT_BACKEND pnpm tauri build"
+log "    PUBLIC_API_BASE=http://$LAN_IP:$PORT_BACKEND pnpm tauri build"
+
+# --- Node-agents (machines GPU / Ollama) -------------------------------------
+# Le node-agent tourne sur d'autres machines : on ne peut pas les mettre à jour
+# à distance, mais on affiche la commande prête à coller (le même installeur fait
+# office de mise à jour : il self-update via git puis réinstalle l'agent), avec
+# le token fraîchement généré et l'URL backend pré-remplis.
+_TOK_DISPLAY="${ADMIN_TOKEN:-<TOKEN>}"
+echo
+log "═══ Mettre à jour / installer les node-agents ═══"
+log "À lancer SUR CHAQUE machine GPU/Ollama (self-update git pull + réinstall) :"
+log ""
+log "  • Mise à jour OU première install (recommandé) :"
+log "      curl -fsSL $NODE_RAW_URL \\"
+log "        | sudo BACKEND=$BACKEND_URL TOKEN=$_TOK_DISPLAY bash"
+log ""
+log "  • Si le dépôt est déjà cloné sur le node (p.ex. /opt/spouet) :"
+log "      sudo BACKEND=$BACKEND_URL TOKEN=$_TOK_DISPLAY \\"
+log "        bash /opt/spouet/node-agent/install.sh"
+[[ -n "$ADMIN_TOKEN" ]] || warn "  (token indisponible : remplace <TOKEN> par un token 'spouet-admin create-token')"
