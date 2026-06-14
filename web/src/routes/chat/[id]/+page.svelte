@@ -103,16 +103,20 @@
         let defaultModel = '';
         try {
             const me = await auth.me();
-            defaultModel = me.default_model ?? '';
+            defaultModel = me.default_model || '';
         } catch {
             if (typeof localStorage !== 'undefined') {
                 defaultModel = localStorage.getItem('spouet:default_model') || '';
             }
         }
-        selectedModel = conv.model_pref ?? defaultModel ?? models[0]?.name ?? '';
-        // If default model wasn't available in the nodes list, fallback to first available
-        if (selectedModel && models.length > 0 && !models.some(m => m.name === selectedModel)) {
-             selectedModel = models[0].name;
+        // `||` (et non `??`) : une chaîne vide (pas de préférence / pas de défaut)
+        // doit retomber sur le modèle suivant, sinon `'' ?? models[0]` reste vide
+        // → aucun modèle présélectionné et composer désactivé.
+        selectedModel = conv.model_pref || defaultModel || models[0]?.name || '';
+        // Si la préférence n'existe plus dans la liste dispo, bascule sur le 1er dispo
+        // pour que l'utilisateur puisse toujours écrire.
+        if (models.length > 0 && !models.some((m) => m.name === selectedModel)) {
+            selectedModel = models[0].name;
         }
         selectedTools = [...(conv.allowed_tool_slugs ?? [])];
         await tick();
