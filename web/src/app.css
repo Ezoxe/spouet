@@ -976,6 +976,28 @@ textarea {
     background: var(--color-bg-3);
     color: var(--color-text);
 }
+.md-code-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2em;
+}
+.md-code-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.2em 0.55em;
+    border-radius: 6px;
+    color: var(--color-accent, oklch(0.72 0.16 215));
+    cursor: pointer;
+    font-weight: 600;
+    transition:
+        background 0.15s,
+        color 0.15s;
+}
+.md-code-preview:hover {
+    background: color-mix(in oklch, var(--color-accent, oklch(0.72 0.16 215)) 16%, transparent);
+    color: var(--color-text);
+}
 
 /* Identité du bloc : pastille colorée par langage + libellé + nb de lignes */
 .md-code-id {

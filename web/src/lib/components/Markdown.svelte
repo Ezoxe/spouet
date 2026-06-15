@@ -23,6 +23,12 @@
 
     const html = $derived(parse(content ?? ''));
 
+    // Langages rendus en aperçu live (iframe sandbox). PHP & co. nécessitent une
+    // exécution serveur → non couverts par l'aperçu navigateur.
+    const PREVIEW_LANGS = new Set(['html', 'htm', 'xhtml', 'svg', 'xml', 'markup', 'vue']);
+    // Code de l'aperçu courant (modal). null = fermé.
+    let previewCode = $state<string | null>(null);
+
     function esc(s: string): string {
         return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
@@ -83,21 +89,33 @@
         '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     const CHECK_ICON =
         '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    const PLAY_ICON =
+        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
 
     function codeBlock(code: string, lang: string): string {
         const body = code.replace(/\n$/, '');
         const label = (lang || 'code').toLowerCase();
         const lines = body ? body.split('\n').length : 0;
         const count = lines > 1 ? '<span class="md-code-lines">' + lines + ' lignes</span>' : '';
+        const previewable = PREVIEW_LANGS.has(label);
+        // Code brut encodé (encodeURIComponent → sûr en attribut double-quote :
+        // pas de " < > &) pour l'aperçu live.
+        const dataCode = previewable ? ' data-code="' + encodeURIComponent(body) + '"' : '';
+        const previewBtn = previewable
+            ? '<button class="md-code-preview" type="button" aria-label="Aperçu live">' +
+              '<span class="md-ico">' + PLAY_ICON + '</span>' +
+              '<span>Aperçu</span></button>'
+            : '';
         return (
-            '<div class="md-code" data-lang="' + esc(label) + '">' +
+            '<div class="md-code" data-lang="' + esc(label) + '"' + dataCode + '>' +
             '<div class="md-code-head"><span class="md-code-id">' +
             '<span class="md-code-dot"></span>' +
             '<span class="md-code-lang">' + esc(label) + '</span>' + count +
-            '</span><button class="md-code-copy" type="button" aria-label="Copier le code">' +
+            '</span><span class="md-code-actions">' + previewBtn +
+            '<button class="md-code-copy" type="button" aria-label="Copier le code">' +
             '<span class="md-ico md-ico-copy">' + COPY_ICON + '</span>' +
             '<span class="md-ico md-ico-check">' + CHECK_ICON + '</span>' +
-            '<span class="md-copy-label">Copier</span></button></div><pre><code>' +
+            '<span class="md-copy-label">Copier</span></button></span></div><pre><code>' +
             highlight(body, label) +
             '</code></pre></div>'
         );
@@ -291,6 +309,13 @@
 
     function onClick(e: MouseEvent) {
         const target = e.target as HTMLElement;
+        // Aperçu live (html/svg/xml…) : décode le code brut et l'affiche en iframe.
+        const previewBtn = target.closest('.md-code-preview');
+        if (previewBtn) {
+            const raw = previewBtn.closest('.md-code')?.getAttribute('data-code');
+            if (raw) previewCode = decodeURIComponent(raw);
+            return;
+        }
         const btn = target.closest('.md-code-copy');
         if (!btn) return;
         const code = btn.closest('.md-code')?.querySelector('pre code');
@@ -314,3 +339,39 @@
 <div class="md {klass}" class:md-streaming={streaming} onclick={onClick}>
     {@html html}
 </div>
+
+{#if previewCode !== null}
+    <!-- Aperçu live : iframe SANDBOX (allow-scripts uniquement, pas
+         allow-same-origin) → le code de l'IA est totalement isolé (pas d'accès
+         au DOM parent, cookies, token…). -->
+    <div
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        role="presentation"
+        onclick={(e) => {
+            if (e.target === e.currentTarget) previewCode = null;
+        }}
+    >
+        <div class="flex h-[80vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-2.5">
+                <span class="flex items-center gap-2 text-sm font-medium text-neutral-200">
+                    <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                    Aperçu live (sandbox isolé)
+                </span>
+                <button
+                    type="button"
+                    onclick={() => (previewCode = null)}
+                    class="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+                    aria-label="Fermer l'aperçu"
+                >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <iframe
+                title="Aperçu du code"
+                class="flex-1 bg-white"
+                sandbox="allow-scripts allow-forms allow-modals allow-popups"
+                srcdoc={previewCode}
+            ></iframe>
+        </div>
+    </div>
+{/if}
