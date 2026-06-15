@@ -295,8 +295,8 @@ fi
 # conteneur ne peut pas y écrire (PermissionError). On les pré-crée avec le bon
 # propriétaire. (data/images = PNG générés sur les nodes puis stockés ici.)
 log "Préparation des volumes (uid 1000)…"
-mkdir -p data/voice data/images
-chown -R 1000:1000 data/voice data/images 2>/dev/null || true
+mkdir -p data/voice data/images data/memory
+chown -R 1000:1000 data/voice data/images data/memory 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Auto-update des node-agents : on stampe le commit git déployé dans .env (à

@@ -40,7 +40,13 @@ class MemoryFile:
 
 def _user_dir(user_id: UUID) -> Path:
     d = Path(settings.memory_dir) / str(user_id)
-    d.mkdir(parents=True, exist_ok=True)
+    # Best-effort : si le volume n'est pas inscriptible (droits root sur le bind
+    # mount, cf. install.sh chown), on ne fait pas planter l'appel — les lectures
+    # renvoient vide, les écritures lèvent MemoryFileError (→ 400, pas 500).
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("memory.dir_unwritable", path=str(d), error=str(e))
     return d
 
 
@@ -87,7 +93,11 @@ def _describe(content: str) -> tuple[str, str]:
 def list_files(user_id: UUID) -> list[MemoryFile]:
     d = _user_dir(user_id)
     out: list[MemoryFile] = []
-    for p in sorted(d.glob("*.md")):
+    try:
+        paths = sorted(d.glob("*.md"))
+    except OSError:
+        return []
+    for p in paths:
         try:
             content = p.read_text(encoding="utf-8", errors="replace")
             st = p.stat()
@@ -135,8 +145,11 @@ def write_file(user_id: UUID, name: str, content: str) -> MemoryFile:
             raise MemoryFileError(
                 f"quota atteint ({settings.memory_max_files_per_user} fichiers mémoire)"
             )
-    p.write_text(content, encoding="utf-8")
-    st = p.stat()
+    try:
+        p.write_text(content, encoding="utf-8")
+        st = p.stat()
+    except OSError as e:
+        raise MemoryFileError(f"écriture impossible ({e})") from e
     title, description = _describe(content)
     return MemoryFile(
         name=slug,
