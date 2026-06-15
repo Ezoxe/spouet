@@ -27,6 +27,7 @@ from spouet.nodes.router import NoSuitableNodeError, pick_node
 from spouet.desktop import registry as desktop_registry
 from spouet.orchestrator import builtin_tools
 from spouet.orchestrator.context import build_extra_system, build_messages
+from spouet.orchestrator.tool_salvage import salvage_tool_calls
 from spouet.orchestrator.persona import build_persona_prompt
 from spouet.realtime.hub import conv_channel, publish, workspace_channel
 from spouet.secrets.store import SecretMissingError, resolve_env
@@ -248,6 +249,18 @@ async def stream_assistant_reply(
                         assistant_msg.tokens_out = chunk.get("eval_count")
                     if chunk.get("done_reason"):
                         assistant_msg.finish_reason = chunk.get("done_reason")
+            # Dernier recours : si le modèle a écrit son tool call en TEXTE (format
+            # non parsé par llama-server) au lieu du canal structuré, on le récupère
+            # et on nettoie le contenu affiché. Évite que l'appel « fuie » à l'écran
+            # sans jamais s'exécuter.
+            if active_tools and not tool_calls_out and accumulated:
+                cleaned, salvaged = salvage_tool_calls(accumulated)
+                if salvaged:
+                    tool_calls_out = salvaged
+                    accumulated = cleaned
+                    assistant_msg.content = cleaned
+                    logger.info("chat.tool_calls_salvaged", count=len(salvaged))
+
             # Flux épuisé. Fallbacks si le serveur n'a pas fourni les compteurs
             # (option include_usage non supportée) ou le finish_reason.
             if assistant_msg.tokens_out is None:

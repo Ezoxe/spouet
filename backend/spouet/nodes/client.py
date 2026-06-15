@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from spouet.core.config import settings
+
 
 class LlamaError(RuntimeError):
     pass
@@ -150,6 +152,10 @@ async def chat_stream(
         # supporte pas l'option l'ignore simplement (fallback comptage local).
         "stream_options": {"include_usage": True},
     }
+    # Désactive le raisonnement « thinking » pour les modèles qui l'exposent via le
+    # chat template (Qwen3…). Inoffensif pour les autres (kwarg ignoré par le jinja).
+    if settings.disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     if tools:
         payload["tools"] = tools
     if options:

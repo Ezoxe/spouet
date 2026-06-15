@@ -150,6 +150,10 @@ class Settings(BaseSettings):
     # Nodes
     node_offline_after_s: int = 30
     node_heartbeat_interval_s: int = 10
+    # Désactive le « mode réflexion » des modèles qui le supportent (Qwen3…) en
+    # passant chat_template_kwargs.enable_thinking=false à llama-server. Off par
+    # défaut : on veut des réponses directes, pas un raisonnement étalé à l'écran.
+    disable_thinking: bool = True
     # Auto-update des node-agents : commit git cible du monorepo déployé.
     # Stampé dans deploy/.env par install.sh (git rev-parse --short HEAD). Quand un
     # node-agent rapporte un commit différent, le heartbeat lui répond
