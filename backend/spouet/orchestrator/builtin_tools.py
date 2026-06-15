@@ -18,6 +18,7 @@ pont :mod:`spouet.desktop.bridge` et ne sont exposés que si un client desktop
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 from dataclasses import dataclass, field
@@ -46,11 +47,28 @@ logger = get_logger(__name__)
 WEB_SEARCH_SLUG = "web_search"
 SHOW_VISUAL_SLUG = "show_visual"
 LIST_MACROS_SLUG = "list_macros"
+# Sous-agent autonome (agentic / self-dialogue).
+SPAWN_SUBAGENT_SLUG = "spawn_subagent"
 # Mémoire long-terme « fichiers .md » (toujours disponible).
 MEMORY_LIST_SLUG = "memory_list"
 MEMORY_READ_SLUG = "memory_read"
 MEMORY_WRITE_SLUG = "memory_write"
 MEMORY_DELETE_SLUG = "memory_delete"
+
+# Profondeur max de sous-agents imbriqués (anti-récursion infinie). 0 = l'agent
+# principal ; un sous-agent est à 1 ; il peut en lancer un de plus (2) puis stop.
+MAX_SUBAGENT_DEPTH = 2
+SUBAGENT_MAX_CHARS = 8000
+_SUBAGENT_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "spouet_subagent_depth", default=0
+)
+_SUBAGENT_SYSTEM = (
+    "Tu es un SOUS-AGENT autonome de Spouet. L'agent principal te confie UNE "
+    "sous-tâche précise. Réalise-la complètement et de façon autonome (utilise les "
+    "outils à ta disposition si nécessaire), puis renvoie un résultat clair, "
+    "factuel et directement exploitable. Ne pose pas de question, ne demande "
+    "aucune validation, ne bavarde pas : agis et rends le résultat."
+)
 # Tool conditionné à l'activation du moteur d'images (image-engine).
 GENERATE_IMAGE_SLUG = "generate_image"
 # Tools exigeant un client desktop connecté.
@@ -62,6 +80,7 @@ _ALWAYS = {
     WEB_SEARCH_SLUG,
     SHOW_VISUAL_SLUG,
     LIST_MACROS_SLUG,
+    SPAWN_SUBAGENT_SLUG,
     MEMORY_LIST_SLUG,
     MEMORY_READ_SLUG,
     MEMORY_WRITE_SLUG,
@@ -178,6 +197,37 @@ _DEF_LIST_MACROS: dict[str, Any] = {
         "name": LIST_MACROS_SLUG,
         "description": "Liste les macros desktop enregistrées par l'utilisateur.",
         "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+_DEF_SPAWN_SUBAGENT: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": SPAWN_SUBAGENT_SLUG,
+        "description": (
+            "Délègue une SOUS-TÂCHE autonome à un sous-agent : une instance fraîche "
+            "de toi-même, sans l'historique de la conversation, avec accès aux mêmes "
+            "outils. Sert à décomposer une tâche complexe en étapes indépendantes, "
+            "explorer une piste, ou faire un travail ciblé (recherche, rédaction "
+            "d'une partie, vérification, génération de code) puis intégrer son "
+            "résultat dans ta réponse. La consigne `task` doit être COMPLÈTE et "
+            "AUTOPORTANTE (le sous-agent ne voit pas la conversation). Tu peux en "
+            "lancer plusieurs, séquentiellement, pour avancer sur une tâche."
+        ),
+        "parameters": {
+            "type": "object",
+            "required": ["task"],
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Consigne complète et autonome de la sous-tâche.",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Modèle à utiliser pour le sous-agent (optionnel, défaut = le tien).",
+                },
+            },
+        },
     },
 }
 
@@ -339,6 +389,10 @@ def tool_defs(*, desktop_connected: bool, images_enabled: bool = False) -> list[
         _DEF_MEMORY_WRITE,
         _DEF_MEMORY_DELETE,
     ]
+    # Sous-agent : exposé tant qu'on n'a pas atteint la profondeur max (un
+    # sous-agent au fond ne doit plus pouvoir en relancer → anti-récursion).
+    if _SUBAGENT_DEPTH.get() < MAX_SUBAGENT_DEPTH:
+        defs.append(_DEF_SPAWN_SUBAGENT)
     if images_enabled:
         defs.append(_DEF_GENERATE_IMAGE)
     if desktop_connected:
@@ -396,6 +450,8 @@ async def execute(
             return await _h_generate_image(db, conversation, args, channel)
         if slug == LIST_MACROS_SLUG:
             return await _h_list_macros(db, conversation)
+        if slug == SPAWN_SUBAGENT_SLUG:
+            return await _h_spawn_subagent(db, conversation, args, channel)
         if slug == MEMORY_LIST_SLUG:
             return _h_memory_list(conversation)
         if slug == MEMORY_READ_SLUG:
@@ -597,6 +653,76 @@ async def _h_list_macros(db: AsyncSession, conversation: Conversation) -> Builti
                 for m in macros
             ],
         },
+    )
+
+
+async def _h_spawn_subagent(
+    db: AsyncSession, conversation: Conversation, args: dict[str, Any], channel: str
+) -> BuiltinOutcome:
+    task = str(args.get("task") or "").strip()
+    if not task:
+        return BuiltinOutcome(SPAWN_SUBAGENT_SLUG, {"status": "error", "error": "task manquante"})
+
+    depth = _SUBAGENT_DEPTH.get()
+    if depth >= MAX_SUBAGENT_DEPTH:
+        return BuiltinOutcome(
+            SPAWN_SUBAGENT_SLUG,
+            {
+                "status": "error",
+                "error": "Profondeur de sous-agents maximale atteinte — traite cette sous-tâche toi-même.",
+            },
+        )
+
+    # Conversation éphémère ARCHIVÉE (invisible dans la sidebar), héritant du
+    # modèle et de l'éventuel workspace du parent. cascade delete-orphan sur les
+    # messages → cohérent si on la purge un jour.
+    model = str(args.get("model") or "").strip() or conversation.model_pref
+    sub = Conversation(
+        user_id=conversation.user_id,
+        title=f"[sous-agent] {task[:48]}",
+        system_prompt=_SUBAGENT_SYSTEM,
+        model_pref=model,
+        workspace_id=conversation.workspace_id,
+        archived=True,
+    )
+    db.add(sub)
+    await db.commit()
+    await db.refresh(sub)
+
+    await publish(channel, "subagent", {"status": "start", "task": task[:160]})
+
+    # Import tardif : chat_loop importe builtin_tools (dépendance cyclique).
+    from spouet.orchestrator.chat_loop import stream_assistant_reply
+
+    parts: list[str] = []
+    error: str | None = None
+    depth_token = _SUBAGENT_DEPTH.set(depth + 1)
+    try:
+        async for ev in stream_assistant_reply(
+            db, conversation=sub, user_text=task, enable_tools=True
+        ):
+            evt = ev.get("event")
+            if evt == "token":
+                parts.append(ev["data"].get("text", ""))
+            elif evt == "error":
+                error = ev["data"].get("message", "")
+    except Exception as e:  # noqa: BLE001 — un sous-agent ne doit jamais tuer le parent
+        error = str(e)
+        logger.warning("subagent.failed", error=str(e))
+    finally:
+        _SUBAGENT_DEPTH.reset(depth_token)
+
+    await publish(channel, "subagent", {"status": "done", "task": task[:160]})
+
+    result = "".join(parts).strip()
+    if len(result) > SUBAGENT_MAX_CHARS:
+        result = result[:SUBAGENT_MAX_CHARS] + "\n…(tronqué)"
+
+    if error and not result:
+        return BuiltinOutcome(SPAWN_SUBAGENT_SLUG, {"status": "error", "task": task, "error": error})
+    return BuiltinOutcome(
+        SPAWN_SUBAGENT_SLUG,
+        {"status": "ok", "task": task, "result": result or "(aucune sortie du sous-agent)"},
     )
 
 

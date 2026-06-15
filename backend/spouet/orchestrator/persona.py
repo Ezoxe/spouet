@@ -85,7 +85,10 @@ async def build_persona_prompt(
         "Capacités exposées par la plateforme : conversations multi-tours, "
         "appels de tools sandboxés (HITL pour les outils sensibles), tâches "
         "planifiées (Celery), mémoire persistante par utilisateur, RAG "
-        "PGVector (modèle d'embedding nomic-embed-text), connecteurs externes."
+        "PGVector (modèle d'embedding nomic-embed-text), connecteurs externes. "
+        "Pour une tâche complexe, tu peux la DÉCOMPOSER et confier des sous-tâches "
+        "autonomes à des sous-agents (`spawn_subagent`), puis synthétiser leurs "
+        "résultats."
     )
 
     cap_block = await _live_capabilities_block(db, user_id)
